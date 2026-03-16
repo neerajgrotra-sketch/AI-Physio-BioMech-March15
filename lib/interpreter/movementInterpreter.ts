@@ -23,10 +23,17 @@ export function interpretMovement(
   currentRepState: RepState,
   features: MovementFeatures,
   exercise: ExerciseDefinition,
-  personDetected: boolean
+  personDetected: boolean,
+  nowMs: number
 ): InterpreterOutput {
   const activeElevationDeg = getActiveElevation(features, exercise);
-  const repState = updateRepState(currentRepState, activeElevationDeg, exercise);
+
+  const repState = updateRepState(
+    currentRepState,
+    activeElevationDeg,
+    exercise,
+    nowMs
+  );
 
   let primaryIssue: CoachingCode = "idle";
 
@@ -36,6 +43,8 @@ export function interpretMovement(
     primaryIssue = "exercise_complete";
   } else if (repState.justCompletedRep) {
     primaryIssue = "good_rep";
+  } else if (repState.justCompletedHold) {
+    primaryIssue = "hold_complete";
   } else if (
     features.torsoLeanDeg !== null &&
     features.torsoLeanDeg > 18
@@ -44,9 +53,13 @@ export function interpretMovement(
   } else if (
     repState.phase === "lifting" &&
     activeElevationDeg !== null &&
-    activeElevationDeg < exercise.targetThresholdDeg - 15
+    activeElevationDeg < exercise.targetThresholdDeg
   ) {
     primaryIssue = "lift_higher";
+  } else if (repState.phase === "top") {
+    primaryIssue = "hold_position";
+  } else if (repState.phase === "holding") {
+    primaryIssue = "keep_holding";
   } else if (repState.phase === "lowering") {
     primaryIssue = "lower_slowly";
   } else if (repState.phase === "ready") {
