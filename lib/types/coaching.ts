@@ -8,6 +8,7 @@ export type CoachingCode =
   | "rep_failed_hold"
   | "rep_failed_height"
   | "rep_failed_balance"
+  | "rep_failed_isolation"
   | "lift_higher"
   | "hold_position"
   | "keep_holding"
