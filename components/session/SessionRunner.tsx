@@ -2,17 +2,23 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
+
 import CameraViewport from "@/components/camera/CameraViewport";
+import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
-import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
+
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
-import { createInitialRepState, type RepState } from "@/lib/interpreter/repStateMachine";
+import {
+  createInitialRepState,
+  type RepState
+} from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
+
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
 import type { CoachingDecision } from "@/lib/types/coaching";
@@ -52,14 +58,14 @@ export default function SessionRunner() {
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
-  const [repCount, setRepCount] = useState(0);
-  const [phase, setPhase] = useState("ready");
-  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
+  const [repCount, setRepCount] = useState<number>(0);
+  const [phase, setPhase] = useState<string>("ready");
   const [activeElevation, setActiveElevation] = useState<number | null>(null);
+  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
-  const [engineError, setEngineError] = useState("");
+  const [engineError, setEngineError] = useState<string>("");
 
   async function beginTracking(video: HTMLVideoElement) {
     try {
@@ -174,8 +180,20 @@ export default function SessionRunner() {
 
           <CameraViewport onVideoReady={beginTracking} />
 
-          <div style={{ marginTop: 16 }}>
-            <PoseCanvasOverlay frame={frame} />
+          <div
+            style={{
+              marginTop: 16,
+              position: "relative",
+              width: "100%",
+              maxWidth: 640,
+              height: 420,
+              borderRadius: 12,
+              overflow: "hidden",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.10)"
+            }}
+          >
+            <PoseCanvasOverlay frame={frame} width={640} height={420} />
           </div>
         </section>
 
@@ -236,10 +254,7 @@ export default function SessionRunner() {
             )}
           </section>
 
-          <CoachingPanel
-            title="Coaching"
-            message={coaching.message}
-          />
+          <CoachingPanel title="Coaching" message={coaching.message} />
 
           <DebugPanel features={features} />
         </div>
