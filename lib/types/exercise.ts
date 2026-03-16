@@ -48,6 +48,10 @@ export type TempoRequirement = {
 export type QualityLimits = {
   maxTorsoLeanDeg?: number;
   maxShoulderTiltDeg?: number;
+
+  // For unilateral exercises:
+  // the opposite arm must stay below this elevation threshold
+  maxOppositeArmElevationDeg?: number;
 };
 
 export type CoachingCues = {
@@ -59,6 +63,7 @@ export type CoachingCues = {
   failedHeight: string;
   failedHold: string;
   failedBalance: string;
+  failedIsolation?: string;
 };
 
 export type ExercisePrescription = {
