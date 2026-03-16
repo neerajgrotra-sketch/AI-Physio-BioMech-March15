@@ -54,6 +54,7 @@ export default function SessionRunner() {
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const trackingActiveRef = useRef<boolean>(false);
   const repStateRef = useRef<RepState>(createInitialRepState());
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
@@ -67,11 +68,29 @@ export default function SessionRunner() {
   >("idle");
   const [engineError, setEngineError] = useState<string>("");
 
+  function stopTracking() {
+    trackingActiveRef.current = false;
+
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    videoRef.current = null;
+    setEngineStatus("idle");
+    setEngineError("");
+    setFrame(null);
+    setFeatures(createEmptyFeatures());
+    setActiveElevation(null);
+    setCoaching(createIdleCoaching());
+  }
+
   async function beginTracking(video: HTMLVideoElement) {
     try {
       setEngineStatus("loading");
       setEngineError("");
       videoRef.current = video;
+      trackingActiveRef.current = true;
 
       if (!detectorRef.current) {
         detectorRef.current = await createPoseDetector();
@@ -80,16 +99,33 @@ export default function SessionRunner() {
       setEngineStatus("running");
 
       const loop = async () => {
-        if (!videoRef.current || !detectorRef.current) return;
+        if (!trackingActiveRef.current) return;
+
+        const liveVideo = videoRef.current;
+        const detector = detectorRef.current;
+
+        if (!liveVideo || !detector) return;
+
+        if (
+          liveVideo.readyState < 2 ||
+          liveVideo.videoWidth === 0 ||
+          liveVideo.videoHeight === 0
+        ) {
+          rafRef.current = window.requestAnimationFrame(loop);
+          return;
+        }
 
         try {
-          const poses = await detectorRef.current.estimatePoses(videoRef.current);
+          const poses = await detector.estimatePoses(liveVideo);
+
+          if (!trackingActiveRef.current) return;
+
           const pose = poses[0] ?? null;
 
           const normalized = normalizePoseFrame(
             pose,
-            videoRef.current.videoWidth || 1,
-            videoRef.current.videoHeight || 1
+            liveVideo.videoWidth || 1,
+            liveVideo.videoHeight || 1
           );
 
           setFrame(normalized);
@@ -114,22 +150,35 @@ export default function SessionRunner() {
           setActiveElevation(output.activeElevationDeg);
           setCoaching(buildCoachingDecision(output));
         } catch (error) {
+          if (!trackingActiveRef.current) return;
+
+          const message =
+            error instanceof Error ? error.message : String(error);
+
+          if (
+            message.toLowerCase().includes("aborted") ||
+            message.toLowerCase().includes("abort")
+          ) {
+            return;
+          }
+
           setEngineStatus("error");
-          setEngineError(
-            error instanceof Error ? error.message : "Pose estimation failed."
-          );
+          setEngineError(message || "Pose estimation failed.");
           return;
         }
 
-        rafRef.current = window.requestAnimationFrame(loop);
+        if (trackingActiveRef.current) {
+          rafRef.current = window.requestAnimationFrame(loop);
+        }
       };
 
-      if (rafRef.current) {
+      if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
       }
 
       rafRef.current = window.requestAnimationFrame(loop);
     } catch (error) {
+      trackingActiveRef.current = false;
       setEngineStatus("error");
       setEngineError(
         error instanceof Error ? error.message : "Could not initialize pose detector."
@@ -147,9 +196,7 @@ export default function SessionRunner() {
 
   useEffect(() => {
     return () => {
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-      }
+      stopTracking();
     };
   }, []);
 
@@ -178,22 +225,25 @@ export default function SessionRunner() {
             Start the camera and perform the current exercise.
           </p>
 
-          <CameraViewport onVideoReady={beginTracking} />
+          <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
+            <CameraViewport
+              onVideoReady={beginTracking}
+              onCameraStop={stopTracking}
+            />
 
-          <div
-            style={{
-              marginTop: 16,
-              position: "relative",
-              width: "100%",
-              maxWidth: 640,
-              height: 420,
-              borderRadius: 12,
-              overflow: "hidden",
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.10)"
-            }}
-          >
-            <PoseCanvasOverlay frame={frame} width={640} height={420} />
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 52,
+                width: "100%",
+                maxWidth: 640,
+                height: 420,
+                pointerEvents: "none"
+              }}
+            >
+              <PoseCanvasOverlay frame={frame} width={640} height={420} />
+            </div>
           </div>
         </section>
 
