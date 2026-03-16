@@ -1,42 +1,64 @@
-import { updateRepState, type RepState } from "@/lib/interpreter/repStateMachine";
+import { updateRepState } from "@/lib/interpreter/repStateMachine";
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { CoachingCode } from "@/lib/types/coaching";
-import type { ExerciseDefinition } from "@/lib/types/exercise";
+import type { ExercisePrescription, MetricSource } from "@/lib/types/exercise";
+import type {
+  RuntimeEvaluationResult,
+  RuntimeFrameContext,
+  RuntimeRepState
+} from "@/lib/engine/runtimeTypes";
 
-export type InterpreterOutput = {
-  repState: RepState;
-  activeElevationDeg: number | null;
+export type InterpreterOutput = RuntimeEvaluationResult & {
   primaryIssue: CoachingCode;
-  isExerciseComplete: boolean;
-  holdRemainingMs: number | null;
 };
 
-function getActiveElevation(
+function getMetricValue(
   features: MovementFeatures,
-  exercise: ExerciseDefinition
+  metric: MetricSource
 ): number | null {
-  if (exercise.primarySide === "right") return features.rightArmElevationDeg;
-  if (exercise.primarySide === "left") return features.leftArmElevationDeg;
-  return features.bilateralArmElevationDeg;
+  switch (metric) {
+    case "rightArmElevationDeg":
+      return features.rightArmElevationDeg;
+    case "leftArmElevationDeg":
+      return features.leftArmElevationDeg;
+    case "bilateralArmElevationDeg":
+      return features.bilateralArmElevationDeg;
+    case "rightElbowAngleDeg":
+      return features.rightElbowAngleDeg;
+    case "leftElbowAngleDeg":
+      return features.leftElbowAngleDeg;
+    case "torsoLeanDeg":
+      return features.torsoLeanDeg;
+    case "shoulderTiltDeg":
+      return features.shoulderTiltDeg;
+    case "rightWristToShoulderDy":
+      return features.rightWristToShoulderDy;
+    case "leftWristToShoulderDy":
+      return features.leftWristToShoulderDy;
+    default:
+      return null;
+  }
 }
 
 export function interpretMovement(
-  currentRepState: RepState,
+  currentRepState: RuntimeRepState,
   features: MovementFeatures,
-  exercise: ExerciseDefinition,
-  personDetected: boolean,
-  nowMs: number
+  prescription: ExercisePrescription,
+  frameContext: RuntimeFrameContext
 ): InterpreterOutput {
-  const activeElevationDeg = getActiveElevation(features, exercise);
+  const activeMetricValue = getMetricValue(features, prescription.target.metric);
 
+  const maxTorsoLeanDeg = prescription.qualityLimits?.maxTorsoLeanDeg;
   const balanceOk =
-    features.torsoLeanDeg === null || features.torsoLeanDeg <= 18;
+    maxTorsoLeanDeg === undefined ||
+    features.torsoLeanDeg === null ||
+    features.torsoLeanDeg <= maxTorsoLeanDeg;
 
   const repState = updateRepState(
     currentRepState,
-    activeElevationDeg,
-    exercise,
-    nowMs,
+    activeMetricValue,
+    prescription,
+    frameContext.timestampMs,
     balanceOk
   );
 
@@ -45,26 +67,26 @@ export function interpretMovement(
   if (
     repState.phase === "holding" &&
     repState.enteredTopAtMs !== null &&
-    exercise.requiresHold
+    prescription.hold.required
   ) {
-    const held = nowMs - repState.enteredTopAtMs;
-    holdRemainingMs = Math.max(0, exercise.holdDurationMs - held);
+    const held = frameContext.timestampMs - repState.enteredTopAtMs;
+    holdRemainingMs = Math.max(0, prescription.hold.durationMs - held);
   }
 
   let primaryIssue: CoachingCode = "idle";
 
-  if (!personDetected) {
+  if (!frameContext.personDetected) {
     primaryIssue = "person_not_detected";
-  } else if (repState.phase === "completed") {
+  } else if (repState.phase === "complete") {
     primaryIssue = "exercise_complete";
   } else if (repState.justCompletedRep) {
     primaryIssue = "good_rep";
   } else if (repState.justFailedRep) {
-    if (repState.lastRepFailureReason === "failed_hold") {
+    if (repState.lastRepEvaluation.reason === "failed_hold") {
       primaryIssue = "rep_failed_hold";
-    } else if (repState.lastRepFailureReason === "failed_height") {
+    } else if (repState.lastRepEvaluation.reason === "failed_height") {
       primaryIssue = "rep_failed_height";
-    } else if (repState.lastRepFailureReason === "failed_balance") {
+    } else if (repState.lastRepEvaluation.reason === "failed_balance") {
       primaryIssue = "rep_failed_balance";
     }
   } else if (repState.justCompletedHold) {
@@ -73,8 +95,8 @@ export function interpretMovement(
     primaryIssue = "keep_balanced";
   } else if (
     repState.phase === "lifting" &&
-    activeElevationDeg !== null &&
-    activeElevationDeg < exercise.targetThresholdDeg
+    activeMetricValue !== null &&
+    activeMetricValue < prescription.targetThreshold
   ) {
     primaryIssue = "lift_higher";
   } else if (repState.phase === "top") {
@@ -89,9 +111,9 @@ export function interpretMovement(
 
   return {
     repState,
-    activeElevationDeg,
-    primaryIssue,
-    isExerciseComplete: repState.phase === "completed",
-    holdRemainingMs
+    activeMetricValue,
+    holdRemainingMs,
+    isComplete: repState.phase === "complete",
+    primaryIssue
   };
 }
