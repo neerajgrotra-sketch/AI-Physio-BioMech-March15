@@ -1,8 +1,10 @@
 import type { CoachingDecision } from "@/lib/types/coaching";
 import type { InterpreterOutput } from "@/lib/interpreter/movementInterpreter";
+import type { ExercisePrescription } from "@/lib/types/exercise";
 
 export function buildCoachingDecision(
-  output: InterpreterOutput
+  output: InterpreterOutput,
+  prescription: ExercisePrescription
 ): CoachingDecision {
   switch (output.primaryIssue) {
     case "person_not_detected":
@@ -16,63 +18,63 @@ export function buildCoachingDecision(
       return {
         code: "good_rep",
         priority: "encourage",
-        message: "Good repetition."
+        message: prescription.coaching.success
       };
 
     case "rep_failed_hold":
       return {
         code: "rep_failed_hold",
         priority: "correct",
-        message: "That rep did not count. Hold a little longer at the top and try again."
+        message: prescription.coaching.failedHold
       };
 
     case "rep_failed_height":
       return {
         code: "rep_failed_height",
         priority: "correct",
-        message: "That rep did not count. Lift a little higher and try again."
+        message: prescription.coaching.failedHeight
       };
 
     case "rep_failed_balance":
       return {
         code: "rep_failed_balance",
         priority: "correct",
-        message: "That rep did not count. Try to stay upright and balanced."
+        message: prescription.coaching.failedBalance
       };
 
     case "lift_higher":
       return {
         code: "lift_higher",
         priority: "correct",
-        message: "Lift to the target height."
+        message: prescription.coaching.lift
       };
 
     case "hold_position":
       return {
         code: "hold_position",
         priority: "info",
-        message: "Good. Hold at the top."
+        message: prescription.coaching.hold
       };
 
     case "keep_holding":
       return {
         code: "keep_holding",
         priority: "info",
-        message: "Keep holding."
+        message: prescription.coaching.hold
       };
 
     case "hold_complete":
       return {
         code: "hold_complete",
         priority: "encourage",
-        message: "Good. Now lower slowly."
+        message: prescription.coaching.lower
       };
 
     case "lower_slowly":
       return {
         code: "lower_slowly",
         priority: "correct",
-        message: "Lower with control."
+        message: prescription.coaching.lower
       };
 
     case "keep_balanced":
@@ -93,7 +95,7 @@ export function buildCoachingDecision(
       return {
         code: "start_exercise",
         priority: "info",
-        message: "Begin when ready."
+        message: prescription.coaching.intro
       };
 
     default:
