@@ -4,6 +4,7 @@ export type RepFailureReason =
   | "failed_hold"
   | "failed_height"
   | "failed_balance"
+  | "failed_isolation"
   | null;
 
 export type RepEvaluation = {
