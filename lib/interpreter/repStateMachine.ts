@@ -1,5 +1,11 @@
 import type { ExerciseDefinition, ExercisePhase } from "@/lib/types/exercise";
 
+export type RepFailureReason =
+  | "failed_hold"
+  | "failed_height"
+  | "failed_balance"
+  | null;
+
 export type RepState = {
   phase: ExercisePhase;
   repCount: number;
@@ -7,8 +13,12 @@ export type RepState = {
 
   enteredTopAtMs: number | null;
   holdSatisfied: boolean;
+  everReachedTarget: boolean;
   justEnteredHolding: boolean;
   justCompletedHold: boolean;
+
+  lastRepFailureReason: RepFailureReason;
+  justFailedRep: boolean;
 };
 
 export function createInitialRepState(): RepState {
@@ -16,10 +26,15 @@ export function createInitialRepState(): RepState {
     phase: "ready",
     repCount: 0,
     justCompletedRep: false,
+
     enteredTopAtMs: null,
     holdSatisfied: false,
+    everReachedTarget: false,
     justEnteredHolding: false,
-    justCompletedHold: false
+    justCompletedHold: false,
+
+    lastRepFailureReason: null,
+    justFailedRep: false
   };
 }
 
@@ -27,7 +42,8 @@ export function updateRepState(
   currentState: RepState,
   activeElevationDeg: number | null,
   exercise: ExerciseDefinition,
-  nowMs: number
+  nowMs: number,
+  balanceOk: boolean
 ): RepState {
   const elevation = activeElevationDeg ?? 0;
 
@@ -37,15 +53,21 @@ export function updateRepState(
 
   let enteredTopAtMs = currentState.enteredTopAtMs;
   let holdSatisfied = currentState.holdSatisfied;
+  let everReachedTarget = currentState.everReachedTarget;
   let justEnteredHolding = false;
   let justCompletedHold = false;
+
+  let lastRepFailureReason: RepFailureReason = null;
+  let justFailedRep = false;
 
   if (currentState.phase === "completed") {
     return {
       ...currentState,
       justCompletedRep: false,
       justEnteredHolding: false,
-      justCompletedHold: false
+      justCompletedHold: false,
+      justFailedRep: false,
+      lastRepFailureReason: null
     };
   }
 
@@ -54,8 +76,10 @@ export function updateRepState(
       if (elevation > exercise.startThresholdDeg) {
         nextPhase = "lifting";
       }
+
       enteredTopAtMs = null;
       holdSatisfied = false;
+      everReachedTarget = false;
       break;
     }
 
@@ -63,6 +87,7 @@ export function updateRepState(
       if (elevation >= exercise.targetThresholdDeg) {
         nextPhase = "top";
         enteredTopAtMs = nowMs;
+        everReachedTarget = true;
 
         if (!exercise.requiresHold || exercise.holdDurationMs <= 0) {
           holdSatisfied = true;
@@ -71,6 +96,7 @@ export function updateRepState(
         nextPhase = "ready";
         enteredTopAtMs = null;
         holdSatisfied = false;
+        everReachedTarget = false;
       }
       break;
     }
@@ -79,7 +105,6 @@ export function updateRepState(
       if (elevation < exercise.targetThresholdDeg - exercise.topToleranceDeg) {
         nextPhase = "lifting";
         enteredTopAtMs = null;
-        holdSatisfied = false;
       } else if (!exercise.requiresHold || exercise.holdDurationMs <= 0) {
         nextPhase = "lowering";
       } else {
@@ -91,18 +116,13 @@ export function updateRepState(
 
     case "holding": {
       if (elevation < exercise.targetThresholdDeg - exercise.topToleranceDeg) {
-        nextPhase = "lifting";
-        enteredTopAtMs = null;
-        holdSatisfied = false;
+        nextPhase = "lowering";
       } else if (enteredTopAtMs !== null) {
         const heldForMs = nowMs - enteredTopAtMs;
 
         if (!holdSatisfied && heldForMs >= exercise.holdDurationMs) {
           holdSatisfied = true;
           justCompletedHold = true;
-        }
-
-        if (holdSatisfied) {
           nextPhase = "lowering";
         }
       }
@@ -111,8 +131,19 @@ export function updateRepState(
 
     case "lowering": {
       if (elevation <= exercise.finishThresholdDeg) {
-        nextRepCount += 1;
-        justCompletedRep = true;
+        if (!everReachedTarget) {
+          justFailedRep = true;
+          lastRepFailureReason = "failed_height";
+        } else if (exercise.requiresHold && !holdSatisfied) {
+          justFailedRep = true;
+          lastRepFailureReason = "failed_hold";
+        } else if (!balanceOk) {
+          justFailedRep = true;
+          lastRepFailureReason = "failed_balance";
+        } else {
+          nextRepCount += 1;
+          justCompletedRep = true;
+        }
 
         if (nextRepCount >= exercise.repTarget) {
           nextPhase = "completed";
@@ -122,6 +153,7 @@ export function updateRepState(
 
         enteredTopAtMs = null;
         holdSatisfied = false;
+        everReachedTarget = false;
       }
       break;
     }
@@ -131,9 +163,14 @@ export function updateRepState(
     phase: nextPhase,
     repCount: nextRepCount,
     justCompletedRep,
+
     enteredTopAtMs,
     holdSatisfied,
+    everReachedTarget,
     justEnteredHolding,
-    justCompletedHold
+    justCompletedHold,
+
+    lastRepFailureReason,
+    justFailedRep
   };
 }
