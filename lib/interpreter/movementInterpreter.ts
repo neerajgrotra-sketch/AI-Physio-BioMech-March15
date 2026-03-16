@@ -40,13 +40,33 @@ function getMetricValue(
   }
 }
 
+function getEffectiveActiveMetricValue(
+  features: MovementFeatures,
+  prescription: ExercisePrescription
+): number | null {
+  if (
+    prescription.side === "both" &&
+    prescription.target.metric === "bilateralArmElevationDeg"
+  ) {
+    const left = features.leftArmElevationDeg;
+    const right = features.rightArmElevationDeg;
+
+    if (left === null || right === null) return null;
+
+    // Both sides must meet the target.
+    return Math.min(left, right);
+  }
+
+  return getMetricValue(features, prescription.target.metric);
+}
+
 export function interpretMovement(
   currentRepState: RuntimeRepState,
   features: MovementFeatures,
   prescription: ExercisePrescription,
   frameContext: RuntimeFrameContext
 ): InterpreterOutput {
-  const activeMetricValue = getMetricValue(features, prescription.target.metric);
+  const activeMetricValue = getEffectiveActiveMetricValue(features, prescription);
 
   const maxTorsoLeanDeg = prescription.qualityLimits?.maxTorsoLeanDeg;
   const balanceOk =
