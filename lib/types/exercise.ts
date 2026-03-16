@@ -8,10 +8,12 @@ export type ExercisePhase =
 
 export type ExerciseDefinition = {
   id: string;
+
   name: string;
   description: string;
+
   repTarget: number;
-  movementGoal: string;
+
   primarySide: "left" | "right" | "bilateral";
 
   startThresholdDeg: number;
@@ -21,4 +23,6 @@ export type ExerciseDefinition = {
   requiresHold: boolean;
   holdDurationMs: number;
   topToleranceDeg: number;
+
+  targetLabel: string;
 };
