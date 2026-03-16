@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
 
 import CameraViewport from "@/components/camera/CameraViewport";
@@ -10,10 +10,10 @@ import DebugPanel from "@/components/debug/DebugPanel";
 
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
-import { EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
+import { EXERCISE_PRESCRIPTIONS } from "@/lib/exercises";
+import type { ExerciseDefinitionId } from "@/lib/exercises/exerciseTypes";
 import {
-  createInitialRepState,
-  type RepState
+  createInitialRepState
 } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
@@ -24,6 +24,7 @@ import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
 import type { CoachingDecision } from "@/lib/types/coaching";
+import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -51,13 +52,22 @@ function createIdleCoaching(): CoachingDecision {
 }
 
 export default function SessionRunner() {
-  const exercise = EXERCISE_LIBRARY[0];
+  const [selectedExerciseId, setSelectedExerciseId] =
+    useState<ExerciseDefinitionId>("right-arm-raise");
+
+  const prescription = useMemo(() => {
+    return (
+      EXERCISE_PRESCRIPTIONS.find(
+        (item) => item.id === selectedExerciseId
+      ) ?? EXERCISE_PRESCRIPTIONS[0]
+    );
+  }, [selectedExerciseId]);
 
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const trackingActiveRef = useRef(false);
-  const repStateRef = useRef<RepState>(createInitialRepState());
+  const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
   const featureHistoryRef = useRef(new FeatureHistory(5));
 
   const stickyCoachingUntilRef = useRef<number>(0);
@@ -67,7 +77,7 @@ export default function SessionRunner() {
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
   const [repCount, setRepCount] = useState(0);
   const [phase, setPhase] = useState("ready");
-  const [activeElevation, setActiveElevation] = useState<number | null>(null);
+  const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
@@ -88,7 +98,7 @@ export default function SessionRunner() {
 
     setRepCount(0);
     setPhase("ready");
-    setActiveElevation(null);
+    setActiveMetricValue(null);
     setCoaching(createIdleCoaching());
   }
 
@@ -176,22 +186,25 @@ export default function SessionRunner() {
           const output = interpretMovement(
             repStateRef.current,
             smoothedFeatures,
-            exercise,
-            normalized.personDetected,
-            Date.now()
+            prescription,
+            {
+              timestampMs: Date.now(),
+              personDetected: normalized.personDetected,
+              balanceOk: true,
+              activeMetricValue: null
+            }
           );
 
           repStateRef.current = output.repState;
 
           setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
-          setActiveElevation(output.activeElevationDeg);
+          setActiveMetricValue(output.activeMetricValue);
 
           const now = Date.now();
 
-          // Sticky event messages first
           if (output.repState.justFailedRep) {
-            const failureDecision = buildCoachingDecision(output);
+            const failureDecision = buildCoachingDecision(output, prescription);
             setStickyCoaching(
               {
                 ...failureDecision,
@@ -204,7 +217,7 @@ export default function SessionRunner() {
               {
                 code: "good_rep",
                 priority: "encourage",
-                message: "Good repetition. Begin again when ready."
+                message: `${prescription.coaching.success} Begin again when ready.`
               },
               1800
             );
@@ -213,7 +226,7 @@ export default function SessionRunner() {
               {
                 code: "hold_complete",
                 priority: "encourage",
-                message: "Good. Now lower slowly."
+                message: prescription.coaching.lower
               },
               1200
             );
@@ -229,7 +242,7 @@ export default function SessionRunner() {
           } else {
             stickyCoachingRef.current = null;
             stickyCoachingUntilRef.current = 0;
-            setCoaching(buildCoachingDecision(output));
+            setCoaching(buildCoachingDecision(output, prescription));
           }
         } catch (error) {
           if (!trackingActiveRef.current) return;
@@ -273,6 +286,10 @@ export default function SessionRunner() {
   }
 
   useEffect(() => {
+    resetExerciseState();
+  }, [selectedExerciseId]);
+
+  useEffect(() => {
     return () => {
       stopTracking();
     };
@@ -300,7 +317,7 @@ export default function SessionRunner() {
         >
           <h3 style={{ marginTop: 0 }}>Vision Surface</h3>
           <p style={{ color: "#aab6d3" }}>
-            Start the camera and perform the current exercise.
+            Start the camera and perform the selected exercise.
           </p>
 
           <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
@@ -347,23 +364,58 @@ export default function SessionRunner() {
               Current Exercise
             </div>
 
-            <h3 style={{ marginTop: 0 }}>{exercise.name}</h3>
+            <div style={{ marginBottom: 14 }}>
+              <label
+                htmlFor="exercise-select"
+                style={{ display: "block", marginBottom: 6, fontSize: 14 }}
+              >
+                Exercise
+              </label>
+              <select
+                id="exercise-select"
+                value={selectedExerciseId}
+                onChange={(e) =>
+                  setSelectedExerciseId(e.target.value as ExerciseDefinitionId)
+                }
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "#121933",
+                  color: "white"
+                }}
+              >
+                {EXERCISE_PRESCRIPTIONS.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <h3 style={{ marginTop: 0 }}>{prescription.name}</h3>
             <p style={{ color: "#aab6d3", marginBottom: 10 }}>
-              {exercise.description}
+              {prescription.description}
             </p>
 
             <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
               <div>
-                Target: <strong>{exercise.targetLabel}</strong>
+                Target: <strong>{prescription.target.label}</strong>
               </div>
-              {exercise.requiresHold && (
+              {prescription.hold.required && (
                 <div>
-                  Hold: <strong>{exercise.holdDurationMs / 1000}s</strong>
+                  Hold: <strong>{prescription.hold.durationMs / 1000}s</strong>
                 </div>
               )}
               <div>
-                Reps: <strong>{exercise.repTarget}</strong>
+                Reps: <strong>{prescription.repTarget}</strong>
               </div>
+              {prescription.tempo?.label && (
+                <div>
+                  Tempo: <strong>{prescription.tempo.label}</strong>
+                </div>
+              )}
             </div>
 
             <div style={{ display: "grid", gap: 8, marginTop: 14, fontSize: 14 }}>
@@ -374,10 +426,10 @@ export default function SessionRunner() {
                 Phase: <strong>{phase}</strong>
               </div>
               <div>
-                Reps done: <strong>{repCount} / {exercise.repTarget}</strong>
+                Reps done: <strong>{repCount} / {prescription.repTarget}</strong>
               </div>
               <div>
-                Active elevation: <strong>{activeElevation ?? "—"}</strong>
+                Active metric: <strong>{activeMetricValue ?? "—"}</strong>
               </div>
             </div>
 
