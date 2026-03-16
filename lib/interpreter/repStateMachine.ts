@@ -30,7 +30,8 @@ export function updateRepState(
   activeMetricValue: number | null,
   prescription: ExercisePrescription,
   nowMs: number,
-  balanceOk: boolean
+  balanceOk: boolean,
+  isolationOk: boolean
 ): RuntimeRepState {
   const value = activeMetricValue ?? 0;
 
@@ -130,6 +131,9 @@ export function updateRepState(
         } else if (!balanceOk) {
           justFailedRep = true;
           lastRepEvaluation = buildRepEvaluation("failed", "failed_balance");
+        } else if (!isolationOk) {
+          justFailedRep = true;
+          lastRepEvaluation = buildRepEvaluation("failed", "failed_isolation");
         } else {
           repCount += 1;
           justCompletedRep = true;
