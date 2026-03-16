@@ -7,11 +7,15 @@ import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
+import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
+import { createInitialRepState, type RepState } from "@/lib/interpreter/repStateMachine";
+import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
+import type { CoachingDecision } from "@/lib/types/coaching";
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -30,15 +34,28 @@ function createEmptyFeatures(): MovementFeatures {
   };
 }
 
+function createIdleCoaching(): CoachingDecision {
+  return {
+    code: "idle",
+    priority: "info",
+    message: "Start the camera and step into frame."
+  };
+}
+
 export default function SessionRunner() {
   const exercise = EXERCISE_LIBRARY[0];
 
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const repStateRef = useRef<RepState>(createInitialRepState());
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
+  const [repCount, setRepCount] = useState(0);
+  const [phase, setPhase] = useState("ready");
+  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
+  const [activeElevation, setActiveElevation] = useState<number | null>(null);
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
@@ -71,11 +88,25 @@ export default function SessionRunner() {
 
           setFrame(normalized);
 
-          if (normalized.personDetected) {
-            setFeatures(extractMovementFeatures(normalized));
-          } else {
-            setFeatures(createEmptyFeatures());
-          }
+          const nextFeatures = normalized.personDetected
+            ? extractMovementFeatures(normalized)
+            : createEmptyFeatures();
+
+          setFeatures(nextFeatures);
+
+          const output = interpretMovement(
+            repStateRef.current,
+            nextFeatures,
+            exercise,
+            normalized.personDetected
+          );
+
+          repStateRef.current = output.repState;
+
+          setRepCount(output.repState.repCount);
+          setPhase(output.repState.phase);
+          setActiveElevation(output.activeElevationDeg);
+          setCoaching(buildCoachingDecision(output));
         } catch (error) {
           setEngineStatus("error");
           setEngineError(
@@ -98,6 +129,14 @@ export default function SessionRunner() {
         error instanceof Error ? error.message : "Could not initialize pose detector."
       );
     }
+  }
+
+  function resetExercise() {
+    repStateRef.current = createInitialRepState();
+    setRepCount(0);
+    setPhase("ready");
+    setActiveElevation(null);
+    setCoaching(createIdleCoaching());
   }
 
   useEffect(() => {
@@ -130,7 +169,7 @@ export default function SessionRunner() {
         >
           <h3 style={{ marginTop: 0 }}>Vision Surface</h3>
           <p style={{ color: "#aab6d3" }}>
-            Start the camera to feed live landmarks into the biomechanics engine.
+            Start the camera and perform the current exercise.
           </p>
 
           <CameraViewport onVideoReady={beginTracking} />
@@ -165,8 +204,31 @@ export default function SessionRunner() {
             <h3 style={{ marginTop: 0 }}>{exercise.name}</h3>
             <p style={{ color: "#aab6d3" }}>{exercise.description}</p>
 
-            <div style={{ marginTop: 12, fontSize: 14, color: "#aab6d3" }}>
-              Engine status: <strong style={{ color: "white" }}>{engineStatus}</strong>
+            <div style={{ display: "grid", gap: 8, marginTop: 12, fontSize: 14 }}>
+              <div>
+                Engine status: <strong>{engineStatus}</strong>
+              </div>
+              <div>
+                Phase: <strong>{phase}</strong>
+              </div>
+              <div>
+                Reps: <strong>{repCount} / {exercise.repTarget}</strong>
+              </div>
+              <div>
+                Active elevation: <strong>{activeElevation ?? "—"}</strong>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button
+                onClick={resetExercise}
+                style={{
+                  background: "rgba(255,255,255,0.12)",
+                  color: "white"
+                }}
+              >
+                Reset Exercise
+              </button>
             </div>
 
             {engineError && (
@@ -176,11 +238,7 @@ export default function SessionRunner() {
 
           <CoachingPanel
             title="Coaching"
-            message={
-              frame?.personDetected
-                ? "Pose detected. We are now computing real movement features from live landmarks."
-                : "Start the camera and step into frame."
-            }
+            message={coaching.message}
           />
 
           <DebugPanel features={features} />
