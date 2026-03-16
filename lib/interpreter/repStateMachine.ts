@@ -149,9 +149,9 @@ export function updateRepState(
       break;
     }
 
-    case "bottom":
-    case "complete":
+    case "bottom": {
       break;
+    }
   }
 
   return {
