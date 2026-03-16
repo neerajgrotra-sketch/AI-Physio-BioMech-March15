@@ -9,6 +9,7 @@ import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
 
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
+import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
 import {
@@ -17,6 +18,7 @@ import {
 } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
+import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 
 import type { MovementFeatures } from "@/lib/types/movement";
@@ -56,6 +58,7 @@ export default function SessionRunner() {
   const rafRef = useRef<number | null>(null);
   const trackingActiveRef = useRef<boolean>(false);
   const repStateRef = useRef<RepState>(createInitialRepState());
+  const featureHistoryRef = useRef<FeatureHistory>(new FeatureHistory(5));
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
@@ -77,6 +80,8 @@ export default function SessionRunner() {
     }
 
     videoRef.current = null;
+    featureHistoryRef.current.clear();
+
     setEngineStatus("idle");
     setEngineError("");
     setFrame(null);
@@ -91,6 +96,7 @@ export default function SessionRunner() {
       setEngineError("");
       videoRef.current = video;
       trackingActiveRef.current = true;
+      featureHistoryRef.current.clear();
 
       if (!detectorRef.current) {
         detectorRef.current = await createPoseDetector();
@@ -130,15 +136,21 @@ export default function SessionRunner() {
 
           setFrame(normalized);
 
-          const nextFeatures = normalized.personDetected
+          const rawFeatures = normalized.personDetected
             ? extractMovementFeatures(normalized)
             : createEmptyFeatures();
 
-          setFeatures(nextFeatures);
+          featureHistoryRef.current.push(rawFeatures);
+
+          const smoothedFeatures = normalized.personDetected
+            ? smoothMovementFeatures(featureHistoryRef.current.getAll())
+            : createEmptyFeatures();
+
+          setFeatures(smoothedFeatures);
 
           const output = interpretMovement(
             repStateRef.current,
-            nextFeatures,
+            smoothedFeatures,
             exercise,
             normalized.personDetected
           );
@@ -188,6 +200,7 @@ export default function SessionRunner() {
 
   function resetExercise() {
     repStateRef.current = createInitialRepState();
+    featureHistoryRef.current.clear();
     setRepCount(0);
     setPhase("ready");
     setActiveElevation(null);
