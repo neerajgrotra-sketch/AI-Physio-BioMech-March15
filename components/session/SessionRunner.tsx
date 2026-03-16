@@ -60,6 +60,9 @@ export default function SessionRunner() {
   const repStateRef = useRef<RepState>(createInitialRepState());
   const featureHistoryRef = useRef(new FeatureHistory(5));
 
+  const stickyCoachingUntilRef = useRef<number>(0);
+  const stickyCoachingRef = useRef<CoachingDecision | null>(null);
+
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
   const [repCount, setRepCount] = useState(0);
@@ -70,16 +73,22 @@ export default function SessionRunner() {
     "idle" | "loading" | "running" | "error"
   >("idle");
   const [engineError, setEngineError] = useState("");
-  const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
+
+  function setStickyCoaching(decision: CoachingDecision, durationMs = 2200) {
+    stickyCoachingRef.current = decision;
+    stickyCoachingUntilRef.current = Date.now() + durationMs;
+    setCoaching(decision);
+  }
 
   function resetExerciseState() {
     repStateRef.current = createInitialRepState();
     featureHistoryRef.current.clear();
+    stickyCoachingRef.current = null;
+    stickyCoachingUntilRef.current = 0;
 
     setRepCount(0);
     setPhase("ready");
     setActiveElevation(null);
-    setHoldRemainingMs(null);
     setCoaching(createIdleCoaching());
   }
 
@@ -177,16 +186,49 @@ export default function SessionRunner() {
           setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
           setActiveElevation(output.activeElevationDeg);
-          setHoldRemainingMs(output.holdRemainingMs ?? null);
 
-          if (output.holdRemainingMs !== null) {
+          const now = Date.now();
+
+          // Sticky event messages first
+          if (output.repState.justFailedRep) {
+            const failureDecision = buildCoachingDecision(output);
+            setStickyCoaching(
+              {
+                ...failureDecision,
+                message: `${failureDecision.message} Begin again when ready.`
+              },
+              2600
+            );
+          } else if (output.repState.justCompletedRep) {
+            setStickyCoaching(
+              {
+                code: "good_rep",
+                priority: "encourage",
+                message: "Good repetition. Begin again when ready."
+              },
+              1800
+            );
+          } else if (output.repState.justCompletedHold) {
+            setStickyCoaching(
+              {
+                code: "hold_complete",
+                priority: "encourage",
+                message: "Good. Now lower slowly."
+              },
+              1200
+            );
+          } else if (output.holdRemainingMs !== null) {
             const seconds = Math.max(1, Math.ceil(output.holdRemainingMs / 1000));
             setCoaching({
               code: "keep_holding",
               priority: "info",
               message: `Hold ${seconds}`
             });
+          } else if (stickyCoachingRef.current && now < stickyCoachingUntilRef.current) {
+            setCoaching(stickyCoachingRef.current);
           } else {
+            stickyCoachingRef.current = null;
+            stickyCoachingUntilRef.current = 0;
             setCoaching(buildCoachingDecision(output));
           }
         } catch (error) {
