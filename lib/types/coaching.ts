@@ -6,6 +6,9 @@ export type CoachingCode =
   | "person_not_detected"
   | "good_rep"
   | "lift_higher"
+  | "hold_position"
+  | "keep_holding"
+  | "hold_complete"
   | "lower_slowly"
   | "keep_balanced"
   | "exercise_complete";
