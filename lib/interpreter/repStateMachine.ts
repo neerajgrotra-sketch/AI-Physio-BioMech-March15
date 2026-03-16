@@ -1,80 +1,67 @@
-import type { ExerciseDefinition, ExercisePhase } from "@/lib/types/exercise";
+import type { MovementPhase, ExercisePrescription } from "@/lib/types/exercise";
+import type { RepEvaluation, RuntimeRepState } from "@/lib/engine/runtimeTypes";
 
-export type RepFailureReason =
-  | "failed_hold"
-  | "failed_height"
-  | "failed_balance"
-  | null;
+function buildRepEvaluation(
+  outcome: RepEvaluation["outcome"],
+  reason: RepEvaluation["reason"]
+): RepEvaluation {
+  return { outcome, reason };
+}
 
-export type RepState = {
-  phase: ExercisePhase;
-  repCount: number;
-  justCompletedRep: boolean;
-
-  enteredTopAtMs: number | null;
-  holdSatisfied: boolean;
-  everReachedTarget: boolean;
-  justEnteredHolding: boolean;
-  justCompletedHold: boolean;
-
-  lastRepFailureReason: RepFailureReason;
-  justFailedRep: boolean;
-};
-
-export function createInitialRepState(): RepState {
+export function createInitialRepState(): RuntimeRepState {
   return {
     phase: "ready",
     repCount: 0,
+
     justCompletedRep: false,
+    justFailedRep: false,
+    justCompletedHold: false,
 
     enteredTopAtMs: null,
     holdSatisfied: false,
     everReachedTarget: false,
-    justEnteredHolding: false,
-    justCompletedHold: false,
 
-    lastRepFailureReason: null,
-    justFailedRep: false
+    lastRepEvaluation: buildRepEvaluation("none", null)
   };
 }
 
 export function updateRepState(
-  currentState: RepState,
-  activeElevationDeg: number | null,
-  exercise: ExerciseDefinition,
+  currentState: RuntimeRepState,
+  activeMetricValue: number | null,
+  prescription: ExercisePrescription,
   nowMs: number,
   balanceOk: boolean
-): RepState {
-  const elevation = activeElevationDeg ?? 0;
+): RuntimeRepState {
+  const value = activeMetricValue ?? 0;
 
-  let nextPhase = currentState.phase;
-  let nextRepCount = currentState.repCount;
+  let phase: MovementPhase = currentState.phase;
+  let repCount = currentState.repCount;
+
   let justCompletedRep = false;
+  let justFailedRep = false;
+  let justCompletedHold = false;
 
   let enteredTopAtMs = currentState.enteredTopAtMs;
   let holdSatisfied = currentState.holdSatisfied;
   let everReachedTarget = currentState.everReachedTarget;
-  let justEnteredHolding = false;
-  let justCompletedHold = false;
 
-  let lastRepFailureReason: RepFailureReason = null;
-  let justFailedRep = false;
+  let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
 
-  if (currentState.phase === "completed") {
+  if (currentState.phase === "complete") {
     return {
       ...currentState,
       justCompletedRep: false,
-      justEnteredHolding: false,
-      justCompletedHold: false,
       justFailedRep: false,
-      lastRepFailureReason: null
+      justCompletedHold: false,
+      lastRepEvaluation: buildRepEvaluation("none", null)
     };
   }
 
   switch (currentState.phase) {
+    case "idle":
     case "ready": {
-      if (elevation > exercise.startThresholdDeg) {
-        nextPhase = "lifting";
+      if (value > prescription.startThreshold) {
+        phase = "lifting";
       }
 
       enteredTopAtMs = null;
@@ -84,16 +71,16 @@ export function updateRepState(
     }
 
     case "lifting": {
-      if (elevation >= exercise.targetThresholdDeg) {
-        nextPhase = "top";
+      if (value >= prescription.targetThreshold) {
+        phase = "top";
         enteredTopAtMs = nowMs;
         everReachedTarget = true;
 
-        if (!exercise.requiresHold || exercise.holdDurationMs <= 0) {
+        if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
           holdSatisfied = true;
         }
-      } else if (elevation < exercise.startThresholdDeg) {
-        nextPhase = "ready";
+      } else if (value < prescription.startThreshold) {
+        phase = "ready";
         enteredTopAtMs = null;
         holdSatisfied = false;
         everReachedTarget = false;
@@ -102,53 +89,57 @@ export function updateRepState(
     }
 
     case "top": {
-      if (elevation < exercise.targetThresholdDeg - exercise.topToleranceDeg) {
-        nextPhase = "lifting";
+      const tolerance = prescription.target.tolerance ?? 0;
+
+      if (value < prescription.targetThreshold - tolerance) {
+        phase = "lifting";
         enteredTopAtMs = null;
-      } else if (!exercise.requiresHold || exercise.holdDurationMs <= 0) {
-        nextPhase = "lowering";
+      } else if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
+        phase = "lowering";
       } else {
-        nextPhase = "holding";
-        justEnteredHolding = true;
+        phase = "holding";
       }
       break;
     }
 
     case "holding": {
-      if (elevation < exercise.targetThresholdDeg - exercise.topToleranceDeg) {
-        nextPhase = "lowering";
+      const tolerance = prescription.target.tolerance ?? 0;
+
+      if (value < prescription.targetThreshold - tolerance) {
+        phase = "lowering";
       } else if (enteredTopAtMs !== null) {
         const heldForMs = nowMs - enteredTopAtMs;
 
-        if (!holdSatisfied && heldForMs >= exercise.holdDurationMs) {
+        if (!holdSatisfied && heldForMs >= prescription.hold.durationMs) {
           holdSatisfied = true;
           justCompletedHold = true;
-          nextPhase = "lowering";
+          phase = "lowering";
         }
       }
       break;
     }
 
     case "lowering": {
-      if (elevation <= exercise.finishThresholdDeg) {
+      if (value <= prescription.finishThreshold) {
         if (!everReachedTarget) {
           justFailedRep = true;
-          lastRepFailureReason = "failed_height";
-        } else if (exercise.requiresHold && !holdSatisfied) {
+          lastRepEvaluation = buildRepEvaluation("failed", "failed_height");
+        } else if (prescription.hold.required && !holdSatisfied) {
           justFailedRep = true;
-          lastRepFailureReason = "failed_hold";
+          lastRepEvaluation = buildRepEvaluation("failed", "failed_hold");
         } else if (!balanceOk) {
           justFailedRep = true;
-          lastRepFailureReason = "failed_balance";
+          lastRepEvaluation = buildRepEvaluation("failed", "failed_balance");
         } else {
-          nextRepCount += 1;
+          repCount += 1;
           justCompletedRep = true;
+          lastRepEvaluation = buildRepEvaluation("success", null);
         }
 
-        if (nextRepCount >= exercise.repTarget) {
-          nextPhase = "completed";
+        if (repCount >= prescription.repTarget) {
+          phase = "complete";
         } else {
-          nextPhase = "ready";
+          phase = "ready";
         }
 
         enteredTopAtMs = null;
@@ -157,20 +148,24 @@ export function updateRepState(
       }
       break;
     }
+
+    case "bottom":
+    case "complete":
+      break;
   }
 
   return {
-    phase: nextPhase,
-    repCount: nextRepCount,
+    phase,
+    repCount,
+
     justCompletedRep,
+    justFailedRep,
+    justCompletedHold,
 
     enteredTopAtMs,
     holdSatisfied,
     everReachedTarget,
-    justEnteredHolding,
-    justCompletedHold,
 
-    lastRepFailureReason,
-    justFailedRep
+    lastRepEvaluation
   };
 }
