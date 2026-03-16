@@ -32,17 +32,20 @@ export const leftArmRaisePrescription: ExercisePrescription = {
 
   qualityLimits: {
     maxTorsoLeanDeg: 18,
-    maxShoulderTiltDeg: 15
+    maxShoulderTiltDeg: 15,
+    maxOppositeArmElevationDeg: 35
   },
 
   coaching: {
     intro: "Begin when ready.",
-    lift: "Lift to shoulder height.",
+    lift: "Lift your left arm to shoulder height.",
     hold: "Hold at the top.",
     lower: "Lower with control.",
     success: "Good repetition.",
-    failedHeight: "That rep did not count. Lift a little higher and try again.",
+    failedHeight: "That rep did not count. Lift your left arm a little higher and try again.",
     failedHold: "That rep did not count. Hold a little longer at the top and try again.",
-    failedBalance: "That rep did not count. Try to stay upright and balanced."
+    failedBalance: "That rep did not count. Try to stay upright and balanced.",
+    failedIsolation:
+      "That rep did not count. Keep your right arm relaxed at your side and raise only your left arm."
   }
 };
