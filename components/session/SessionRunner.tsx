@@ -10,13 +10,13 @@ import DebugPanel from "@/components/debug/DebugPanel";
 
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
-import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
 import {
   createInitialRepState,
   type RepState
 } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
+import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
@@ -56,20 +56,32 @@ export default function SessionRunner() {
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
-  const trackingActiveRef = useRef<boolean>(false);
+  const trackingActiveRef = useRef(false);
   const repStateRef = useRef<RepState>(createInitialRepState());
-  const featureHistoryRef = useRef<FeatureHistory>(new FeatureHistory(5));
+  const featureHistoryRef = useRef(new FeatureHistory(5));
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
-  const [repCount, setRepCount] = useState<number>(0);
-  const [phase, setPhase] = useState<string>("ready");
+  const [repCount, setRepCount] = useState(0);
+  const [phase, setPhase] = useState("ready");
   const [activeElevation, setActiveElevation] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
-  const [engineError, setEngineError] = useState<string>("");
+  const [engineError, setEngineError] = useState("");
+  const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
+
+  function resetExerciseState() {
+    repStateRef.current = createInitialRepState();
+    featureHistoryRef.current.clear();
+
+    setRepCount(0);
+    setPhase("ready");
+    setActiveElevation(null);
+    setHoldRemainingMs(null);
+    setCoaching(createIdleCoaching());
+  }
 
   function stopTracking() {
     trackingActiveRef.current = false;
@@ -80,14 +92,13 @@ export default function SessionRunner() {
     }
 
     videoRef.current = null;
-    featureHistoryRef.current.clear();
 
     setEngineStatus("idle");
     setEngineError("");
     setFrame(null);
     setFeatures(createEmptyFeatures());
-    setActiveElevation(null);
-    setCoaching(createIdleCoaching());
+
+    resetExerciseState();
   }
 
   async function beginTracking(video: HTMLVideoElement) {
@@ -96,7 +107,8 @@ export default function SessionRunner() {
       setEngineError("");
       videoRef.current = video;
       trackingActiveRef.current = true;
-      featureHistoryRef.current.clear();
+
+      resetExerciseState();
 
       if (!detectorRef.current) {
         detectorRef.current = await createPoseDetector();
@@ -140,7 +152,11 @@ export default function SessionRunner() {
             ? extractMovementFeatures(normalized)
             : createEmptyFeatures();
 
-          featureHistoryRef.current.push(rawFeatures);
+          if (normalized.personDetected) {
+            featureHistoryRef.current.push(rawFeatures);
+          } else {
+            featureHistoryRef.current.clear();
+          }
 
           const smoothedFeatures = normalized.personDetected
             ? smoothMovementFeatures(featureHistoryRef.current.getAll())
@@ -161,7 +177,18 @@ export default function SessionRunner() {
           setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
           setActiveElevation(output.activeElevationDeg);
-          setCoaching(buildCoachingDecision(output));
+          setHoldRemainingMs(output.holdRemainingMs ?? null);
+
+          if (output.holdRemainingMs !== null) {
+            const seconds = (output.holdRemainingMs / 1000).toFixed(1);
+            setCoaching({
+              code: "keep_holding",
+              priority: "info",
+              message: `Hold ${seconds}s`
+            });
+          } else {
+            setCoaching(buildCoachingDecision(output));
+          }
         } catch (error) {
           if (!trackingActiveRef.current) return;
 
@@ -200,12 +227,7 @@ export default function SessionRunner() {
   }
 
   function resetExercise() {
-    repStateRef.current = createInitialRepState();
-    featureHistoryRef.current.clear();
-    setRepCount(0);
-    setPhase("ready");
-    setActiveElevation(null);
-    setCoaching(createIdleCoaching());
+    resetExerciseState();
   }
 
   useEffect(() => {
@@ -284,9 +306,25 @@ export default function SessionRunner() {
             </div>
 
             <h3 style={{ marginTop: 0 }}>{exercise.name}</h3>
-            <p style={{ color: "#aab6d3" }}>{exercise.description}</p>
+            <p style={{ color: "#aab6d3", marginBottom: 10 }}>
+              {exercise.description}
+            </p>
 
-            <div style={{ display: "grid", gap: 8, marginTop: 12, fontSize: 14 }}>
+            <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
+              <div>
+                Target: <strong>{exercise.targetLabel}</strong>
+              </div>
+              {exercise.requiresHold && (
+                <div>
+                  Hold: <strong>{exercise.holdDurationMs / 1000}s</strong>
+                </div>
+              )}
+              <div>
+                Reps: <strong>{exercise.repTarget}</strong>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 8, marginTop: 14, fontSize: 14 }}>
               <div>
                 Engine status: <strong>{engineStatus}</strong>
               </div>
@@ -294,11 +332,17 @@ export default function SessionRunner() {
                 Phase: <strong>{phase}</strong>
               </div>
               <div>
-                Reps: <strong>{repCount} / {exercise.repTarget}</strong>
+                Reps done: <strong>{repCount} / {exercise.repTarget}</strong>
               </div>
               <div>
                 Active elevation: <strong>{activeElevation ?? "—"}</strong>
               </div>
+              {holdRemainingMs !== null && (
+                <div>
+                  Hold remaining:{" "}
+                  <strong>{(holdRemainingMs / 1000).toFixed(1)}s</strong>
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 14 }}>
