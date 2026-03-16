@@ -53,11 +53,31 @@ function getEffectiveActiveMetricValue(
 
     if (left === null || right === null) return null;
 
-    // Both sides must meet the target.
     return Math.min(left, right);
   }
 
   return getMetricValue(features, prescription.target.metric);
+}
+
+function getIsolationOk(
+  features: MovementFeatures,
+  prescription: ExercisePrescription
+): boolean {
+  const limit = prescription.qualityLimits?.maxOppositeArmElevationDeg;
+
+  if (limit === undefined) return true;
+
+  if (prescription.side === "right") {
+    const opposite = features.leftArmElevationDeg;
+    return opposite === null || opposite <= limit;
+  }
+
+  if (prescription.side === "left") {
+    const opposite = features.rightArmElevationDeg;
+    return opposite === null || opposite <= limit;
+  }
+
+  return true;
 }
 
 export function interpretMovement(
@@ -74,12 +94,15 @@ export function interpretMovement(
     features.torsoLeanDeg === null ||
     features.torsoLeanDeg <= maxTorsoLeanDeg;
 
+  const isolationOk = getIsolationOk(features, prescription);
+
   const repState = updateRepState(
     currentRepState,
     activeMetricValue,
     prescription,
     frameContext.timestampMs,
-    balanceOk
+    balanceOk,
+    isolationOk
   );
 
   let holdRemainingMs: number | null = null;
@@ -108,6 +131,8 @@ export function interpretMovement(
       primaryIssue = "rep_failed_height";
     } else if (repState.lastRepEvaluation.reason === "failed_balance") {
       primaryIssue = "rep_failed_balance";
+    } else if (repState.lastRepEvaluation.reason === "failed_isolation") {
+      primaryIssue = "rep_failed_isolation";
     }
   } else if (repState.justCompletedHold) {
     primaryIssue = "hold_complete";
