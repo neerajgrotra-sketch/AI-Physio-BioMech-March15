@@ -32,19 +32,23 @@ export function interpretMovement(
 
   if (!personDetected) {
     primaryIssue = "person_not_detected";
+  } else if (repState.phase === "completed") {
+    primaryIssue = "exercise_complete";
   } else if (repState.justCompletedRep) {
     primaryIssue = "good_rep";
-  } else if (repState.phase === "lifting" && (activeElevationDeg ?? 0) < exercise.targetThresholdDeg - 15) {
-    primaryIssue = "lift_higher";
   } else if (
     features.torsoLeanDeg !== null &&
     features.torsoLeanDeg > 18
   ) {
     primaryIssue = "keep_balanced";
+  } else if (
+    repState.phase === "lifting" &&
+    activeElevationDeg !== null &&
+    activeElevationDeg < exercise.targetThresholdDeg - 15
+  ) {
+    primaryIssue = "lift_higher";
   } else if (repState.phase === "lowering") {
     primaryIssue = "lower_slowly";
-  } else if (repState.phase === "completed") {
-    primaryIssue = "exercise_complete";
   } else if (repState.phase === "ready") {
     primaryIssue = "start_exercise";
   }
