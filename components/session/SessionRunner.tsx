@@ -12,9 +12,7 @@ import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatu
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { EXERCISE_PRESCRIPTIONS } from "@/lib/exercises";
 import type { ExerciseDefinitionId } from "@/lib/exercises/exerciseTypes";
-import {
-  createInitialRepState
-} from "@/lib/interpreter/repStateMachine";
+import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
@@ -25,6 +23,7 @@ import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
 import type { CoachingDecision } from "@/lib/types/coaching";
 import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
+import type { ExercisePrescription } from "@/lib/types/exercise";
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -63,6 +62,7 @@ export default function SessionRunner() {
     );
   }, [selectedExerciseId]);
 
+  const prescriptionRef = useRef<ExercisePrescription>(prescription);
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -83,6 +83,10 @@ export default function SessionRunner() {
     "idle" | "loading" | "running" | "error"
   >("idle");
   const [engineError, setEngineError] = useState("");
+
+  useEffect(() => {
+    prescriptionRef.current = prescription;
+  }, [prescription]);
 
   function setStickyCoaching(decision: CoachingDecision, durationMs = 2200) {
     stickyCoachingRef.current = decision;
@@ -140,6 +144,7 @@ export default function SessionRunner() {
 
         const liveVideo = videoRef.current;
         const detector = detectorRef.current;
+        const activePrescription = prescriptionRef.current;
 
         if (!liveVideo || !detector) return;
 
@@ -186,7 +191,7 @@ export default function SessionRunner() {
           const output = interpretMovement(
             repStateRef.current,
             smoothedFeatures,
-            prescription,
+            activePrescription,
             {
               timestampMs: Date.now(),
               personDetected: normalized.personDetected,
@@ -204,7 +209,7 @@ export default function SessionRunner() {
           const now = Date.now();
 
           if (output.repState.justFailedRep) {
-            const failureDecision = buildCoachingDecision(output, prescription);
+            const failureDecision = buildCoachingDecision(output, activePrescription);
             setStickyCoaching(
               {
                 ...failureDecision,
@@ -217,7 +222,7 @@ export default function SessionRunner() {
               {
                 code: "good_rep",
                 priority: "encourage",
-                message: `${prescription.coaching.success} Begin again when ready.`
+                message: `${activePrescription.coaching.success} Begin again when ready.`
               },
               1800
             );
@@ -226,7 +231,7 @@ export default function SessionRunner() {
               {
                 code: "hold_complete",
                 priority: "encourage",
-                message: prescription.coaching.lower
+                message: activePrescription.coaching.lower
               },
               1200
             );
@@ -242,7 +247,7 @@ export default function SessionRunner() {
           } else {
             stickyCoachingRef.current = null;
             stickyCoachingUntilRef.current = 0;
-            setCoaching(buildCoachingDecision(output, prescription));
+            setCoaching(buildCoachingDecision(output, activePrescription));
           }
         } catch (error) {
           if (!trackingActiveRef.current) return;
