@@ -1,0 +1,19 @@
+html,body{
+margin:0;
+padding:0;
+font-family:Arial, Helvetica, sans-serif;
+background:#0e1324;
+color:white;
+}
+
+main{
+max-width:1200px;
+margin:auto;
+}
+
+button{
+padding:10px 16px;
+border-radius:8px;
+border:none;
+cursor:pointer;
+}
