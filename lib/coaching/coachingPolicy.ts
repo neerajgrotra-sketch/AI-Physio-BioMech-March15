@@ -42,6 +42,15 @@ export function buildCoachingDecision(
         message: prescription.coaching.failedBalance
       };
 
+    case "rep_failed_isolation":
+      return {
+        code: "rep_failed_isolation",
+        priority: "correct",
+        message:
+          prescription.coaching.failedIsolation ??
+          "That rep did not count. Use only the instructed side and try again."
+      };
+
     case "lift_higher":
       return {
         code: "lift_higher",
