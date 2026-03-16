@@ -180,11 +180,11 @@ export default function SessionRunner() {
           setHoldRemainingMs(output.holdRemainingMs ?? null);
 
           if (output.holdRemainingMs !== null) {
-            const seconds = (output.holdRemainingMs / 1000).toFixed(1);
+            const seconds = Math.max(1, Math.ceil(output.holdRemainingMs / 1000));
             setCoaching({
               code: "keep_holding",
               priority: "info",
-              message: `Hold ${seconds}s`
+              message: `Hold ${seconds}`
             });
           } else {
             setCoaching(buildCoachingDecision(output));
@@ -337,12 +337,6 @@ export default function SessionRunner() {
               <div>
                 Active elevation: <strong>{activeElevation ?? "—"}</strong>
               </div>
-              {holdRemainingMs !== null && (
-                <div>
-                  Hold remaining:{" "}
-                  <strong>{(holdRemainingMs / 1000).toFixed(1)}s</strong>
-                </div>
-              )}
             </div>
 
             <div style={{ marginTop: 14 }}>
