@@ -26,6 +26,27 @@ export function buildCoachingDecision(
         message: "Lift a little higher."
       };
 
+    case "hold_position":
+      return {
+        code: "hold_position",
+        priority: "info",
+        message: "Good. Hold at the top."
+      };
+
+    case "keep_holding":
+      return {
+        code: "keep_holding",
+        priority: "info",
+        message: "Keep holding."
+      };
+
+    case "hold_complete":
+      return {
+        code: "hold_complete",
+        priority: "encourage",
+        message: "Good. Now lower slowly."
+      };
+
     case "lower_slowly":
       return {
         code: "lower_slowly",
