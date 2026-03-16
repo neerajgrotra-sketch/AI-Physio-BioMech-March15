@@ -4,20 +4,30 @@ export type RepState = {
   phase: ExercisePhase;
   repCount: number;
   justCompletedRep: boolean;
+
+  enteredTopAtMs: number | null;
+  holdSatisfied: boolean;
+  justEnteredHolding: boolean;
+  justCompletedHold: boolean;
 };
 
 export function createInitialRepState(): RepState {
   return {
     phase: "ready",
     repCount: 0,
-    justCompletedRep: false
+    justCompletedRep: false,
+    enteredTopAtMs: null,
+    holdSatisfied: false,
+    justEnteredHolding: false,
+    justCompletedHold: false
   };
 }
 
 export function updateRepState(
   currentState: RepState,
   activeElevationDeg: number | null,
-  exercise: ExerciseDefinition
+  exercise: ExerciseDefinition,
+  nowMs: number
 ): RepState {
   const elevation = activeElevationDeg ?? 0;
 
@@ -25,32 +35,81 @@ export function updateRepState(
   let nextRepCount = currentState.repCount;
   let justCompletedRep = false;
 
+  let enteredTopAtMs = currentState.enteredTopAtMs;
+  let holdSatisfied = currentState.holdSatisfied;
+  let justEnteredHolding = false;
+  let justCompletedHold = false;
+
   if (currentState.phase === "completed") {
-    return currentState;
+    return {
+      ...currentState,
+      justCompletedRep: false,
+      justEnteredHolding: false,
+      justCompletedHold: false
+    };
   }
 
   switch (currentState.phase) {
-    case "ready":
+    case "ready": {
       if (elevation > exercise.startThresholdDeg) {
         nextPhase = "lifting";
       }
+      enteredTopAtMs = null;
+      holdSatisfied = false;
       break;
+    }
 
-    case "lifting":
+    case "lifting": {
       if (elevation >= exercise.targetThresholdDeg) {
         nextPhase = "top";
+        enteredTopAtMs = nowMs;
+
+        if (!exercise.requiresHold || exercise.holdDurationMs <= 0) {
+          holdSatisfied = true;
+        }
       } else if (elevation < exercise.startThresholdDeg) {
         nextPhase = "ready";
+        enteredTopAtMs = null;
+        holdSatisfied = false;
       }
       break;
+    }
 
-    case "top":
-      if (elevation < exercise.targetThresholdDeg - 8) {
+    case "top": {
+      if (elevation < exercise.targetThresholdDeg - exercise.topToleranceDeg) {
+        nextPhase = "lifting";
+        enteredTopAtMs = null;
+        holdSatisfied = false;
+      } else if (!exercise.requiresHold || exercise.holdDurationMs <= 0) {
         nextPhase = "lowering";
+      } else {
+        nextPhase = "holding";
+        justEnteredHolding = true;
       }
       break;
+    }
 
-    case "lowering":
+    case "holding": {
+      if (elevation < exercise.targetThresholdDeg - exercise.topToleranceDeg) {
+        nextPhase = "lifting";
+        enteredTopAtMs = null;
+        holdSatisfied = false;
+      } else if (enteredTopAtMs !== null) {
+        const heldForMs = nowMs - enteredTopAtMs;
+
+        if (!holdSatisfied && heldForMs >= exercise.holdDurationMs) {
+          holdSatisfied = true;
+          justCompletedHold = true;
+        }
+
+        if (holdSatisfied) {
+          nextPhase = "lowering";
+        }
+      }
+      break;
+    }
+
+    case "lowering": {
       if (elevation <= exercise.finishThresholdDeg) {
         nextRepCount += 1;
         justCompletedRep = true;
@@ -60,13 +119,21 @@ export function updateRepState(
         } else {
           nextPhase = "ready";
         }
+
+        enteredTopAtMs = null;
+        holdSatisfied = false;
       }
       break;
+    }
   }
 
   return {
     phase: nextPhase,
     repCount: nextRepCount,
-    justCompletedRep
+    justCompletedRep,
+    enteredTopAtMs,
+    holdSatisfied,
+    justEnteredHolding,
+    justCompletedHold
   };
 }
