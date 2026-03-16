@@ -37,7 +37,7 @@ export default function PoseCanvasOverlay({
     for (const landmark of Object.values(frame.landmarks)) {
       if (!landmark) continue;
 
-      const x = landmark.x * width;
+      const x = (1 - landmark.x) * width;
       const y = landmark.y * height;
 
       ctx.beginPath();
