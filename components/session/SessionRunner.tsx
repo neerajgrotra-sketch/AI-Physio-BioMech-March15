@@ -152,7 +152,8 @@ export default function SessionRunner() {
             repStateRef.current,
             smoothedFeatures,
             exercise,
-            normalized.personDetected
+            normalized.personDetected,
+            Date.now()
           );
 
           repStateRef.current = output.repState;
