@@ -16,14 +16,35 @@ export function buildCoachingDecision(
       return {
         code: "good_rep",
         priority: "encourage",
-        message: "Good repetition. Keep going."
+        message: "Good repetition."
+      };
+
+    case "rep_failed_hold":
+      return {
+        code: "rep_failed_hold",
+        priority: "correct",
+        message: "That rep did not count. Hold a little longer at the top and try again."
+      };
+
+    case "rep_failed_height":
+      return {
+        code: "rep_failed_height",
+        priority: "correct",
+        message: "That rep did not count. Lift a little higher and try again."
+      };
+
+    case "rep_failed_balance":
+      return {
+        code: "rep_failed_balance",
+        priority: "correct",
+        message: "That rep did not count. Try to stay upright and balanced."
       };
 
     case "lift_higher":
       return {
         code: "lift_higher",
         priority: "correct",
-        message: "Lift a little higher."
+        message: "Lift to the target height."
       };
 
     case "hold_position":
