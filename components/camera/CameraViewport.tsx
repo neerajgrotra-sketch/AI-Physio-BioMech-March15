@@ -4,16 +4,20 @@ import React, { useEffect, useRef, useState } from "react";
 
 type Props = {
   onVideoReady?: (video: HTMLVideoElement) => void;
+  onCameraStop?: () => void;
 };
 
-export default function CameraViewport({ onVideoReady }: Props) {
+export default function CameraViewport({ onVideoReady, onCameraStop }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
   const [status, setStatus] = useState<"idle" | "starting" | "live" | "error">("idle");
-  const [errorMessage, setErrorMessage] = useState<string>("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   async function startCamera() {
     try {
+      if (status === "starting" || status === "live") return;
+
       setStatus("starting");
       setErrorMessage("");
 
@@ -28,18 +32,16 @@ export default function CameraViewport({ onVideoReady }: Props) {
 
       streamRef.current = stream;
 
-      if (!videoRef.current) {
+      const video = videoRef.current;
+      if (!video) {
         throw new Error("Video element not available.");
       }
 
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
+      video.srcObject = stream;
+      await video.play();
 
       setStatus("live");
-
-      if (onVideoReady) {
-        onVideoReady(videoRef.current);
-      }
+      onVideoReady?.(video);
     } catch (error) {
       setStatus("error");
       setErrorMessage(
@@ -49,17 +51,28 @@ export default function CameraViewport({ onVideoReady }: Props) {
   }
 
   function stopCamera() {
+    const video = videoRef.current;
+
+    if (video) {
+      try {
+        video.pause();
+      } catch {}
+
+      video.srcObject = null;
+    }
+
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
       streamRef.current = null;
     }
 
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.srcObject = null;
-    }
-
     setStatus("idle");
+    setErrorMessage("");
+    onCameraStop?.();
   }
 
   useEffect(() => {
@@ -99,18 +112,31 @@ export default function CameraViewport({ onVideoReady }: Props) {
         <p style={{ color: "#ff8f8f", marginTop: 0 }}>{errorMessage}</p>
       )}
 
-      <video
-        ref={videoRef}
-        playsInline
-        muted
+      <div
         style={{
+          position: "relative",
           width: "100%",
-          maxHeight: 420,
+          maxWidth: 640,
+          height: 420,
           borderRadius: 12,
+          overflow: "hidden",
           background: "#0b1020",
-          objectFit: "cover"
+          border: "1px solid rgba(255,255,255,0.10)"
         }}
-      />
+      >
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+            transform: "scaleX(-1)"
+          }}
+        />
+      </div>
     </div>
   );
 }
