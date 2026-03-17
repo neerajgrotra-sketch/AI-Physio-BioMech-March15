@@ -3,7 +3,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
 
-import CameraViewport from "@/components/camera/CameraViewport";
+import CameraViewport, {
+  type CameraViewportHandle
+} from "@/components/camera/CameraViewport";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
@@ -55,11 +57,37 @@ export default function SessionRunner() {
   const { allPrescriptions } = usePrescriptionLibrary();
   const { sessions } = useSessionLibrary();
 
+  const cameraRef = useRef<CameraViewportHandle | null>(null);
+  const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const exerciseAdvanceTimeoutRef = useRef<number | null>(null);
+
+  const trackingActiveRef = useRef(false);
+  const advancePendingRef = useRef(false);
+  const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
+  const featureHistoryRef = useRef(new FeatureHistory(5));
+  const stickyCoachingUntilRef = useRef<number>(0);
+  const stickyCoachingRef = useRef<CoachingDecision | null>(null);
+  const prescriptionRef = useRef<ExercisePrescription | null>(null);
+  const sessionExerciseIndexRef = useRef(0);
+
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>("right-arm-raise");
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExerciseIndex, setSessionExerciseIndex] = useState(0);
   const [sessionComplete, setSessionComplete] = useState(false);
+
+  const [frame, setFrame] = useState<PoseFrame | null>(null);
+  const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
+  const [repCount, setRepCount] = useState(0);
+  const [phase, setPhase] = useState("ready");
+  const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
+  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
+  const [engineStatus, setEngineStatus] = useState<"idle" | "loading" | "running" | "error">(
+    "idle"
+  );
+  const [engineError, setEngineError] = useState("");
 
   const selectedSession = useMemo<TherapySession | null>(() => {
     return sessions.find((item) => item.id === selectedSessionId) ?? null;
@@ -81,37 +109,11 @@ export default function SessionRunner() {
   const sessionPrescription = useMemo(() => {
     if (!activeSessionExercise) return null;
     return (
-      allPrescriptions.find(
-        (item) => item.id === activeSessionExercise.prescriptionId
-      ) ?? null
+      allPrescriptions.find((item) => item.id === activeSessionExercise.prescriptionId) ?? null
     );
   }, [activeSessionExercise, allPrescriptions]);
 
   const prescription = sessionPrescription ?? manualPrescription;
-
-  const prescriptionRef = useRef<ExercisePrescription>(prescription);
-  const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const exerciseAdvanceTimeoutRef = useRef<number | null>(null);
-  const trackingActiveRef = useRef(false);
-  const advancePendingRef = useRef(false);
-  const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
-  const featureHistoryRef = useRef(new FeatureHistory(5));
-
-  const stickyCoachingUntilRef = useRef<number>(0);
-  const stickyCoachingRef = useRef<CoachingDecision | null>(null);
-
-  const [frame, setFrame] = useState<PoseFrame | null>(null);
-  const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
-  const [repCount, setRepCount] = useState(0);
-  const [phase, setPhase] = useState("ready");
-  const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
-  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
-  const [engineStatus, setEngineStatus] = useState<"idle" | "loading" | "running" | "error">(
-    "idle"
-  );
-  const [engineError, setEngineError] = useState("");
 
   useEffect(() => {
     if (!allPrescriptions.find((item) => item.id === selectedExerciseId) && allPrescriptions[0]) {
@@ -130,6 +132,10 @@ export default function SessionRunner() {
   useEffect(() => {
     prescriptionRef.current = prescription;
   }, [prescription]);
+
+  useEffect(() => {
+    sessionExerciseIndexRef.current = sessionExerciseIndex;
+  }, [sessionExerciseIndex]);
 
   function clearAdvanceTimeout() {
     if (exerciseAdvanceTimeoutRef.current !== null) {
@@ -162,6 +168,7 @@ export default function SessionRunner() {
     setActiveSessionId(null);
     setSessionExerciseIndex(0);
     setSessionComplete(false);
+    sessionExerciseIndexRef.current = 0;
   }
 
   function stopTracking() {
@@ -272,7 +279,7 @@ export default function SessionRunner() {
           if (output.isComplete && activeSession && !advancePendingRef.current) {
             advancePendingRef.current = true;
 
-            const nextIndex = sessionExerciseIndex + 1;
+            const nextIndex = sessionExerciseIndexRef.current + 1;
             const nextExercise = activeSession.exercises[nextIndex] ?? null;
 
             if (nextExercise) {
@@ -288,6 +295,8 @@ export default function SessionRunner() {
               clearAdvanceTimeout();
               exerciseAdvanceTimeoutRef.current = window.setTimeout(() => {
                 setSessionExerciseIndex(nextIndex);
+                sessionExerciseIndexRef.current = nextIndex;
+                advancePendingRef.current = false;
                 resetExerciseState();
               }, 2200);
             } else {
@@ -378,12 +387,7 @@ export default function SessionRunner() {
     }
   }
 
-  function resetExercise() {
-    clearAdvanceTimeout();
-    resetExerciseState();
-  }
-
-  function startSelectedSession() {
+  async function startSelectedSession() {
     if (!selectedSession) return;
 
     const firstExercise = selectedSession.exercises[0];
@@ -391,6 +395,7 @@ export default function SessionRunner() {
 
     setActiveSessionId(selectedSession.id);
     setSessionExerciseIndex(0);
+    sessionExerciseIndexRef.current = 0;
     setSessionComplete(false);
     setSelectedExerciseId(firstExercise.prescriptionId);
     resetExerciseState();
@@ -402,10 +407,19 @@ export default function SessionRunner() {
       },
       1800
     );
+
+    try {
+      await cameraRef.current?.startCamera();
+    } catch {}
   }
 
   function exitSessionMode() {
     stopSessionMode();
+    resetExerciseState();
+  }
+
+  function resetExercise() {
+    clearAdvanceTimeout();
     resetExerciseState();
   }
 
@@ -456,13 +470,15 @@ export default function SessionRunner() {
         >
           <h3 style={{ marginTop: 0 }}>Vision Surface</h3>
           <p style={{ color: "#aab6d3" }}>
-            Start the camera and perform the selected exercise or session.
+            Start a session or use manual exercise mode.
           </p>
 
           <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
             <CameraViewport
+              ref={cameraRef}
               onVideoReady={beginTracking}
               onCameraStop={stopTracking}
+              showStartButton={!activeSession}
             />
 
             <div
@@ -482,6 +498,8 @@ export default function SessionRunner() {
         </section>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <CoachingPanel title="Coaching" message={coaching.message} />
+
           <section
             style={{
               background: "#1a2040",
@@ -642,9 +660,7 @@ export default function SessionRunner() {
             </div>
 
             <h3 style={{ marginTop: 0 }}>{prescription.name}</h3>
-            <p style={{ color: "#aab6d3", marginBottom: 10 }}>
-              {prescription.description}
-            </p>
+            <p style={{ color: "#aab6d3", marginBottom: 10 }}>{prescription.description}</p>
 
             <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
               <div>
@@ -699,8 +715,6 @@ export default function SessionRunner() {
               <p style={{ color: "#ff8f8f", marginBottom: 0 }}>{engineError}</p>
             )}
           </section>
-
-          <CoachingPanel title="Coaching" message={coaching.message} />
 
           <DebugPanel features={features} />
         </div>
