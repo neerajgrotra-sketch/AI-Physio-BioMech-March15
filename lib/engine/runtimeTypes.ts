@@ -5,6 +5,7 @@ export type RepFailureReason =
   | "failed_height"
   | "failed_balance"
   | "failed_isolation"
+  | "failed_bilateral_participation"
   | null;
 
 export type RepEvaluation = {
@@ -23,6 +24,9 @@ export type RuntimeRepState = {
   enteredTopAtMs: number | null;
   holdSatisfied: boolean;
   everReachedTarget: boolean;
+
+  everViolatedIsolation: boolean;
+  everHadBilateralParticipationGap: boolean;
 
   lastRepEvaluation: RepEvaluation;
 };
