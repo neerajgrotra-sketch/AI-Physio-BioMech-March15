@@ -10,7 +10,7 @@ import DebugPanel from "@/components/debug/DebugPanel";
 
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
-import { EXERCISE_PRESCRIPTIONS } from "@/lib/exercises";
+import { ACTIVE_EXERCISE_PRESCRIPTIONS } from "@/lib/exercises";
 import type { ExerciseDefinitionId } from "@/lib/exercises/exerciseTypes";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
@@ -56,9 +56,9 @@ export default function SessionRunner() {
 
   const prescription = useMemo(() => {
     return (
-      EXERCISE_PRESCRIPTIONS.find(
+      ACTIVE_EXERCISE_PRESCRIPTIONS.find(
         (item) => item.id === selectedExerciseId
-      ) ?? EXERCISE_PRESCRIPTIONS[0]
+      ) ?? ACTIVE_EXERCISE_PRESCRIPTIONS[0]
     );
   }, [selectedExerciseId]);
 
@@ -391,7 +391,7 @@ export default function SessionRunner() {
                   color: "white"
                 }}
               >
-                {EXERCISE_PRESCRIPTIONS.map((item) => (
+                {ACTIVE_EXERCISE_PRESCRIPTIONS.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
