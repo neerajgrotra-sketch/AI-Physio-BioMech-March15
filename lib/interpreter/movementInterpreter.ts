@@ -80,6 +80,25 @@ function getIsolationOk(
   return true;
 }
 
+function getBilateralParticipationOk(
+  features: MovementFeatures,
+  prescription: ExercisePrescription
+): boolean {
+  if (prescription.side !== "both") return true;
+
+  const left = features.leftArmElevationDeg;
+  const right = features.rightArmElevationDeg;
+
+  if (left === null || right === null) return false;
+
+  const participationThreshold = prescription.startThreshold;
+
+  const leftActive = left > participationThreshold;
+  const rightActive = right > participationThreshold;
+
+  return leftActive === rightActive || (leftActive && rightActive);
+}
+
 export function interpretMovement(
   currentRepState: RuntimeRepState,
   features: MovementFeatures,
@@ -95,6 +114,10 @@ export function interpretMovement(
     features.torsoLeanDeg <= maxTorsoLeanDeg;
 
   const isolationOk = getIsolationOk(features, prescription);
+  const bilateralParticipationOk = getBilateralParticipationOk(
+    features,
+    prescription
+  );
 
   const repState = updateRepState(
     currentRepState,
@@ -102,7 +125,8 @@ export function interpretMovement(
     prescription,
     frameContext.timestampMs,
     balanceOk,
-    isolationOk
+    isolationOk,
+    bilateralParticipationOk
   );
 
   let holdRemainingMs: number | null = null;
@@ -115,6 +139,11 @@ export function interpretMovement(
     const held = frameContext.timestampMs - repState.enteredTopAtMs;
     holdRemainingMs = Math.max(0, prescription.hold.durationMs - held);
   }
+
+  const isActivePhase =
+    repState.phase === "lifting" ||
+    repState.phase === "top" ||
+    repState.phase === "holding";
 
   let primaryIssue: CoachingCode = "idle";
 
@@ -133,11 +162,27 @@ export function interpretMovement(
       primaryIssue = "rep_failed_balance";
     } else if (repState.lastRepEvaluation.reason === "failed_isolation") {
       primaryIssue = "rep_failed_isolation";
+    } else if (
+      repState.lastRepEvaluation.reason === "failed_bilateral_participation"
+    ) {
+      primaryIssue = "rep_failed_bilateral_participation";
     }
   } else if (repState.justCompletedHold) {
     primaryIssue = "hold_complete";
   } else if (!balanceOk) {
     primaryIssue = "keep_balanced";
+  } else if (
+    isActivePhase &&
+    prescription.side !== "both" &&
+    !isolationOk
+  ) {
+    primaryIssue = "wrong_side_participation";
+  } else if (
+    isActivePhase &&
+    prescription.side === "both" &&
+    !bilateralParticipationOk
+  ) {
+    primaryIssue = "other_side_not_active";
   } else if (
     repState.phase === "lifting" &&
     activeMetricValue !== null &&
