@@ -21,6 +21,9 @@ export function createInitialRepState(): RuntimeRepState {
     holdSatisfied: false,
     everReachedTarget: false,
 
+    everViolatedIsolation: false,
+    everHadBilateralParticipationGap: false,
+
     lastRepEvaluation: buildRepEvaluation("none", null)
   };
 }
@@ -31,7 +34,8 @@ export function updateRepState(
   prescription: ExercisePrescription,
   nowMs: number,
   balanceOk: boolean,
-  isolationOk: boolean
+  isolationOk: boolean,
+  bilateralParticipationOk: boolean
 ): RuntimeRepState {
   const value = activeMetricValue ?? 0;
 
@@ -46,6 +50,9 @@ export function updateRepState(
   let holdSatisfied = currentState.holdSatisfied;
   let everReachedTarget = currentState.everReachedTarget;
 
+  let everViolatedIsolation = currentState.everViolatedIsolation;
+  let everHadBilateralParticipationGap = currentState.everHadBilateralParticipationGap;
+
   let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
 
   if (currentState.phase === "complete") {
@@ -58,6 +65,22 @@ export function updateRepState(
     };
   }
 
+  const activePhase =
+    currentState.phase === "lifting" ||
+    currentState.phase === "top" ||
+    currentState.phase === "holding" ||
+    currentState.phase === "lowering";
+
+  if (activePhase) {
+    if (!isolationOk) {
+      everViolatedIsolation = true;
+    }
+
+    if (!bilateralParticipationOk) {
+      everHadBilateralParticipationGap = true;
+    }
+  }
+
   switch (currentState.phase) {
     case "idle":
     case "ready": {
@@ -68,6 +91,8 @@ export function updateRepState(
       enteredTopAtMs = null;
       holdSatisfied = false;
       everReachedTarget = false;
+      everViolatedIsolation = false;
+      everHadBilateralParticipationGap = false;
       break;
     }
 
@@ -85,6 +110,8 @@ export function updateRepState(
         enteredTopAtMs = null;
         holdSatisfied = false;
         everReachedTarget = false;
+        everViolatedIsolation = false;
+        everHadBilateralParticipationGap = false;
       }
       break;
     }
@@ -123,15 +150,23 @@ export function updateRepState(
     case "lowering": {
       if (value <= prescription.finishThreshold) {
         if (!everReachedTarget) {
-          justFailedRep = true;
-          lastRepEvaluation = buildRepEvaluation("failed", "failed_height");
+          if (prescription.side === "both" && everHadBilateralParticipationGap) {
+            justFailedRep = true;
+            lastRepEvaluation = buildRepEvaluation(
+              "failed",
+              "failed_bilateral_participation"
+            );
+          } else {
+            justFailedRep = true;
+            lastRepEvaluation = buildRepEvaluation("failed", "failed_height");
+          }
         } else if (prescription.hold.required && !holdSatisfied) {
           justFailedRep = true;
           lastRepEvaluation = buildRepEvaluation("failed", "failed_hold");
         } else if (!balanceOk) {
           justFailedRep = true;
           lastRepEvaluation = buildRepEvaluation("failed", "failed_balance");
-        } else if (!isolationOk) {
+        } else if (!isolationOk || everViolatedIsolation) {
           justFailedRep = true;
           lastRepEvaluation = buildRepEvaluation("failed", "failed_isolation");
         } else {
@@ -149,6 +184,8 @@ export function updateRepState(
         enteredTopAtMs = null;
         holdSatisfied = false;
         everReachedTarget = false;
+        everViolatedIsolation = false;
+        everHadBilateralParticipationGap = false;
       }
       break;
     }
@@ -169,6 +206,9 @@ export function updateRepState(
     enteredTopAtMs,
     holdSatisfied,
     everReachedTarget,
+
+    everViolatedIsolation,
+    everHadBilateralParticipationGap,
 
     lastRepEvaluation
   };
