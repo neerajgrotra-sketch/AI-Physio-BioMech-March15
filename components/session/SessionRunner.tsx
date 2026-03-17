@@ -8,10 +8,10 @@ import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
 import { usePrescriptionLibrary } from "@/components/providers/PrescriptionLibraryProvider";
+import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
 
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
-import type { ExerciseDefinitionId } from "@/lib/exercises/exerciseTypes";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
@@ -24,6 +24,7 @@ import type { PoseFrame } from "@/lib/types/pose";
 import type { CoachingDecision } from "@/lib/types/coaching";
 import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
+import type { TherapySession } from "@/lib/sessions/sessionTypes";
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -52,22 +53,49 @@ function createIdleCoaching(): CoachingDecision {
 
 export default function SessionRunner() {
   const { allPrescriptions } = usePrescriptionLibrary();
+  const { sessions } = useSessionLibrary();
 
-  const [selectedExerciseId, setSelectedExerciseId] =
-    useState<string>("right-arm-raise");
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string>("right-arm-raise");
+  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionExerciseIndex, setSessionExerciseIndex] = useState(0);
+  const [sessionComplete, setSessionComplete] = useState(false);
 
-  const prescription = useMemo(() => {
-    return (
-      allPrescriptions.find((item) => item.id === selectedExerciseId) ??
-      allPrescriptions[0]
-    );
+  const selectedSession = useMemo<TherapySession | null>(() => {
+    return sessions.find((item) => item.id === selectedSessionId) ?? null;
+  }, [sessions, selectedSessionId]);
+
+  const activeSession = useMemo<TherapySession | null>(() => {
+    return sessions.find((item) => item.id === activeSessionId) ?? null;
+  }, [sessions, activeSessionId]);
+
+  const activeSessionExercise = useMemo(() => {
+    if (!activeSession) return null;
+    return activeSession.exercises[sessionExerciseIndex] ?? null;
+  }, [activeSession, sessionExerciseIndex]);
+
+  const manualPrescription = useMemo(() => {
+    return allPrescriptions.find((item) => item.id === selectedExerciseId) ?? allPrescriptions[0];
   }, [selectedExerciseId, allPrescriptions]);
+
+  const sessionPrescription = useMemo(() => {
+    if (!activeSessionExercise) return null;
+    return (
+      allPrescriptions.find(
+        (item) => item.id === activeSessionExercise.prescriptionId
+      ) ?? null
+    );
+  }, [activeSessionExercise, allPrescriptions]);
+
+  const prescription = sessionPrescription ?? manualPrescription;
 
   const prescriptionRef = useRef<ExercisePrescription>(prescription);
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const exerciseAdvanceTimeoutRef = useRef<number | null>(null);
   const trackingActiveRef = useRef(false);
+  const advancePendingRef = useRef(false);
   const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
   const featureHistoryRef = useRef(new FeatureHistory(5));
 
@@ -80,9 +108,9 @@ export default function SessionRunner() {
   const [phase, setPhase] = useState("ready");
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
-  const [engineStatus, setEngineStatus] = useState<
-    "idle" | "loading" | "running" | "error"
-  >("idle");
+  const [engineStatus, setEngineStatus] = useState<"idle" | "loading" | "running" | "error">(
+    "idle"
+  );
   const [engineError, setEngineError] = useState("");
 
   useEffect(() => {
@@ -92,8 +120,23 @@ export default function SessionRunner() {
   }, [allPrescriptions, selectedExerciseId]);
 
   useEffect(() => {
+    if (!selectedSessionId && sessions[0]) {
+      setSelectedSessionId(sessions[0].id);
+    } else if (selectedSessionId && !sessions.find((item) => item.id === selectedSessionId)) {
+      setSelectedSessionId(sessions[0]?.id ?? "");
+    }
+  }, [sessions, selectedSessionId]);
+
+  useEffect(() => {
     prescriptionRef.current = prescription;
   }, [prescription]);
+
+  function clearAdvanceTimeout() {
+    if (exerciseAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(exerciseAdvanceTimeoutRef.current);
+      exerciseAdvanceTimeoutRef.current = null;
+    }
+  }
 
   function setStickyCoaching(decision: CoachingDecision, durationMs = 2200) {
     stickyCoachingRef.current = decision;
@@ -106,11 +149,19 @@ export default function SessionRunner() {
     featureHistoryRef.current.clear();
     stickyCoachingRef.current = null;
     stickyCoachingUntilRef.current = 0;
+    advancePendingRef.current = false;
 
     setRepCount(0);
     setPhase("ready");
     setActiveMetricValue(null);
     setCoaching(createIdleCoaching());
+  }
+
+  function stopSessionMode() {
+    clearAdvanceTimeout();
+    setActiveSessionId(null);
+    setSessionExerciseIndex(0);
+    setSessionComplete(false);
   }
 
   function stopTracking() {
@@ -121,6 +172,8 @@ export default function SessionRunner() {
       rafRef.current = null;
     }
 
+    clearAdvanceTimeout();
+
     videoRef.current = null;
 
     setEngineStatus("idle");
@@ -128,6 +181,7 @@ export default function SessionRunner() {
     setFrame(null);
     setFeatures(createEmptyFeatures());
 
+    stopSessionMode();
     resetExerciseState();
   }
 
@@ -153,7 +207,7 @@ export default function SessionRunner() {
         const detector = detectorRef.current;
         const activePrescription = prescriptionRef.current;
 
-        if (!liveVideo || !detector) return;
+        if (!liveVideo || !detector || !activePrescription) return;
 
         if (
           liveVideo.readyState < 2 ||
@@ -242,6 +296,40 @@ export default function SessionRunner() {
               },
               1200
             );
+          }
+
+          if (output.isComplete && activeSession && !advancePendingRef.current) {
+            advancePendingRef.current = true;
+
+            const nextIndex = sessionExerciseIndex + 1;
+            const nextExercise = activeSession.exercises[nextIndex] ?? null;
+
+            if (nextExercise) {
+              setStickyCoaching(
+                {
+                  code: "exercise_complete",
+                  priority: "encourage",
+                  message: `Exercise complete. Next: ${nextExercise.displayName}`
+                },
+                2200
+              );
+
+              clearAdvanceTimeout();
+              exerciseAdvanceTimeoutRef.current = window.setTimeout(() => {
+                setSessionExerciseIndex(nextIndex);
+                resetExerciseState();
+              }, 2200);
+            } else {
+              setSessionComplete(true);
+              setStickyCoaching(
+                {
+                  code: "exercise_complete",
+                  priority: "encourage",
+                  message: "Session complete. Well done."
+                },
+                2600
+              );
+            }
           } else if (output.holdRemainingMs !== null) {
             const seconds = Math.max(1, Math.ceil(output.holdRemainingMs / 1000));
             setCoaching({
@@ -259,8 +347,7 @@ export default function SessionRunner() {
         } catch (error) {
           if (!trackingActiveRef.current) return;
 
-          const message =
-            error instanceof Error ? error.message : String(error);
+          const message = error instanceof Error ? error.message : String(error);
 
           if (
             message.toLowerCase().includes("aborted") ||
@@ -294,8 +381,44 @@ export default function SessionRunner() {
   }
 
   function resetExercise() {
+    clearAdvanceTimeout();
     resetExerciseState();
   }
+
+  function startSelectedSession() {
+    if (!selectedSession) return;
+
+    const firstExercise = selectedSession.exercises[0];
+    if (!firstExercise) return;
+
+    setActiveSessionId(selectedSession.id);
+    setSessionExerciseIndex(0);
+    setSessionComplete(false);
+    setSelectedExerciseId(firstExercise.prescriptionId);
+    resetExerciseState();
+    setStickyCoaching(
+      {
+        code: "start_exercise",
+        priority: "info",
+        message: `Session started: ${selectedSession.name}`
+      },
+      1800
+    );
+  }
+
+  function exitSessionMode() {
+    stopSessionMode();
+    resetExerciseState();
+  }
+
+  useEffect(() => {
+    if (!activeSession) return;
+
+    const current = activeSession.exercises[sessionExerciseIndex];
+    if (current) {
+      setSelectedExerciseId(current.prescriptionId);
+    }
+  }, [activeSession, sessionExerciseIndex]);
 
   useEffect(() => {
     resetExerciseState();
@@ -306,6 +429,12 @@ export default function SessionRunner() {
       stopTracking();
     };
   }, []);
+
+  const sessionProgressLabel = activeSession
+    ? `Exercise ${Math.min(sessionExerciseIndex + 1, activeSession.exercises.length)} of ${
+        activeSession.exercises.length
+      }`
+    : "Manual exercise mode";
 
   return (
     <div style={{ marginTop: 30 }}>
@@ -329,7 +458,7 @@ export default function SessionRunner() {
         >
           <h3 style={{ marginTop: 0 }}>Vision Surface</h3>
           <p style={{ color: "#aab6d3" }}>
-            Start the camera and perform the selected exercise.
+            Start the camera and perform the selected exercise or session.
           </p>
 
           <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
@@ -373,6 +502,114 @@ export default function SessionRunner() {
                 marginBottom: 12
               }}
             >
+              Session Control
+            </div>
+
+            <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+              <span style={{ fontSize: 14 }}>Saved Session</span>
+              <select
+                value={selectedSessionId}
+                onChange={(e) => setSelectedSessionId(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "#121933",
+                  color: "white"
+                }}
+              >
+                <option value="">Select a saved session</option>
+                {sessions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={startSelectedSession}
+                disabled={!selectedSession}
+                style={{
+                  background: "#9be7b0",
+                  color: "#08111f",
+                  fontWeight: 700,
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  cursor: selectedSession ? "pointer" : "not-allowed",
+                  opacity: selectedSession ? 1 : 0.5
+                }}
+              >
+                Start Session
+              </button>
+
+              <button
+                onClick={exitSessionMode}
+                disabled={!activeSession}
+                style={{
+                  background: "rgba(255,255,255,0.12)",
+                  color: "white",
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  cursor: activeSession ? "pointer" : "not-allowed",
+                  opacity: activeSession ? 1 : 0.5
+                }}
+              >
+                Exit Session
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12, fontSize: 14, color: "#aab6d3" }}>
+              {activeSession ? (
+                <>
+                  <div>
+                    Session: <strong style={{ color: "white" }}>{activeSession.name}</strong>
+                  </div>
+                  <div>
+                    Progress: <strong style={{ color: "white" }}>{sessionProgressLabel}</strong>
+                  </div>
+                  {activeSessionExercise && (
+                    <div>
+                      Current item:{" "}
+                      <strong style={{ color: "white" }}>
+                        {activeSessionExercise.displayName}
+                      </strong>
+                    </div>
+                  )}
+                  {sessionComplete && (
+                    <div style={{ color: "#9be7b0", marginTop: 6 }}>
+                      Session complete.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div>Manual exercise mode</div>
+              )}
+            </div>
+          </section>
+
+          <section
+            style={{
+              background: "#1a2040",
+              padding: 20,
+              borderRadius: 12
+            }}
+          >
+            <div
+              style={{
+                display: "inline-block",
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: "rgba(124,198,255,0.12)",
+                color: "#7cc6ff",
+                fontSize: 12,
+                marginBottom: 12
+              }}
+            >
               Current Exercise
             </div>
 
@@ -387,13 +624,15 @@ export default function SessionRunner() {
                 id="exercise-select"
                 value={selectedExerciseId}
                 onChange={(e) => setSelectedExerciseId(e.target.value)}
+                disabled={!!activeSession}
                 style={{
                   width: "100%",
                   padding: "10px 12px",
                   borderRadius: 10,
                   border: "1px solid rgba(255,255,255,0.12)",
                   background: "#121933",
-                  color: "white"
+                  color: "white",
+                  opacity: activeSession ? 0.65 : 1
                 }}
               >
                 {allPrescriptions.map((item) => (
