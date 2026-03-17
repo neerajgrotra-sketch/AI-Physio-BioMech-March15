@@ -7,10 +7,10 @@ import CameraViewport from "@/components/camera/CameraViewport";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
+import { usePrescriptionLibrary } from "@/components/providers/PrescriptionLibraryProvider";
 
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
-import { ACTIVE_EXERCISE_PRESCRIPTIONS } from "@/lib/exercises";
 import type { ExerciseDefinitionId } from "@/lib/exercises/exerciseTypes";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
@@ -51,16 +51,17 @@ function createIdleCoaching(): CoachingDecision {
 }
 
 export default function SessionRunner() {
+  const { allPrescriptions } = usePrescriptionLibrary();
+
   const [selectedExerciseId, setSelectedExerciseId] =
-    useState<ExerciseDefinitionId>("right-arm-raise");
+    useState<string>("right-arm-raise");
 
   const prescription = useMemo(() => {
     return (
-      ACTIVE_EXERCISE_PRESCRIPTIONS.find(
-        (item) => item.id === selectedExerciseId
-      ) ?? ACTIVE_EXERCISE_PRESCRIPTIONS[0]
+      allPrescriptions.find((item) => item.id === selectedExerciseId) ??
+      allPrescriptions[0]
     );
-  }, [selectedExerciseId]);
+  }, [selectedExerciseId, allPrescriptions]);
 
   const prescriptionRef = useRef<ExercisePrescription>(prescription);
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
@@ -83,6 +84,12 @@ export default function SessionRunner() {
     "idle" | "loading" | "running" | "error"
   >("idle");
   const [engineError, setEngineError] = useState("");
+
+  useEffect(() => {
+    if (!allPrescriptions.find((item) => item.id === selectedExerciseId) && allPrescriptions[0]) {
+      setSelectedExerciseId(allPrescriptions[0].id);
+    }
+  }, [allPrescriptions, selectedExerciseId]);
 
   useEffect(() => {
     prescriptionRef.current = prescription;
@@ -379,9 +386,7 @@ export default function SessionRunner() {
               <select
                 id="exercise-select"
                 value={selectedExerciseId}
-                onChange={(e) =>
-                  setSelectedExerciseId(e.target.value as ExerciseDefinitionId)
-                }
+                onChange={(e) => setSelectedExerciseId(e.target.value)}
                 style={{
                   width: "100%",
                   padding: "10px 12px",
@@ -391,7 +396,7 @@ export default function SessionRunner() {
                   color: "white"
                 }}
               >
-                {ACTIVE_EXERCISE_PRESCRIPTIONS.map((item) => (
+                {allPrescriptions.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
@@ -421,6 +426,9 @@ export default function SessionRunner() {
                   Tempo: <strong>{prescription.tempo.label}</strong>
                 </div>
               )}
+              <div>
+                Template: <strong>{prescription.template}</strong>
+              </div>
             </div>
 
             <div style={{ display: "grid", gap: 8, marginTop: 14, fontSize: 14 }}>
