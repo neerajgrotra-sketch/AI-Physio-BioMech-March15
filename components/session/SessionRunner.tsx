@@ -71,6 +71,8 @@ export default function SessionRunner() {
   const stickyCoachingRef = useRef<CoachingDecision | null>(null);
   const prescriptionRef = useRef<ExercisePrescription | null>(null);
   const sessionExerciseIndexRef = useRef(0);
+  const activeSessionRef = useRef<TherapySession | null>(null);
+  const selectedSessionRef = useRef<TherapySession | null>(null);
 
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>("right-arm-raise");
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
@@ -137,6 +139,14 @@ export default function SessionRunner() {
     sessionExerciseIndexRef.current = sessionExerciseIndex;
   }, [sessionExerciseIndex]);
 
+  useEffect(() => {
+    activeSessionRef.current = activeSession;
+  }, [activeSession]);
+
+  useEffect(() => {
+    selectedSessionRef.current = selectedSession;
+  }, [selectedSession]);
+
   function clearAdvanceTimeout() {
     if (exerciseAdvanceTimeoutRef.current !== null) {
       window.clearTimeout(exerciseAdvanceTimeoutRef.current);
@@ -169,6 +179,7 @@ export default function SessionRunner() {
     setSessionExerciseIndex(0);
     setSessionComplete(false);
     sessionExerciseIndexRef.current = 0;
+    activeSessionRef.current = null;
   }
 
   function stopTracking() {
@@ -213,6 +224,7 @@ export default function SessionRunner() {
         const liveVideo = videoRef.current;
         const detector = detectorRef.current;
         const activePrescription = prescriptionRef.current;
+        const currentActiveSession = activeSessionRef.current;
 
         if (!liveVideo || !detector || !activePrescription) return;
 
@@ -276,11 +288,11 @@ export default function SessionRunner() {
 
           const now = Date.now();
 
-          if (output.isComplete && activeSession && !advancePendingRef.current) {
+          if (output.isComplete && currentActiveSession && !advancePendingRef.current) {
             advancePendingRef.current = true;
 
             const nextIndex = sessionExerciseIndexRef.current + 1;
-            const nextExercise = activeSession.exercises[nextIndex] ?? null;
+            const nextExercise = currentActiveSession.exercises[nextIndex] ?? null;
 
             if (nextExercise) {
               setStickyCoaching(
@@ -388,14 +400,16 @@ export default function SessionRunner() {
   }
 
   async function startSelectedSession() {
-    if (!selectedSession) return;
+    const sessionToStart = selectedSessionRef.current;
+    if (!sessionToStart) return;
 
-    const firstExercise = selectedSession.exercises[0];
+    const firstExercise = sessionToStart.exercises[0];
     if (!firstExercise) return;
 
-    setActiveSessionId(selectedSession.id);
+    setActiveSessionId(sessionToStart.id);
     setSessionExerciseIndex(0);
     sessionExerciseIndexRef.current = 0;
+    activeSessionRef.current = sessionToStart;
     setSessionComplete(false);
     setSelectedExerciseId(firstExercise.prescriptionId);
     resetExerciseState();
@@ -403,7 +417,7 @@ export default function SessionRunner() {
       {
         code: "start_exercise",
         priority: "info",
-        message: `Session started: ${selectedSession.name}`
+        message: `Session started: ${sessionToStart.name}`
       },
       1800
     );
