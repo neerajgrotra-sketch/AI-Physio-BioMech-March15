@@ -1,6 +1,14 @@
 export type ExerciseSide = "left" | "right" | "both" | "center";
 export type ExercisePosture = "seated" | "standing" | "either";
 
+export type ExerciseTemplateId =
+  | "raise_hold_lower"
+  | "rise_hold_lower"
+  | "alternating_lift"
+  | "static_hold";
+
+export type ExerciseRuntimeStatus = "active" | "planned";
+
 export type MovementPhase =
   | "idle"
   | "ready"
@@ -48,8 +56,6 @@ export type TempoRequirement = {
 export type QualityLimits = {
   maxTorsoLeanDeg?: number;
   maxShoulderTiltDeg?: number;
-
-  // For unilateral exercises
   maxOppositeArmElevationDeg?: number;
 };
 
@@ -64,7 +70,6 @@ export type CoachingCues = {
   failedBalance: string;
   failedIsolation?: string;
   failedBilateralParticipation?: string;
-
   liveIsolationCue?: string;
   liveBilateralCue?: string;
 };
@@ -73,6 +78,9 @@ export type ExercisePrescription = {
   id: string;
   name: string;
   category: "upper_body" | "lower_body" | "transfer" | "balance";
+  template: ExerciseTemplateId;
+  runtimeStatus: ExerciseRuntimeStatus;
+
   side: ExerciseSide;
   posture: ExercisePosture;
   description: string;
