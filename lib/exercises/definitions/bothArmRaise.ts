@@ -41,8 +41,14 @@ export const bothArmRaisePrescription: ExercisePrescription = {
     hold: "Hold at the top.",
     lower: "Lower with control.",
     success: "Good repetition.",
-    failedHeight: "That rep did not count. Lift a little higher and try again.",
-    failedHold: "That rep did not count. Hold a little longer at the top and try again.",
-    failedBalance: "That rep did not count. Try to stay upright and balanced."
+    failedHeight:
+      "That rep did not count. Lift both arms a little higher and try again.",
+    failedHold:
+      "That rep did not count. Hold a little longer at the top and try again.",
+    failedBalance:
+      "That rep did not count. Try to stay upright and balanced.",
+    failedBilateralParticipation:
+      "That rep did not count. Lift both arms to shoulder height together.",
+    liveBilateralCue: "Lift both arms together."
   }
 };
