@@ -4,6 +4,8 @@ export const bothArmRaisePrescription: ExercisePrescription = {
   id: "both-arm-raise",
   name: "Both Arm Raise",
   category: "upper_body",
+  template: "raise_hold_lower",
+  runtimeStatus: "active",
   side: "both",
   posture: "either",
   description: "Lift both arms to shoulder height, hold, then lower slowly.",
