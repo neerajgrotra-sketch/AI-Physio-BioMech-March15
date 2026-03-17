@@ -42,10 +42,14 @@ export const leftArmRaisePrescription: ExercisePrescription = {
     hold: "Hold at the top.",
     lower: "Lower with control.",
     success: "Good repetition.",
-    failedHeight: "That rep did not count. Lift your left arm a little higher and try again.",
-    failedHold: "That rep did not count. Hold a little longer at the top and try again.",
-    failedBalance: "That rep did not count. Try to stay upright and balanced.",
+    failedHeight:
+      "That rep did not count. Lift your left arm a little higher and try again.",
+    failedHold:
+      "That rep did not count. Hold a little longer at the top and try again.",
+    failedBalance:
+      "That rep did not count. Try to stay upright and balanced.",
     failedIsolation:
-      "That rep did not count. Keep your right arm relaxed at your side and raise only your left arm."
+      "That rep did not count. Keep your right arm relaxed at your side and raise only your left arm.",
+    liveIsolationCue: "Keep your right arm relaxed at your side."
   }
 };
