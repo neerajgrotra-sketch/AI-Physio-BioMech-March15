@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { DEFAULT_RAISE_BUILDER_VALUES } from "@/lib/prescriptions/builderDefaults";
 import { buildPrescriptionFromForm } from "@/lib/prescriptions/buildPrescription";
 import type { BuilderFormValues } from "@/lib/prescriptions/builderTypes";
+import { usePrescriptionLibrary } from "@/components/providers/PrescriptionLibraryProvider";
 
 function NumberInput({
   label,
@@ -61,12 +62,25 @@ function TextInput({
 }
 
 export default function ExerciseBuilder() {
+  const { savePrescription, customPrescriptions, deletePrescription } =
+    usePrescriptionLibrary();
+
   const [form, setForm] = useState<BuilderFormValues>(DEFAULT_RAISE_BUILDER_VALUES);
+  const [saveMessage, setSaveMessage] = useState("");
 
   const prescription = useMemo(() => buildPrescriptionFromForm(form), [form]);
 
-  function patch<K extends keyof BuilderFormValues>(key: K, value: BuilderFormValues[K]) {
+  function patch<K extends keyof BuilderFormValues>(
+    key: K,
+    value: BuilderFormValues[K]
+  ) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleSave() {
+    savePrescription(prescription);
+    setSaveMessage(`Saved "${prescription.name}" to your custom library.`);
+    window.setTimeout(() => setSaveMessage(""), 2500);
   }
 
   return (
@@ -198,27 +212,94 @@ export default function ExerciseBuilder() {
           />
           <span>Hold required</span>
         </label>
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <button
+            onClick={handleSave}
+            style={{
+              background: "#7cc6ff",
+              color: "#08111f",
+              fontWeight: 700,
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "none",
+              cursor: "pointer"
+            }}
+          >
+            Save Prescription
+          </button>
+        </div>
+
+        {saveMessage && (
+          <p style={{ margin: 0, color: "#9be7b0" }}>{saveMessage}</p>
+        )}
       </section>
 
       <section
         style={{
           background: "#1a2040",
           padding: 20,
-          borderRadius: 12
+          borderRadius: 12,
+          display: "grid",
+          gap: 18
         }}
       >
-        <h2 style={{ marginTop: 0 }}>Generated Prescription</h2>
-        <pre
-          style={{
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            fontSize: 13,
-            lineHeight: 1.5,
-            color: "#d9e6ff"
-          }}
-        >
-          {JSON.stringify(prescription, null, 2)}
-        </pre>
+        <div>
+          <h2 style={{ marginTop: 0 }}>Generated Prescription</h2>
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: 13,
+              lineHeight: 1.5,
+              color: "#d9e6ff"
+            }}
+          >
+            {JSON.stringify(prescription, null, 2)}
+          </pre>
+        </div>
+
+        <div>
+          <h2 style={{ marginTop: 0 }}>Custom Library</h2>
+
+          {customPrescriptions.length === 0 ? (
+            <p style={{ color: "#aab6d3" }}>No custom prescriptions saved yet.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {customPrescriptions.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 10,
+                    padding: 12,
+                    background: "rgba(255,255,255,0.03)"
+                  }}
+                >
+                  <div style={{ fontWeight: 700 }}>{item.name}</div>
+                  <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 4 }}>
+                    {item.id}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      onClick={() => deletePrescription(item.id)}
+                      style={{
+                        background: "rgba(255,255,255,0.12)",
+                        color: "white",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        border: "none",
+                        cursor: "pointer"
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );
