@@ -4,6 +4,8 @@ export const leftArmRaisePrescription: ExercisePrescription = {
   id: "left-arm-raise",
   name: "Left Arm Raise",
   category: "upper_body",
+  template: "raise_hold_lower",
+  runtimeStatus: "active",
   side: "left",
   posture: "either",
   description: "Lift your left arm to shoulder height, hold, then lower slowly.",
