@@ -4,6 +4,8 @@ export const sitToStandPrescription: ExercisePrescription = {
   id: "sit-to-stand",
   name: "Sit to Stand",
   category: "transfer",
+  template: "rise_hold_lower",
+  runtimeStatus: "planned",
   side: "center",
   posture: "either",
   description: "Stand up fully, pause briefly, then sit down with control.",
@@ -40,8 +42,11 @@ export const sitToStandPrescription: ExercisePrescription = {
     hold: "Pause at the top.",
     lower: "Sit down with control.",
     success: "Good repetition.",
-    failedHeight: "That rep did not count. Stand up a little taller and try again.",
-    failedHold: "That rep did not count. Pause briefly at the top and try again.",
-    failedBalance: "That rep did not count. Try to stay balanced and controlled."
+    failedHeight:
+      "That rep did not count. Stand up a little taller and try again.",
+    failedHold:
+      "That rep did not count. Pause briefly at the top and try again.",
+    failedBalance:
+      "That rep did not count. Try to stay balanced and controlled."
   }
 };
