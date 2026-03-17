@@ -51,6 +51,33 @@ export function buildCoachingDecision(
           "That rep did not count. Use only the instructed side and try again."
       };
 
+    case "rep_failed_bilateral_participation":
+      return {
+        code: "rep_failed_bilateral_participation",
+        priority: "correct",
+        message:
+          prescription.coaching.failedBilateralParticipation ??
+          "That rep did not count. Lift both arms together to the target height."
+      };
+
+    case "wrong_side_participation":
+      return {
+        code: "wrong_side_participation",
+        priority: "correct",
+        message:
+          prescription.coaching.liveIsolationCue ??
+          "Use only the instructed arm."
+      };
+
+    case "other_side_not_active":
+      return {
+        code: "other_side_not_active",
+        priority: "correct",
+        message:
+          prescription.coaching.liveBilateralCue ??
+          "Lift both arms together."
+      };
+
     case "lift_higher":
       return {
         code: "lift_higher",
