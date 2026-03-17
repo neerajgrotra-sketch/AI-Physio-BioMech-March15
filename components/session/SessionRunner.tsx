@@ -269,35 +269,6 @@ export default function SessionRunner() {
 
           const now = Date.now();
 
-          if (output.repState.justFailedRep) {
-            const failureDecision = buildCoachingDecision(output, activePrescription);
-            setStickyCoaching(
-              {
-                ...failureDecision,
-                message: `${failureDecision.message} Begin again when ready.`
-              },
-              2600
-            );
-          } else if (output.repState.justCompletedRep) {
-            setStickyCoaching(
-              {
-                code: "good_rep",
-                priority: "encourage",
-                message: `${activePrescription.coaching.success} Begin again when ready.`
-              },
-              1800
-            );
-          } else if (output.repState.justCompletedHold) {
-            setStickyCoaching(
-              {
-                code: "hold_complete",
-                priority: "encourage",
-                message: activePrescription.coaching.lower
-              },
-              1200
-            );
-          }
-
           if (output.isComplete && activeSession && !advancePendingRef.current) {
             advancePendingRef.current = true;
 
@@ -330,6 +301,33 @@ export default function SessionRunner() {
                 2600
               );
             }
+          } else if (output.repState.justFailedRep) {
+            const failureDecision = buildCoachingDecision(output, activePrescription);
+            setStickyCoaching(
+              {
+                ...failureDecision,
+                message: `${failureDecision.message} Begin again when ready.`
+              },
+              2600
+            );
+          } else if (output.repState.justCompletedRep) {
+            setStickyCoaching(
+              {
+                code: "good_rep",
+                priority: "encourage",
+                message: `${activePrescription.coaching.success} Begin again when ready.`
+              },
+              1800
+            );
+          } else if (output.repState.justCompletedHold) {
+            setStickyCoaching(
+              {
+                code: "hold_complete",
+                priority: "encourage",
+                message: activePrescription.coaching.lower
+              },
+              1200
+            );
           } else if (output.holdRemainingMs !== null) {
             const seconds = Math.max(1, Math.ceil(output.holdRemainingMs / 1000));
             setCoaching({
