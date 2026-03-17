@@ -10,6 +10,10 @@ export const EXERCISE_PRESCRIPTIONS = [
   sitToStandPrescription
 ];
 
+export const ACTIVE_EXERCISE_PRESCRIPTIONS = EXERCISE_PRESCRIPTIONS.filter(
+  (item) => item.runtimeStatus === "active"
+);
+
 export {
   rightArmRaisePrescription,
   leftArmRaisePrescription,
