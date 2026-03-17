@@ -49,8 +49,7 @@ export type QualityLimits = {
   maxTorsoLeanDeg?: number;
   maxShoulderTiltDeg?: number;
 
-  // For unilateral exercises:
-  // the opposite arm must stay below this elevation threshold
+  // For unilateral exercises
   maxOppositeArmElevationDeg?: number;
 };
 
@@ -64,6 +63,10 @@ export type CoachingCues = {
   failedHold: string;
   failedBalance: string;
   failedIsolation?: string;
+  failedBilateralParticipation?: string;
+
+  liveIsolationCue?: string;
+  liveBilateralCue?: string;
 };
 
 export type ExercisePrescription = {
