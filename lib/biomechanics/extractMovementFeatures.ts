@@ -9,14 +9,6 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function safeAtan2Degrees(y: number, x: number): number {
-  return round1(toDegrees(Math.atan2(y, x)));
-}
-
-function distance(a: PoseLandmark, b: PoseLandmark): number {
-  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-}
-
 function angleDeg(a: PoseLandmark, b: PoseLandmark, c: PoseLandmark): number | null {
   const abx = a.x - b.x;
   const aby = a.y - b.y;
@@ -34,18 +26,33 @@ function angleDeg(a: PoseLandmark, b: PoseLandmark, c: PoseLandmark): number | n
   return round1(toDegrees(Math.acos(cosine)));
 }
 
-function verticalElevationDeg(shoulder: PoseLandmark, wrist: PoseLandmark): number {
-  const dx = wrist.x - shoulder.x;
-  const dy = shoulder.y - wrist.y;
-
-  const angleFromHorizontal = Math.abs(safeAtan2Degrees(dy, dx));
-  return round1(Math.max(0, Math.min(180, angleFromHorizontal)));
-}
-
 function average(values: Array<number | null>): number | null {
   const valid = values.filter((v): v is number => v !== null);
   if (valid.length === 0) return null;
   return round1(valid.reduce((sum, v) => sum + v, 0) / valid.length);
+}
+
+/**
+ * Returns arm elevation relative to the body:
+ * - arm hanging down ≈ 0°
+ * - arm at shoulder height ≈ 90°
+ * - arm straight overhead ≈ 180°
+ *
+ * Screen coordinates:
+ * - y increases downward
+ */
+function armElevationDeg(shoulder: PoseLandmark, wrist: PoseLandmark): number {
+  const vx = wrist.x - shoulder.x;
+  const vy = wrist.y - shoulder.y;
+
+  const mag = Math.sqrt(vx * vx + vy * vy);
+  if (mag < 1e-6) return 0;
+
+  // Compare arm vector to straight-down direction (0, 1)
+  const cosine = Math.max(-1, Math.min(1, vy / mag));
+  const angle = Math.acos(cosine);
+
+  return round1(toDegrees(angle));
 }
 
 function inferPosture(
@@ -143,10 +150,10 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
   const rightAnkle = getLandmark(frame, "right_ankle");
 
   const rightArmElevationDeg =
-    rightShoulder && rightWrist ? verticalElevationDeg(rightShoulder, rightWrist) : null;
+    rightShoulder && rightWrist ? armElevationDeg(rightShoulder, rightWrist) : null;
 
   const leftArmElevationDeg =
-    leftShoulder && leftWrist ? verticalElevationDeg(leftShoulder, leftWrist) : null;
+    leftShoulder && leftWrist ? armElevationDeg(leftShoulder, leftWrist) : null;
 
   const bilateralArmElevationDeg = average([rightArmElevationDeg, leftArmElevationDeg]);
 
@@ -176,9 +183,11 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     leftShoulder && rightShoulder
       ? round1(
           Math.abs(
-            safeAtan2Degrees(
-              rightShoulder.y - leftShoulder.y,
-              rightShoulder.x - leftShoulder.x
+            toDegrees(
+              Math.atan2(
+                rightShoulder.y - leftShoulder.y,
+                rightShoulder.x - leftShoulder.x
+              )
             )
           )
         )
@@ -189,13 +198,18 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
       ? (() => {
           const hipCenterX = (leftHip.x + rightHip.x) / 2;
           const hipCenterY = (leftHip.y + rightHip.y) / 2;
+
           const dx = nose.x - hipCenterX;
           const dy = hipCenterY - nose.y;
 
-          if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return null;
+          const mag = Math.sqrt(dx * dx + dy * dy);
+          if (mag < 1e-6) return null;
 
-          const angleFromVertical = Math.abs(90 - Math.abs(safeAtan2Degrees(dy, dx)));
-          return round1(angleFromVertical);
+          // Lean away from vertical
+          const cosine = Math.max(-1, Math.min(1, dy / mag));
+          const angle = Math.acos(cosine);
+
+          return round1(toDegrees(angle));
         })()
       : null;
 
