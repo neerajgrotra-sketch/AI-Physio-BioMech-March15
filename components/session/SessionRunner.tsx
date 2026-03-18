@@ -31,17 +31,33 @@ import type { TherapySession } from "@/lib/sessions/sessionTypes";
 function createEmptyFeatures(): MovementFeatures {
   return {
     posture: "unknown",
+
     rightArmElevationDeg: null,
     leftArmElevationDeg: null,
     bilateralArmElevationDeg: null,
+
     rightElbowAngleDeg: null,
     leftElbowAngleDeg: null,
+
     torsoLeanDeg: null,
     shoulderTiltDeg: null,
+
     rightWristAboveShoulder: false,
     leftWristAboveShoulder: false,
+
     rightWristToShoulderDy: null,
-    leftWristToShoulderDy: null
+    leftWristToShoulderDy: null,
+
+    hipCenterY: null,
+    hipHeightNormalized: null,
+
+    kneeAngleLeft: null,
+    kneeAngleRight: null,
+
+    hipVelocityY: null,
+
+    isStanding: false,
+    isSeated: false
   };
 }
 
