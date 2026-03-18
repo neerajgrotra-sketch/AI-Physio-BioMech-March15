@@ -27,11 +27,18 @@ export type RehabState = {
   metrics: {
     rightArmElevationDeg: number | null;
     leftArmElevationDeg: number | null;
+    bilateralArmElevationDeg: number | null;
     hipHeightNormalized: number | null;
     torsoLeanDeg: number | null;
+    shoulderTiltDeg: number | null;
   };
 
-  issues: string[];
+  evaluation: {
+    reachedTarget: boolean;
+    holdSatisfied: boolean;
+  };
+
+  detectedIssues: string[];
   failureReason: string | null;
   event: RehabEvent;
 };
@@ -42,14 +49,49 @@ export function buildRehabState(
   prescription: ExercisePrescription,
   event: RehabEvent
 ): RehabState {
-  const issues: string[] = [];
+  const detectedIssues: string[] = [];
+
+  const targetMetric = prescription.target.metric;
+  let activeMetric: number | null = null;
+
+  switch (targetMetric) {
+    case "rightArmElevationDeg":
+      activeMetric = features.rightArmElevationDeg;
+      break;
+    case "leftArmElevationDeg":
+      activeMetric = features.leftArmElevationDeg;
+      break;
+    case "bilateralArmElevationDeg":
+      if (
+        features.rightArmElevationDeg !== null &&
+        features.leftArmElevationDeg !== null
+      ) {
+        activeMetric = Math.min(
+          features.rightArmElevationDeg,
+          features.leftArmElevationDeg
+        );
+      }
+      break;
+    case "hipHeightNormalized":
+      activeMetric = features.hipHeightNormalized;
+      break;
+    default:
+      activeMetric = null;
+  }
+
+  if (
+    activeMetric !== null &&
+    activeMetric < prescription.target.targetValue - prescription.target.tolerance
+  ) {
+    detectedIssues.push("insufficient_range");
+  }
 
   if (
     prescription.side === "right" &&
     features.leftArmElevationDeg !== null &&
     features.leftArmElevationDeg > 30
   ) {
-    issues.push("left_arm_interference");
+    detectedIssues.push("opposite_arm_interference");
   }
 
   if (
@@ -57,24 +99,32 @@ export function buildRehabState(
     features.rightArmElevationDeg !== null &&
     features.rightArmElevationDeg > 30
   ) {
-    issues.push("right_arm_interference");
+    detectedIssues.push("opposite_arm_interference");
   }
 
   if (
     prescription.side === "both" &&
     features.rightArmElevationDeg !== null &&
-    features.leftArmElevationDeg !== null
+    features.leftArmElevationDeg !== null &&
+    Math.abs(features.rightArmElevationDeg - features.leftArmElevationDeg) > 20
   ) {
-    const diff = Math.abs(
-      features.rightArmElevationDeg - features.leftArmElevationDeg
-    );
-    if (diff > 20) {
-      issues.push("bilateral_asymmetry");
-    }
+    detectedIssues.push("bilateral_asymmetry");
   }
 
-  if (features.torsoLeanDeg !== null && features.torsoLeanDeg > 15) {
-    issues.push("excessive_lean");
+  if (
+    features.torsoLeanDeg !== null &&
+    prescription.qualityLimits?.maxTorsoLeanDeg !== undefined &&
+    features.torsoLeanDeg > prescription.qualityLimits.maxTorsoLeanDeg
+  ) {
+    detectedIssues.push("excessive_torso_lean");
+  }
+
+  if (
+    features.shoulderTiltDeg !== null &&
+    prescription.qualityLimits?.maxShoulderTiltDeg !== undefined &&
+    features.shoulderTiltDeg > prescription.qualityLimits.maxShoulderTiltDeg
+  ) {
+    detectedIssues.push("shoulder_tilt");
   }
 
   return {
@@ -94,11 +144,18 @@ export function buildRehabState(
     metrics: {
       rightArmElevationDeg: features.rightArmElevationDeg,
       leftArmElevationDeg: features.leftArmElevationDeg,
+      bilateralArmElevationDeg: features.bilateralArmElevationDeg,
       hipHeightNormalized: features.hipHeightNormalized,
-      torsoLeanDeg: features.torsoLeanDeg
+      torsoLeanDeg: features.torsoLeanDeg,
+      shoulderTiltDeg: features.shoulderTiltDeg
     },
 
-    issues,
+    evaluation: {
+      reachedTarget: repState.everReachedTarget,
+      holdSatisfied: repState.holdSatisfied
+    },
+
+    detectedIssues,
     failureReason: repState.lastRepEvaluation.reason,
     event
   };
