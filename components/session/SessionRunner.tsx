@@ -1,6 +1,4 @@
 "use client";
-const aiRequestInFlightRef = useRef(false);
-const aiEventTokenRef = useRef(0);
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
@@ -97,7 +95,9 @@ export default function SessionRunner() {
   const sessionExerciseIndexRef = useRef(0);
   const activeSessionRef = useRef<TherapySession | null>(null);
   const selectedSessionRef = useRef<TherapySession | null>(null);
-  const lastPhaseRef = useRef<string>("ready");
+
+  const aiRequestInFlightRef = useRef(false);
+  const aiEventTokenRef = useRef(0);
 
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
     exercises[0]?.id ?? ""
@@ -201,7 +201,8 @@ export default function SessionRunner() {
     stickyCoachingRef.current = null;
     stickyCoachingUntilRef.current = 0;
     advancePendingRef.current = false;
-    lastPhaseRef.current = "ready";
+    aiRequestInFlightRef.current = false;
+    aiEventTokenRef.current = 0;
 
     setRepCount(0);
     setPhase("ready");
@@ -327,59 +328,59 @@ export default function SessionRunner() {
           } else if (output.repState.justFailedRep) {
             event = "rep_failed";
           } else if (output.repState.phase !== previousPhase) {
-            event = previousPhase === "ready" && output.repState.phase === "lifting"
-              ? "start"
-              : "phase_change";
+            event =
+              previousPhase === "ready" && output.repState.phase === "lifting"
+                ? "start"
+                : "phase_change";
           }
 
-          let aiMessage = "";
-
-if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
-  const rehabState = buildRehabState(
-    smoothedFeatures,
-    output.repState,
-    activePrescription,
-    event
-  );
-
-  const eventToken = Date.now();
-  aiEventTokenRef.current = eventToken;
-  aiRequestInFlightRef.current = true;
-
-  generateCoaching(rehabState)
-    .then((message) => {
-      if (!message) return;
-
-      // Ignore stale AI responses
-      if (aiEventTokenRef.current !== eventToken) return;
-
-      setStickyCoaching(
-        {
-          code: "idle",
-          priority: "info",
-          message
-        },
-        1800
-      );
-    })
-    .catch((error) => {
-      console.error("LLM coaching failed:", error);
-    })
-    .finally(() => {
-      if (aiEventTokenRef.current === eventToken) {
-        aiRequestInFlightRef.current = false;
-      }
-    });
-}
-
           repStateRef.current = output.repState;
-          lastPhaseRef.current = output.repState.phase;
 
           setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
           setActiveMetricValue(output.activeMetricValue);
 
           const now = Date.now();
+
+          if (
+            aiCoachingEnabled &&
+            event !== "idle" &&
+            !aiRequestInFlightRef.current
+          ) {
+            const rehabState = buildRehabState(
+              smoothedFeatures,
+              output.repState,
+              activePrescription,
+              event
+            );
+
+            const eventToken = Date.now();
+            aiEventTokenRef.current = eventToken;
+            aiRequestInFlightRef.current = true;
+
+            generateCoaching(rehabState)
+              .then((message) => {
+                if (!message) return;
+                if (aiEventTokenRef.current !== eventToken) return;
+
+                setStickyCoaching(
+                  {
+                    code: "idle",
+                    priority: "info",
+                    message
+                  },
+                  1800
+                );
+              })
+              .catch((error) => {
+                console.error("LLM coaching failed:", error);
+              })
+              .finally(() => {
+                if (aiEventTokenRef.current === eventToken) {
+                  aiRequestInFlightRef.current = false;
+                }
+              });
+          }
 
           if (output.isComplete && currentActiveSession && !advancePendingRef.current) {
             advancePendingRef.current = true;
@@ -392,8 +393,7 @@ if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
                 {
                   code: "exercise_complete",
                   priority: "encourage",
-                  message:
-                    aiMessage || `Exercise complete. Next: ${nextExercise.displayName}`
+                  message: `Exercise complete. Next: ${nextExercise.displayName}`
                 },
                 2200
               );
@@ -411,7 +411,7 @@ if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
                 {
                   code: "exercise_complete",
                   priority: "encourage",
-                  message: aiMessage || "Session complete. Well done."
+                  message: "Session complete. Well done."
                 },
                 2600
               );
@@ -421,7 +421,7 @@ if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
             setStickyCoaching(
               {
                 ...failureDecision,
-                message: aiMessage || `${failureDecision.message} Begin again when ready.`
+                message: `${failureDecision.message} Begin again when ready.`
               },
               2600
             );
@@ -430,9 +430,7 @@ if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
               {
                 code: "good_rep",
                 priority: "encourage",
-                message:
-                  aiMessage ||
-                  `${activePrescription.coaching.success} Begin again when ready.`
+                message: `${activePrescription.coaching.success} Begin again when ready.`
               },
               1800
             );
@@ -441,7 +439,7 @@ if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
               {
                 code: "hold_complete",
                 priority: "encourage",
-                message: aiMessage || activePrescription.coaching.lower
+                message: activePrescription.coaching.lower
               },
               1200
             );
@@ -452,15 +450,6 @@ if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
               priority: "info",
               message: `Hold ${seconds}`
             });
-          } else if (aiMessage) {
-            setStickyCoaching(
-              {
-                code: "idle",
-                priority: "info",
-                message: aiMessage
-              },
-              1800
-            );
           } else if (stickyCoachingRef.current && now < stickyCoachingUntilRef.current) {
             setCoaching(stickyCoachingRef.current);
           } else {
