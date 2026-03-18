@@ -57,6 +57,8 @@ function getMetricValue(
     case "kneeToHipExtensionScore": {
       const left = features.kneeAngleLeft;
       const right = features.kneeAngleRight;
+      case "hipHeightNormalized":
+  return features.hipHeightNormalized;
 
       if (left === null && right === null) return null;
       if (left === null) return right;
