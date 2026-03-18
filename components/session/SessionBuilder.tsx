@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { usePrescriptionLibrary } from "@/components/providers/PrescriptionLibraryProvider";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
+import { ACTIVE_EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
 
 function createItemId() {
@@ -10,30 +10,31 @@ function createItemId() {
 }
 
 export default function SessionBuilder() {
-  const { allPrescriptions } = usePrescriptionLibrary();
   const { sessions, saveSession, deleteSession } = useSessionLibrary();
+
+  const exercises = ACTIVE_EXERCISE_LIBRARY;
 
   const [sessionId, setSessionId] = useState(`session-${Date.now()}`);
   const [sessionName, setSessionName] = useState("Custom Therapy Session");
-  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState(
-    allPrescriptions[0]?.id ?? ""
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
+    exercises[0]?.id ?? ""
   );
   const [exerciseItems, setExerciseItems] = useState<TherapySession["exercises"]>([]);
   const [saveMessage, setSaveMessage] = useState("");
 
-  const selectedPrescription = useMemo(() => {
-    return allPrescriptions.find((item) => item.id === selectedPrescriptionId) ?? null;
-  }, [allPrescriptions, selectedPrescriptionId]);
+  const selectedExercise = useMemo(() => {
+    return exercises.find((item) => item.id === selectedExerciseId) ?? null;
+  }, [exercises, selectedExerciseId]);
 
   function addExercise() {
-    if (!selectedPrescription) return;
+    if (!selectedExercise) return;
 
     setExerciseItems((prev) => [
       ...prev,
       {
         id: createItemId(),
-        prescriptionId: selectedPrescription.id,
-        displayName: selectedPrescription.name
+        prescriptionId: selectedExercise.id,
+        displayName: selectedExercise.name
       }
     ]);
   }
@@ -51,6 +52,7 @@ export default function SessionBuilder() {
   function moveDown(index: number) {
     setExerciseItems((prev) => {
       if (index >= prev.length - 1) return prev;
+
       const copy = [...prev];
       [copy[index], copy[index + 1]] = [copy[index + 1], copy[index]];
       return copy;
@@ -80,6 +82,7 @@ export default function SessionBuilder() {
     setSessionId(`session-${Date.now()}`);
     setSessionName("Custom Therapy Session");
     setExerciseItems([]);
+    setSelectedExerciseId(exercises[0]?.id ?? "");
     setSaveMessage("");
   }
 
@@ -114,8 +117,8 @@ export default function SessionBuilder() {
         <label style={{ display: "grid", gap: 6 }}>
           <span>Add Exercise</span>
           <select
-            value={selectedPrescriptionId}
-            onChange={(e) => setSelectedPrescriptionId(e.target.value)}
+            value={selectedExerciseId}
+            onChange={(e) => setSelectedExerciseId(e.target.value)}
             style={{
               padding: "10px 12px",
               borderRadius: 10,
@@ -124,7 +127,7 @@ export default function SessionBuilder() {
               color: "white"
             }}
           >
-            {allPrescriptions.map((item) => (
+            {exercises.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>
@@ -132,7 +135,7 @@ export default function SessionBuilder() {
           </select>
         </label>
 
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button
             onClick={addExercise}
             style={{
@@ -219,6 +222,7 @@ export default function SessionBuilder() {
                     >
                       Move Up
                     </button>
+
                     <button
                       onClick={() => moveDown(index)}
                       style={{
@@ -232,6 +236,7 @@ export default function SessionBuilder() {
                     >
                       Move Down
                     </button>
+
                     <button
                       onClick={() => removeExercise(item.id)}
                       style={{
