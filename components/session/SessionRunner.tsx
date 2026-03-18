@@ -1,4 +1,6 @@
 "use client";
+const aiRequestInFlightRef = useRef(false);
+const aiEventTokenRef = useRef(0);
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
@@ -332,7 +334,7 @@ export default function SessionRunner() {
 
           let aiMessage = "";
 
-         if (aiCoachingEnabled && event !== "idle") {
+if (aiCoachingEnabled && event !== "idle" && !aiRequestInFlightRef.current) {
   const rehabState = buildRehabState(
     smoothedFeatures,
     output.repState,
@@ -340,12 +342,34 @@ export default function SessionRunner() {
     event
   );
 
-  try {
-    aiMessage = await generateCoaching(rehabState);
-  } catch (error) {
-    console.error("LLM coaching failed:", error);
-    aiMessage = "";
-  }
+  const eventToken = Date.now();
+  aiEventTokenRef.current = eventToken;
+  aiRequestInFlightRef.current = true;
+
+  generateCoaching(rehabState)
+    .then((message) => {
+      if (!message) return;
+
+      // Ignore stale AI responses
+      if (aiEventTokenRef.current !== eventToken) return;
+
+      setStickyCoaching(
+        {
+          code: "idle",
+          priority: "info",
+          message
+        },
+        1800
+      );
+    })
+    .catch((error) => {
+      console.error("LLM coaching failed:", error);
+    })
+    .finally(() => {
+      if (aiEventTokenRef.current === eventToken) {
+        aiRequestInFlightRef.current = false;
+      }
+    });
 }
 
           repStateRef.current = output.repState;
