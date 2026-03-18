@@ -79,12 +79,14 @@ export function buildRehabState(
       activeMetric = null;
   }
 
-  if (
-    activeMetric !== null &&
-    activeMetric < prescription.target.targetValue - prescription.target.tolerance
-  ) {
-    detectedIssues.push("insufficient_range");
-  }
+const tolerance = prescription.target.tolerance ?? 0;
+
+if (
+  activeMetric !== null &&
+  activeMetric < prescription.target.targetValue - tolerance
+) {
+  detectedIssues.push("insufficient_range");
+}
 
   if (
     prescription.side === "right" &&
