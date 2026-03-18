@@ -332,15 +332,21 @@ export default function SessionRunner() {
 
           let aiMessage = "";
 
-          if (aiCoachingEnabled && event !== "idle") {
-            const rehabState = buildRehabState(
-              smoothedFeatures,
-              output.repState,
-              activePrescription,
-              event
-            );
-            aiMessage = await generateCoaching(rehabState);
-          }
+         if (aiCoachingEnabled && event !== "idle") {
+  const rehabState = buildRehabState(
+    smoothedFeatures,
+    output.repState,
+    activePrescription,
+    event
+  );
+
+  try {
+    aiMessage = await generateCoaching(rehabState);
+  } catch (error) {
+    console.error("LLM coaching failed:", error);
+    aiMessage = "";
+  }
+}
 
           repStateRef.current = output.repState;
           lastPhaseRef.current = output.repState.phase;
