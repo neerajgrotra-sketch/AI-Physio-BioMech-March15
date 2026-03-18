@@ -327,11 +327,11 @@ export default function SessionRunner() {
             event = "rep_complete";
           } else if (output.repState.justFailedRep) {
             event = "rep_failed";
-          } else if (output.repState.phase !== previousPhase) {
-            event =
-              previousPhase === "ready" && output.repState.phase === "lifting"
-                ? "start"
-                : "phase_change";
+          } else if (
+            previousPhase === "ready" &&
+            output.repState.phase === "lifting"
+          ) {
+            event = "start";
           }
 
           repStateRef.current = output.repState;
@@ -342,11 +342,15 @@ export default function SessionRunner() {
 
           const now = Date.now();
 
-          if (
+          const shouldAskAi =
             aiCoachingEnabled &&
-            event !== "idle" &&
-            !aiRequestInFlightRef.current
-          ) {
+            !aiRequestInFlightRef.current &&
+            (event === "start" ||
+              event === "rep_complete" ||
+              event === "rep_failed" ||
+              event === "exercise_complete");
+
+          if (shouldAskAi) {
             const rehabState = buildRehabState(
               smoothedFeatures,
               output.repState,
@@ -369,7 +373,7 @@ export default function SessionRunner() {
                     priority: "info",
                     message
                   },
-                  1800
+                  event === "rep_failed" ? 4000 : 2600
                 );
               })
               .catch((error) => {
@@ -421,9 +425,9 @@ export default function SessionRunner() {
             setStickyCoaching(
               {
                 ...failureDecision,
-                message: `${failureDecision.message} Begin again when ready.`
+                message: `${failureDecision.message} Pause and reset before trying again.`
               },
-              2600
+              4000
             );
           } else if (output.repState.justCompletedRep) {
             setStickyCoaching(
