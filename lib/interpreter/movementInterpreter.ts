@@ -34,31 +34,43 @@ function getMetricValue(
   switch (metric) {
     case "rightArmElevationDeg":
       return features.rightArmElevationDeg;
+
     case "leftArmElevationDeg":
       return features.leftArmElevationDeg;
+
     case "bilateralArmElevationDeg":
       return features.bilateralArmElevationDeg;
+
     case "rightElbowAngleDeg":
       return features.rightElbowAngleDeg;
+
     case "leftElbowAngleDeg":
       return features.leftElbowAngleDeg;
+
     case "torsoLeanDeg":
       return features.torsoLeanDeg;
+
     case "shoulderTiltDeg":
       return features.shoulderTiltDeg;
+
     case "rightWristToShoulderDy":
       return features.rightWristToShoulderDy;
+
     case "leftWristToShoulderDy":
       return features.leftWristToShoulderDy;
+
     case "hipCenterY":
       return features.hipCenterY;
+
+    case "hipHeightNormalized":
+      return features.hipHeightNormalized;
+
     case "hipCenterVelocityY":
       return features.hipVelocityY;
+
     case "kneeToHipExtensionScore": {
       const left = features.kneeAngleLeft;
       const right = features.kneeAngleRight;
-      case "hipHeightNormalized":
-  return features.hipHeightNormalized;
 
       if (left === null && right === null) return null;
       if (left === null) return right;
@@ -66,6 +78,9 @@ function getMetricValue(
 
       return (left + right) / 2;
     }
+
+    case "rightWristAboveShoulder":
+    case "leftWristAboveShoulder":
     default:
       return null;
   }
@@ -84,7 +99,6 @@ function getEffectiveActiveMetricValue(
 
     if (left === null || right === null) return null;
 
-    // Both sides must contribute for bilateral raises.
     return Math.min(left, right);
   }
 
@@ -143,17 +157,9 @@ function getRaiseLowerPrimaryIssue(
     repState.phase === "top" ||
     repState.phase === "holding";
 
-  if (!personDetected) {
-    return "person_not_detected";
-  }
-
-  if (repState.phase === "complete") {
-    return "exercise_complete";
-  }
-
-  if (repState.justCompletedRep) {
-    return "good_rep";
-  }
+  if (!personDetected) return "person_not_detected";
+  if (repState.phase === "complete") return "exercise_complete";
+  if (repState.justCompletedRep) return "good_rep";
 
   if (repState.justFailedRep) {
     if (repState.lastRepEvaluation.reason === "failed_hold") {
@@ -175,13 +181,8 @@ function getRaiseLowerPrimaryIssue(
     }
   }
 
-  if (repState.justCompletedHold) {
-    return "hold_complete";
-  }
-
-  if (!balanceOk) {
-    return "keep_balanced";
-  }
+  if (repState.justCompletedHold) return "hold_complete";
+  if (!balanceOk) return "keep_balanced";
 
   if (isActivePhase && prescription.side !== "both" && !isolationOk) {
     return "wrong_side_participation";
@@ -199,21 +200,10 @@ function getRaiseLowerPrimaryIssue(
     return "lift_higher";
   }
 
-  if (repState.phase === "top") {
-    return "hold_position";
-  }
-
-  if (repState.phase === "holding") {
-    return "keep_holding";
-  }
-
-  if (repState.phase === "lowering") {
-    return "lower_slowly";
-  }
-
-  if (repState.phase === "ready") {
-    return "start_exercise";
-  }
+  if (repState.phase === "top") return "hold_position";
+  if (repState.phase === "holding") return "keep_holding";
+  if (repState.phase === "lowering") return "lower_slowly";
+  if (repState.phase === "ready") return "start_exercise";
 
   return "idle";
 }
@@ -278,8 +268,7 @@ function interpretRiseHoldLower(
   prescription: ExercisePrescription,
   frameContext: RuntimeFrameContext
 ): InterpreterOutput {
-  const kneeScore = getMetricValue(features, "kneeToHipExtensionScore");
-  const activeMetricValue = kneeScore;
+  const activeMetricValue = getMetricValue(features, prescription.target.metric);
 
   const maxTorsoLeanDeg = prescription.qualityLimits?.maxTorsoLeanDeg;
   const balanceOk =
@@ -308,6 +297,7 @@ function interpretRiseHoldLower(
       repState.phase = "lifting";
       return buildResult(repState, activeMetricValue, null, "start_exercise");
     }
+
     return buildResult(repState, activeMetricValue, null, "start_exercise");
   }
 
