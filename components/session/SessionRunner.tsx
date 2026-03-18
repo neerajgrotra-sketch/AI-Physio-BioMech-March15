@@ -10,7 +10,7 @@ import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
-import { buildRehabState, type RehabEvent } from "@/lib/engine/rehabStateBuilder";
+
 import { ACTIVE_EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
