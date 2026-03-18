@@ -1,7 +1,5 @@
-import type { PostureType } from "@/lib/types/pose";
-
 export type MovementFeatures = {
-  posture: PostureType;
+  posture: "unknown" | "standing" | "seated";
 
   rightArmElevationDeg: number | null;
   leftArmElevationDeg: number | null;
@@ -18,11 +16,17 @@ export type MovementFeatures = {
 
   rightWristToShoulderDy: number | null;
   leftWristToShoulderDy: number | null;
-};
 
-export type FeatureDebugValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined;
+  // LOWER BODY
+
+  hipCenterY: number | null;
+  hipHeightNormalized: number | null;
+
+  kneeAngleLeft: number | null;
+  kneeAngleRight: number | null;
+
+  hipVelocityY: number | null;
+
+  isStanding: boolean;
+  isSeated: boolean;
+};
