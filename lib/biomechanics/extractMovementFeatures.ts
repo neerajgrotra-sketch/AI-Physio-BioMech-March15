@@ -1,63 +1,246 @@
-import {
-  getAbsoluteVerticalAngleDeg,
-  getAngleABC,
-  round
-} from "@/lib/biomechanics/jointAngles";
-import {
-  getShoulderTiltDeg,
-  getTorsoLeanDeg,
-  inferPosture
-} from "@/lib/biomechanics/posture";
 import type { MovementFeatures } from "@/lib/types/movement";
-import type { PoseFrame } from "@/lib/types/pose";
+import type { PoseFrame, PoseLandmark, PostureType } from "@/lib/types/pose";
 
-function toRaiseScore(angleFromVertical: number | null): number | null {
-  if (angleFromVertical === null) return null;
+function toDegrees(radians: number): number {
+  return (radians * 180) / Math.PI;
+}
 
-  // Arms down should be near 0–30
-  // Arms raised should increase upward toward 180
-  return round(180 - angleFromVertical);
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function safeAtan2Degrees(y: number, x: number): number {
+  return round1(toDegrees(Math.atan2(y, x)));
+}
+
+function distance(a: PoseLandmark, b: PoseLandmark): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+function angleDeg(a: PoseLandmark, b: PoseLandmark, c: PoseLandmark): number | null {
+  const abx = a.x - b.x;
+  const aby = a.y - b.y;
+  const cbx = c.x - b.x;
+  const cby = c.y - b.y;
+
+  const magAB = Math.sqrt(abx * abx + aby * aby);
+  const magCB = Math.sqrt(cbx * cbx + cby * cby);
+
+  if (magAB < 1e-6 || magCB < 1e-6) return null;
+
+  const dot = abx * cbx + aby * cby;
+  const cosine = Math.max(-1, Math.min(1, dot / (magAB * magCB)));
+
+  return round1(toDegrees(Math.acos(cosine)));
+}
+
+function verticalElevationDeg(shoulder: PoseLandmark, wrist: PoseLandmark): number {
+  const dx = wrist.x - shoulder.x;
+  const dy = shoulder.y - wrist.y;
+
+  const angleFromHorizontal = Math.abs(safeAtan2Degrees(dy, dx));
+  return round1(Math.max(0, Math.min(180, angleFromHorizontal)));
+}
+
+function average(values: Array<number | null>): number | null {
+  const valid = values.filter((v): v is number => v !== null);
+  if (valid.length === 0) return null;
+  return round1(valid.reduce((sum, v) => sum + v, 0) / valid.length);
+}
+
+function inferPosture(
+  leftHip: PoseLandmark | null,
+  rightHip: PoseLandmark | null,
+  leftKnee: PoseLandmark | null,
+  rightKnee: PoseLandmark | null,
+  kneeAngleLeft: number | null,
+  kneeAngleRight: number | null
+): PostureType {
+  if (!leftHip || !rightHip || !leftKnee || !rightKnee) {
+    return "unknown";
+  }
+
+  const avgKneeAngle = average([kneeAngleLeft, kneeAngleRight]);
+
+  if (avgKneeAngle === null) {
+    return "unknown";
+  }
+
+  if (avgKneeAngle > 155) {
+    return "standing";
+  }
+
+  if (avgKneeAngle < 120) {
+    return "seated";
+  }
+
+  return "unknown";
+}
+
+function getLandmark(
+  frame: PoseFrame,
+  key:
+    | "nose"
+    | "left_shoulder"
+    | "right_shoulder"
+    | "left_elbow"
+    | "right_elbow"
+    | "left_wrist"
+    | "right_wrist"
+    | "left_hip"
+    | "right_hip"
+    | "left_knee"
+    | "right_knee"
+    | "left_ankle"
+    | "right_ankle"
+): PoseLandmark | null {
+  return frame.landmarks[key] ?? null;
 }
 
 export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
-  const ls = frame.landmarks.left_shoulder;
-  const rs = frame.landmarks.right_shoulder;
-  const le = frame.landmarks.left_elbow;
-  const re = frame.landmarks.right_elbow;
-  const lw = frame.landmarks.left_wrist;
-  const rw = frame.landmarks.right_wrist;
+  if (!frame.personDetected) {
+    return {
+      posture: "unknown",
+      rightArmElevationDeg: null,
+      leftArmElevationDeg: null,
+      bilateralArmElevationDeg: null,
+      rightElbowAngleDeg: null,
+      leftElbowAngleDeg: null,
+      torsoLeanDeg: null,
+      shoulderTiltDeg: null,
+      rightWristAboveShoulder: false,
+      leftWristAboveShoulder: false,
+      rightWristToShoulderDy: null,
+      leftWristToShoulderDy: null,
+      hipCenterY: null,
+      hipHeightNormalized: null,
+      kneeAngleLeft: null,
+      kneeAngleRight: null,
+      hipVelocityY: null,
+      isStanding: false,
+      isSeated: false
+    };
+  }
 
-  const rightArmElevationDeg = toRaiseScore(getAbsoluteVerticalAngleDeg(rs, rw));
-  const leftArmElevationDeg = toRaiseScore(getAbsoluteVerticalAngleDeg(ls, lw));
+  const nose = getLandmark(frame, "nose");
 
-  const bilateralArmElevationDeg =
-    rightArmElevationDeg !== null && leftArmElevationDeg !== null
-      ? round((rightArmElevationDeg + leftArmElevationDeg) / 2)
+  const leftShoulder = getLandmark(frame, "left_shoulder");
+  const rightShoulder = getLandmark(frame, "right_shoulder");
+
+  const leftElbow = getLandmark(frame, "left_elbow");
+  const rightElbow = getLandmark(frame, "right_elbow");
+
+  const leftWrist = getLandmark(frame, "left_wrist");
+  const rightWrist = getLandmark(frame, "right_wrist");
+
+  const leftHip = getLandmark(frame, "left_hip");
+  const rightHip = getLandmark(frame, "right_hip");
+
+  const leftKnee = getLandmark(frame, "left_knee");
+  const rightKnee = getLandmark(frame, "right_knee");
+
+  const leftAnkle = getLandmark(frame, "left_ankle");
+  const rightAnkle = getLandmark(frame, "right_ankle");
+
+  const rightArmElevationDeg =
+    rightShoulder && rightWrist ? verticalElevationDeg(rightShoulder, rightWrist) : null;
+
+  const leftArmElevationDeg =
+    leftShoulder && leftWrist ? verticalElevationDeg(leftShoulder, leftWrist) : null;
+
+  const bilateralArmElevationDeg = average([rightArmElevationDeg, leftArmElevationDeg]);
+
+  const rightElbowAngleDeg =
+    rightShoulder && rightElbow && rightWrist
+      ? angleDeg(rightShoulder, rightElbow, rightWrist)
       : null;
 
-  const rightElbowAngleDeg = getAngleABC(rs, re, rw);
-  const leftElbowAngleDeg = getAngleABC(ls, le, lw);
+  const leftElbowAngleDeg =
+    leftShoulder && leftElbow && leftWrist
+      ? angleDeg(leftShoulder, leftElbow, leftWrist)
+      : null;
 
-  const rightWristToShoulderDy = rs && rw ? round(rs.y - rw.y, 3) : null;
-  const leftWristToShoulderDy = ls && lw ? round(ls.y - lw.y, 3) : null;
+  const rightWristAboveShoulder =
+    !!(rightWrist && rightShoulder && rightWrist.y < rightShoulder.y);
+
+  const leftWristAboveShoulder =
+    !!(leftWrist && leftShoulder && leftWrist.y < leftShoulder.y);
+
+  const rightWristToShoulderDy =
+    rightWrist && rightShoulder ? round1(rightShoulder.y - rightWrist.y) : null;
+
+  const leftWristToShoulderDy =
+    leftWrist && leftShoulder ? round1(leftShoulder.y - leftWrist.y) : null;
+
+  const shoulderTiltDeg =
+    leftShoulder && rightShoulder
+      ? round1(
+          Math.abs(
+            safeAtan2Degrees(
+              rightShoulder.y - leftShoulder.y,
+              rightShoulder.x - leftShoulder.x
+            )
+          )
+        )
+      : null;
+
+  const torsoLeanDeg =
+    nose && leftHip && rightHip
+      ? (() => {
+          const hipCenterX = (leftHip.x + rightHip.x) / 2;
+          const hipCenterY = (leftHip.y + rightHip.y) / 2;
+          const dx = nose.x - hipCenterX;
+          const dy = hipCenterY - nose.y;
+
+          if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return null;
+
+          const angleFromVertical = Math.abs(90 - Math.abs(safeAtan2Degrees(dy, dx)));
+          return round1(angleFromVertical);
+        })()
+      : null;
+
+  const hipCenterY =
+    leftHip && rightHip ? round1((leftHip.y + rightHip.y) / 2) : null;
+
+  const hipHeightNormalized = hipCenterY;
+
+  const kneeAngleLeft =
+    leftHip && leftKnee && leftAnkle ? angleDeg(leftHip, leftKnee, leftAnkle) : null;
+
+  const kneeAngleRight =
+    rightHip && rightKnee && rightAnkle ? angleDeg(rightHip, rightKnee, rightAnkle) : null;
+
+  const posture = inferPosture(
+    leftHip,
+    rightHip,
+    leftKnee,
+    rightKnee,
+    kneeAngleLeft,
+    kneeAngleRight
+  );
+
+  const isStanding = posture === "standing";
+  const isSeated = posture === "seated";
 
   return {
-    posture: inferPosture(frame),
-
+    posture,
     rightArmElevationDeg,
     leftArmElevationDeg,
     bilateralArmElevationDeg,
-
     rightElbowAngleDeg,
     leftElbowAngleDeg,
-
-    torsoLeanDeg: getTorsoLeanDeg(frame),
-    shoulderTiltDeg: getShoulderTiltDeg(frame),
-
-    rightWristAboveShoulder: rs && rw ? rw.y < rs.y : false,
-    leftWristAboveShoulder: ls && lw ? lw.y < ls.y : false,
-
+    torsoLeanDeg,
+    shoulderTiltDeg,
+    rightWristAboveShoulder,
+    leftWristAboveShoulder,
     rightWristToShoulderDy,
-    leftWristToShoulderDy
+    leftWristToShoulderDy,
+    hipCenterY,
+    hipHeightNormalized,
+    kneeAngleLeft,
+    kneeAngleRight,
+    hipVelocityY: null,
+    isStanding,
+    isSeated
   };
 }
