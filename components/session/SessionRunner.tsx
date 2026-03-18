@@ -9,9 +9,9 @@ import CameraViewport, {
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
-import { usePrescriptionLibrary } from "@/components/providers/PrescriptionLibraryProvider";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
 
+import { ACTIVE_EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
@@ -70,8 +70,9 @@ function createIdleCoaching(): CoachingDecision {
 }
 
 export default function SessionRunner() {
-  const { allPrescriptions } = usePrescriptionLibrary();
   const { sessions } = useSessionLibrary();
+
+  const exercises = ACTIVE_EXERCISE_LIBRARY;
 
   const cameraRef = useRef<CameraViewportHandle | null>(null);
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
@@ -90,7 +91,9 @@ export default function SessionRunner() {
   const activeSessionRef = useRef<TherapySession | null>(null);
   const selectedSessionRef = useRef<TherapySession | null>(null);
 
-  const [selectedExerciseId, setSelectedExerciseId] = useState<string>("right-arm-raise");
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
+    exercises[0]?.id ?? ""
+  );
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExerciseIndex, setSessionExerciseIndex] = useState(0);
@@ -121,23 +124,23 @@ export default function SessionRunner() {
   }, [activeSession, sessionExerciseIndex]);
 
   const manualPrescription = useMemo(() => {
-    return allPrescriptions.find((item) => item.id === selectedExerciseId) ?? allPrescriptions[0];
-  }, [selectedExerciseId, allPrescriptions]);
+    return exercises.find((item) => item.id === selectedExerciseId) ?? exercises[0];
+  }, [selectedExerciseId, exercises]);
 
   const sessionPrescription = useMemo(() => {
     if (!activeSessionExercise) return null;
     return (
-      allPrescriptions.find((item) => item.id === activeSessionExercise.prescriptionId) ?? null
+      exercises.find((item) => item.id === activeSessionExercise.prescriptionId) ?? null
     );
-  }, [activeSessionExercise, allPrescriptions]);
+  }, [activeSessionExercise, exercises]);
 
   const prescription = sessionPrescription ?? manualPrescription;
 
   useEffect(() => {
-    if (!allPrescriptions.find((item) => item.id === selectedExerciseId) && allPrescriptions[0]) {
-      setSelectedExerciseId(allPrescriptions[0].id);
+    if (!exercises.find((item) => item.id === selectedExerciseId) && exercises[0]) {
+      setSelectedExerciseId(exercises[0].id);
     }
-  }, [allPrescriptions, selectedExerciseId]);
+  }, [exercises, selectedExerciseId]);
 
   useEffect(() => {
     if (!selectedSessionId && sessions[0]) {
@@ -681,7 +684,7 @@ export default function SessionRunner() {
                   opacity: activeSession ? 0.65 : 1
                 }}
               >
-                {allPrescriptions.map((item) => (
+                {exercises.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
