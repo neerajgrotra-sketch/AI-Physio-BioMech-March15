@@ -21,6 +21,11 @@ import { useVoiceCoaching } from "@/lib/coaching/useVoiceCoaching";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
+import {
+  buildRehabState,
+  type RehabEvent
+} from "@/lib/engine/rehabStateBuilder";
+import { generateCoaching } from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
@@ -90,6 +95,7 @@ export default function SessionRunner() {
   const sessionExerciseIndexRef = useRef(0);
   const activeSessionRef = useRef<TherapySession | null>(null);
   const selectedSessionRef = useRef<TherapySession | null>(null);
+  const lastPhaseRef = useRef<string>("ready");
 
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
     exercises[0]?.id ?? ""
@@ -99,6 +105,7 @@ export default function SessionRunner() {
   const [sessionExerciseIndex, setSessionExerciseIndex] = useState(0);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [aiCoachingEnabled, setAiCoachingEnabled] = useState(true);
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
@@ -192,6 +199,7 @@ export default function SessionRunner() {
     stickyCoachingRef.current = null;
     stickyCoachingUntilRef.current = 0;
     advancePendingRef.current = false;
+    lastPhaseRef.current = "ready";
 
     setRepCount(0);
     setPhase("ready");
@@ -294,6 +302,8 @@ export default function SessionRunner() {
 
           setFeatures(smoothedFeatures);
 
+          const previousPhase = repStateRef.current.phase;
+
           const output = interpretMovement(
             repStateRef.current,
             smoothedFeatures,
@@ -306,7 +316,34 @@ export default function SessionRunner() {
             }
           );
 
+          let event: RehabEvent = "idle";
+
+          if (output.isComplete && previousPhase !== "complete") {
+            event = "exercise_complete";
+          } else if (output.repState.justCompletedRep) {
+            event = "rep_complete";
+          } else if (output.repState.justFailedRep) {
+            event = "rep_failed";
+          } else if (output.repState.phase !== previousPhase) {
+            event = previousPhase === "ready" && output.repState.phase === "lifting"
+              ? "start"
+              : "phase_change";
+          }
+
+          let aiMessage = "";
+
+          if (aiCoachingEnabled && event !== "idle") {
+            const rehabState = buildRehabState(
+              smoothedFeatures,
+              output.repState,
+              activePrescription,
+              event
+            );
+            aiMessage = await generateCoaching(rehabState);
+          }
+
           repStateRef.current = output.repState;
+          lastPhaseRef.current = output.repState.phase;
 
           setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
@@ -325,7 +362,8 @@ export default function SessionRunner() {
                 {
                   code: "exercise_complete",
                   priority: "encourage",
-                  message: `Exercise complete. Next: ${nextExercise.displayName}`
+                  message:
+                    aiMessage || `Exercise complete. Next: ${nextExercise.displayName}`
                 },
                 2200
               );
@@ -343,7 +381,7 @@ export default function SessionRunner() {
                 {
                   code: "exercise_complete",
                   priority: "encourage",
-                  message: "Session complete. Well done."
+                  message: aiMessage || "Session complete. Well done."
                 },
                 2600
               );
@@ -353,7 +391,7 @@ export default function SessionRunner() {
             setStickyCoaching(
               {
                 ...failureDecision,
-                message: `${failureDecision.message} Begin again when ready.`
+                message: aiMessage || `${failureDecision.message} Begin again when ready.`
               },
               2600
             );
@@ -362,7 +400,9 @@ export default function SessionRunner() {
               {
                 code: "good_rep",
                 priority: "encourage",
-                message: `${activePrescription.coaching.success} Begin again when ready.`
+                message:
+                  aiMessage ||
+                  `${activePrescription.coaching.success} Begin again when ready.`
               },
               1800
             );
@@ -371,7 +411,7 @@ export default function SessionRunner() {
               {
                 code: "hold_complete",
                 priority: "encourage",
-                message: activePrescription.coaching.lower
+                message: aiMessage || activePrescription.coaching.lower
               },
               1200
             );
@@ -382,6 +422,15 @@ export default function SessionRunner() {
               priority: "info",
               message: `Hold ${seconds}`
             });
+          } else if (aiMessage) {
+            setStickyCoaching(
+              {
+                code: "idle",
+                priority: "info",
+                message: aiMessage
+              },
+              1800
+            );
           } else if (stickyCoachingRef.current && now < stickyCoachingUntilRef.current) {
             setCoaching(stickyCoachingRef.current);
           } else {
@@ -552,7 +601,9 @@ export default function SessionRunner() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginBottom: 12
+                marginBottom: 12,
+                gap: 12,
+                flexWrap: "wrap"
               }}
             >
               <div
@@ -568,22 +619,41 @@ export default function SessionRunner() {
                 Session Control
               </div>
 
-              <label
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: "white"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(e) => setVoiceEnabled(e.target.checked)}
-                />
-                Voice coaching
-              </label>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <label
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    fontSize: 14,
+                    color: "white"
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={voiceEnabled}
+                    onChange={(e) => setVoiceEnabled(e.target.checked)}
+                  />
+                  Voice coaching
+                </label>
+
+                <label
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    fontSize: 14,
+                    color: "white"
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={aiCoachingEnabled}
+                    onChange={(e) => setAiCoachingEnabled(e.target.checked)}
+                  />
+                  AI coaching layer
+                </label>
+              </div>
             </div>
 
             <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
