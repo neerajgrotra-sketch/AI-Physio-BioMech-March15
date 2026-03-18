@@ -17,6 +17,7 @@ import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeature
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
+import { useVoiceCoaching } from "@/lib/coaching/useVoiceCoaching";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
@@ -71,7 +72,6 @@ function createIdleCoaching(): CoachingDecision {
 
 export default function SessionRunner() {
   const { sessions } = useSessionLibrary();
-
   const exercises = ACTIVE_EXERCISE_LIBRARY;
 
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -98,6 +98,7 @@ export default function SessionRunner() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExerciseIndex, setSessionExerciseIndex] = useState(0);
   const [sessionComplete, setSessionComplete] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
@@ -109,6 +110,12 @@ export default function SessionRunner() {
     "idle"
   );
   const [engineError, setEngineError] = useState("");
+
+  useVoiceCoaching(coaching.message, {
+    enabled: voiceEnabled,
+    cooldownMs: 1800,
+    rate: 0.92
+  });
 
   const selectedSession = useMemo<TherapySession | null>(() => {
     return sessions.find((item) => item.id === selectedSessionId) ?? null;
@@ -542,16 +549,41 @@ export default function SessionRunner() {
           >
             <div
               style={{
-                display: "inline-block",
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "rgba(124,198,255,0.12)",
-                color: "#7cc6ff",
-                fontSize: 12,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
                 marginBottom: 12
               }}
             >
-              Session Control
+              <div
+                style={{
+                  display: "inline-block",
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  background: "rgba(124,198,255,0.12)",
+                  color: "#7cc6ff",
+                  fontSize: 12
+                }}
+              >
+                Session Control
+              </div>
+
+              <label
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  fontSize: 14,
+                  color: "white"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={voiceEnabled}
+                  onChange={(e) => setVoiceEnabled(e.target.checked)}
+                />
+                Voice coaching
+              </label>
             </div>
 
             <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
