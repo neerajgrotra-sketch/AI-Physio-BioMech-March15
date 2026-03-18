@@ -32,6 +32,7 @@ export type MetricSource =
   | "rightWristToShoulderDy"
   | "leftWristToShoulderDy"
   | "hipCenterY"
+  | "hipHeightNormalized"
   | "hipCenterVelocityY"
   | "kneeToHipExtensionScore";
 
