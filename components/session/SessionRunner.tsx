@@ -8,7 +8,6 @@ import CameraViewport, {
 } from "@/components/camera/CameraViewport";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
-import DebugPanel from "@/components/debug/DebugPanel";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
 
 import { ACTIVE_EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
@@ -34,7 +33,7 @@ import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
 
-type RunnerMode = "idle" | "manual" | "session";
+type RunnerMode = "session" | "exercise";
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -60,28 +59,164 @@ function createEmptyFeatures(): MovementFeatures {
   };
 }
 
-function createIdleCoaching(): CoachingDecision {
+function createIdleCoaching(mode: RunnerMode): CoachingDecision {
   return {
     code: "idle",
     priority: "info",
-    message: "Choose an exercise or session, then press Begin."
+    message:
+      mode === "session"
+        ? "Choose a session, then press Begin Session."
+        : "Choose an exercise, then press Begin Session."
   };
 }
 
-function buildDefaultStageLabel(
-  mode: RunnerMode,
-  tracking: boolean,
-  phase: string,
-  sessionComplete: boolean
-): string {
-  if (sessionComplete) return "Complete";
-  if (!tracking) return "Ready";
+function formatPhase(phase: string): string {
+  if (phase === "lifting") return "Lift";
   if (phase === "holding") return "Hold";
   if (phase === "lowering") return "Lower";
-  if (phase === "lifting") return "Lift";
-  if (mode === "session") return "In Session";
-  if (mode === "manual") return "In Exercise";
-  return "Ready";
+  if (phase === "ready") return "Ready";
+  if (phase === "complete") return "Complete";
+  return "Tracking";
+}
+
+function estimateExerciseSeconds(prescription: ExercisePrescription): number {
+  const holdSec = prescription.hold.required
+    ? prescription.hold.durationMs / 1000
+    : 0;
+
+  const repSeconds = Math.max(6, 4 + holdSec + 2);
+  return prescription.repTarget * repSeconds;
+}
+
+function formatDurationRange(totalSeconds: number): string {
+  const minMinutes = Math.max(1, Math.floor(totalSeconds / 60));
+  const maxMinutes = Math.max(minMinutes, Math.ceil(totalSeconds / 60) + 1);
+
+  if (minMinutes === maxMinutes) {
+    return `About ${minMinutes} min`;
+  }
+
+  return `About ${minMinutes}-${maxMinutes} min`;
+}
+
+function inferExerciseGoal(prescription: ExercisePrescription): string {
+  if (prescription.id === "right-arm-raise") {
+    return "Improve right shoulder mobility and controlled movement.";
+  }
+
+  if (prescription.id === "left-arm-raise") {
+    return "Improve left shoulder mobility and controlled movement.";
+  }
+
+  if (prescription.id === "both-arm-raise") {
+    return "Improve bilateral shoulder mobility and arm symmetry.";
+  }
+
+  if (prescription.id === "sit-to-stand") {
+    return "Improve lower-body strength and sit-to-stand control.";
+  }
+
+  if (prescription.category === "upper_body") {
+    return "Improve upper-body mobility and controlled movement.";
+  }
+
+  if (prescription.category === "transfer") {
+    return "Improve transfer ability and movement confidence.";
+  }
+
+  return "Support safe and controlled therapeutic movement.";
+}
+
+function inferSessionGoal(exerciseIds: string[]): string {
+  const set = new Set(exerciseIds);
+
+  if (
+    set.has("right-arm-raise") ||
+    set.has("left-arm-raise") ||
+    set.has("both-arm-raise")
+  ) {
+    if (set.has("sit-to-stand")) {
+      return "Improve upper-body mobility, controlled movement, and functional transitions.";
+    }
+
+    return "Improve shoulder mobility, arm control, and upright posture.";
+  }
+
+  if (set.has("sit-to-stand")) {
+    return "Improve lower-body strength, transfer ability, and balance.";
+  }
+
+  return "Support safe, guided rehabilitation movement.";
+}
+
+function getSessionPreview(
+  session: TherapySession | null,
+  prescriptions: ExercisePrescription[]
+) {
+  if (!session) return null;
+
+  const items = session.exercises
+    .map((item) => {
+      const prescription =
+        prescriptions.find((p) => p.id === item.prescriptionId) ?? null;
+
+      if (!prescription) return null;
+
+      return {
+        id: prescription.id,
+        displayName: item.displayName,
+        prescription,
+        seconds: estimateExerciseSeconds(prescription)
+      };
+    })
+    .filter(
+      (
+        item
+      ): item is {
+        id: string;
+        displayName: string;
+        prescription: ExercisePrescription;
+        seconds: number;
+      } => item !== null
+    );
+
+  const totalSeconds = items.reduce((sum, item) => sum + item.seconds, 0);
+  const totalReps = items.reduce((sum, item) => sum + item.prescription.repTarget, 0);
+
+  return {
+    title: session.name,
+    goal: inferSessionGoal(items.map((item) => item.id)),
+    durationLabel: formatDurationRange(totalSeconds),
+    totalExercises: items.length,
+    totalReps,
+    items
+  };
+}
+
+function getExercisePreview(prescription: ExercisePrescription) {
+  return {
+    title: prescription.name,
+    goal: inferExerciseGoal(prescription),
+    durationLabel: formatDurationRange(estimateExerciseSeconds(prescription)),
+    totalExercises: 1,
+    totalReps: prescription.repTarget,
+    items: [
+      {
+        id: prescription.id,
+        displayName: prescription.name,
+        prescription,
+        seconds: estimateExerciseSeconds(prescription)
+      }
+    ]
+  };
+}
+
+function getFramingText(prescription: ExercisePrescription): string {
+  if (prescription.id === "sit-to-stand") {
+    return "Frame your full body and chair clearly, with your hips and knees visible.";
+  }
+
+  return "Stand or sit centered in frame with your upper body and both arms visible.";
 }
 
 export default function SessionRunner() {
@@ -108,9 +243,8 @@ export default function SessionRunner() {
   const aiRequestInFlightRef = useRef(false);
   const aiEventTokenRef = useRef(0);
   const lastSpokenAtRef = useRef(0);
-  const currentModeRef = useRef<RunnerMode>("idle");
 
-  const [runnerMode, setRunnerMode] = useState<RunnerMode>("idle");
+  const [runnerMode, setRunnerMode] = useState<RunnerMode>("session");
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
     exercises[0]?.id ?? ""
   );
@@ -126,10 +260,12 @@ export default function SessionRunner() {
   const [repCount, setRepCount] = useState(0);
   const [phase, setPhase] = useState("ready");
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
-  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
-  const [engineStatus, setEngineStatus] = useState<"idle" | "loading" | "running" | "error">(
-    "idle"
+  const [coaching, setCoaching] = useState<CoachingDecision>(
+    createIdleCoaching("session")
   );
+  const [engineStatus, setEngineStatus] = useState<
+    "idle" | "loading" | "running" | "error"
+  >("idle");
   const [engineError, setEngineError] = useState("");
 
   useVoiceCoaching(coaching.message, {
@@ -164,9 +300,15 @@ export default function SessionRunner() {
 
   const prescription = sessionPrescription ?? manualPrescription;
 
-  useEffect(() => {
-    currentModeRef.current = runnerMode;
-  }, [runnerMode]);
+  const sessionPreview = useMemo(() => {
+    return getSessionPreview(selectedSession, exercises);
+  }, [selectedSession, exercises]);
+
+  const exercisePreview = useMemo(() => {
+    return getExercisePreview(manualPrescription);
+  }, [manualPrescription]);
+
+  const preview = runnerMode === "session" ? sessionPreview : exercisePreview;
 
   useEffect(() => {
     if (!exercises.find((item) => item.id === selectedExerciseId) && exercises[0]) {
@@ -177,7 +319,10 @@ export default function SessionRunner() {
   useEffect(() => {
     if (!selectedSessionId && sessions[0]) {
       setSelectedSessionId(sessions[0].id);
-    } else if (selectedSessionId && !sessions.find((item) => item.id === selectedSessionId)) {
+    } else if (
+      selectedSessionId &&
+      !sessions.find((item) => item.id === selectedSessionId)
+    ) {
       setSelectedSessionId(sessions[0]?.id ?? "");
     }
   }, [sessions, selectedSessionId]);
@@ -197,6 +342,10 @@ export default function SessionRunner() {
   useEffect(() => {
     selectedSessionRef.current = selectedSession;
   }, [selectedSession]);
+
+  useEffect(() => {
+    setCoaching(createIdleCoaching(runnerMode));
+  }, [runnerMode]);
 
   function clearAdvanceTimeout() {
     if (exerciseAdvanceTimeoutRef.current !== null) {
@@ -224,7 +373,7 @@ export default function SessionRunner() {
     setRepCount(0);
     setPhase("ready");
     setActiveMetricValue(null);
-    setCoaching(createIdleCoaching());
+    setCoaching(createIdleCoaching(runnerMode));
   }
 
   function stopSessionMode() {
@@ -253,7 +402,6 @@ export default function SessionRunner() {
     setFeatures(createEmptyFeatures());
 
     stopSessionMode();
-    setRunnerMode("idle");
     resetExerciseState();
   }
 
@@ -444,7 +592,7 @@ export default function SessionRunner() {
                 {
                   code: "exercise_complete",
                   priority: "encourage",
-                  message: `Exercise complete. Next: ${nextExercise.displayName}`
+                  message: `Exercise complete. Next: ${nextExercise.displayName}.`
                 },
                 2200
               );
@@ -504,57 +652,55 @@ export default function SessionRunner() {
     }
   }
 
-  async function beginManualExercise() {
-    stopSessionMode();
-    setRunnerMode("manual");
-    resetExerciseState();
-    setSessionComplete(false);
+  async function beginSelectedRun() {
+    if (runnerMode === "session") {
+      const sessionToStart = selectedSessionRef.current;
+      if (!sessionToStart) return;
 
-    setStickyCoaching(
-      {
-        code: "start_exercise",
-        priority: "info",
-        message: `Beginning ${prescription.name}. ${prescription.coaching.intro}`
-      },
-      1800
-    );
+      const firstExercise = sessionToStart.exercises[0];
+      if (!firstExercise) return;
 
-    try {
-      await cameraRef.current?.startCamera();
-    } catch {}
-  }
+      setActiveSessionId(sessionToStart.id);
+      setSessionExerciseIndex(0);
+      sessionExerciseIndexRef.current = 0;
+      activeSessionRef.current = sessionToStart;
+      setSessionComplete(false);
+      setSelectedExerciseId(firstExercise.prescriptionId);
+      resetExerciseState();
 
-  async function beginSelectedSession() {
-    const sessionToStart = selectedSessionRef.current;
-    if (!sessionToStart) return;
+      setStickyCoaching(
+        {
+          code: "start_exercise",
+          priority: "info",
+          message: `Session started. Please step into view.`
+        },
+        1800
+      );
+    } else {
+      stopSessionMode();
+      setSessionComplete(false);
+      resetExerciseState();
 
-    const firstExercise = sessionToStart.exercises[0];
-    if (!firstExercise) return;
-
-    setRunnerMode("session");
-    setActiveSessionId(sessionToStart.id);
-    setSessionExerciseIndex(0);
-    sessionExerciseIndexRef.current = 0;
-    activeSessionRef.current = sessionToStart;
-    setSessionComplete(false);
-    setSelectedExerciseId(firstExercise.prescriptionId);
-    resetExerciseState();
-
-    setStickyCoaching(
-      {
-        code: "start_exercise",
-        priority: "info",
-        message: `Session started: ${sessionToStart.name}`
-      },
-      1800
-    );
+      setStickyCoaching(
+        {
+          code: "start_exercise",
+          priority: "info",
+          message: `Exercise started. Please step into view.`
+        },
+        1800
+      );
+    }
 
     try {
       await cameraRef.current?.startCamera();
     } catch {}
   }
 
-  function endCurrentRun() {
+  function endSession() {
+    cameraRef.current?.stopCamera();
+  }
+
+  function stopCameraOnly() {
     cameraRef.current?.stopCamera();
   }
 
@@ -573,12 +719,6 @@ export default function SessionRunner() {
   }, [activeSession, sessionExerciseIndex]);
 
   useEffect(() => {
-    if (runnerMode === "idle") {
-      resetExerciseState();
-    }
-  }, [selectedExerciseId]);
-
-  useEffect(() => {
     return () => {
       stopTracking();
     };
@@ -590,24 +730,300 @@ export default function SessionRunner() {
       }`
     : "Single exercise";
 
-  const stageLabel = buildDefaultStageLabel(
-    runnerMode,
-    engineStatus === "running",
-    phase,
-    sessionComplete
-  );
+  const currentExerciseLabel =
+    activeSessionExercise?.displayName ?? prescription.name;
 
-  const primaryActionLabel =
-    runnerMode === "session" ? "Session Running" : "Begin Exercise";
+  const canBegin =
+    runnerMode === "session" ? Boolean(selectedSession) : Boolean(manualPrescription);
 
   return (
-    <div style={{ marginTop: 30 }}>
-      <h2>Session Runner</h2>
+    <div style={{ marginTop: 12 }}>
+      <h1
+        style={{
+          marginTop: 0,
+          marginBottom: 18,
+          fontSize: 28,
+          lineHeight: 1.2
+        }}
+      >
+        AI Physio BioMech Session Runner
+      </h1>
+
+      <section
+        style={{
+          background: "#1a2040",
+          padding: 18,
+          borderRadius: 14,
+          marginBottom: 20,
+          border: "1px solid rgba(255,255,255,0.08)"
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "220px minmax(260px, 320px) 1fr",
+            gap: 16,
+            alignItems: "start"
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "#7cc6ff",
+                marginBottom: 10,
+                textTransform: "uppercase",
+                letterSpacing: 0.6
+              }}
+            >
+              Mode
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                background: "#121933",
+                borderRadius: 12,
+                padding: 4,
+                gap: 4
+              }}
+            >
+              <button
+                onClick={() => {
+                  setRunnerMode("session");
+                  stopSessionMode();
+                  resetExerciseState();
+                }}
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "none",
+                  background:
+                    runnerMode === "session" ? "#7cc6ff" : "transparent",
+                  color: runnerMode === "session" ? "#08111f" : "white",
+                  fontWeight: 700,
+                  cursor: "pointer"
+                }}
+              >
+                Sessions
+              </button>
+
+              <button
+                onClick={() => {
+                  setRunnerMode("exercise");
+                  stopSessionMode();
+                  resetExerciseState();
+                }}
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "none",
+                  background:
+                    runnerMode === "exercise" ? "#7cc6ff" : "transparent",
+                  color: runnerMode === "exercise" ? "#08111f" : "white",
+                  fontWeight: 700,
+                  cursor: "pointer"
+                }}
+              >
+                Single Exercise
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "#7cc6ff",
+                marginBottom: 10,
+                textTransform: "uppercase",
+                letterSpacing: 0.6
+              }}
+            >
+              {runnerMode === "session" ? "Available Sessions" : "Available Exercises"}
+            </div>
+
+            {runnerMode === "session" ? (
+              <select
+                value={selectedSessionId}
+                onChange={(e) => setSelectedSessionId(e.target.value)}
+                disabled={engineStatus === "running" || engineStatus === "loading"}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "#121933",
+                  color: "white",
+                  opacity:
+                    engineStatus === "running" || engineStatus === "loading"
+                      ? 0.65
+                      : 1
+                }}
+              >
+                <option value="">Select a session</option>
+                {sessions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={selectedExerciseId}
+                onChange={(e) => setSelectedExerciseId(e.target.value)}
+                disabled={engineStatus === "running" || engineStatus === "loading"}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "#121933",
+                  color: "white",
+                  opacity:
+                    engineStatus === "running" || engineStatus === "loading"
+                      ? 0.65
+                      : 1
+                }}
+              >
+                {exercises.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div
+            style={{
+              background: "#121933",
+              borderRadius: 12,
+              padding: 16,
+              minHeight: 150
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                color: "#7cc6ff",
+                marginBottom: 10,
+                textTransform: "uppercase",
+                letterSpacing: 0.6
+              }}
+            >
+              Preview
+            </div>
+
+            {preview ? (
+              <>
+                <h3 style={{ marginTop: 0, marginBottom: 10 }}>{preview.title}</h3>
+
+                <div style={{ color: "#d8e2ff", marginBottom: 10, lineHeight: 1.5 }}>
+                  {preview.goal}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    marginBottom: 14
+                  }}
+                >
+                  <span
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      background: "rgba(124,198,255,0.12)",
+                      color: "#7cc6ff",
+                      fontSize: 12
+                    }}
+                  >
+                    {preview.durationLabel}
+                  </span>
+
+                  <span
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      background: "rgba(255,255,255,0.08)",
+                      color: "white",
+                      fontSize: 12
+                    }}
+                  >
+                    {preview.totalExercises} exercise
+                    {preview.totalExercises === 1 ? "" : "s"}
+                  </span>
+
+                  <span
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      background: "rgba(255,255,255,0.08)",
+                      color: "white",
+                      fontSize: 12
+                    }}
+                  >
+                    {preview.totalReps} total reps
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  {preview.items.map((item, index) => (
+                    <div
+                      key={`${item.id}-${index}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr auto",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        background: "rgba(255,255,255,0.04)"
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{item.displayName}</div>
+                        <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 2 }}>
+                          {item.prescription.repTarget} reps
+                          {item.prescription.hold.required
+                            ? ` • ${item.prescription.hold.durationMs / 1000}s hold`
+                            : ""}
+                          {item.prescription.tempo?.label
+                            ? ` • ${item.prescription.tempo.label}`
+                            : ""}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          alignSelf: "center",
+                          fontSize: 12,
+                          color: "#aab6d3",
+                          whiteSpace: "nowrap"
+                        }}
+                      >
+                        {formatDurationRange(item.seconds)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={{ color: "#aab6d3" }}>
+                Select a session to preview what is included.
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1.45fr 1fr",
+          gridTemplateColumns: "1.5fr 1fr",
           gap: 20,
           alignItems: "start"
         }}
@@ -616,8 +1032,9 @@ export default function SessionRunner() {
           style={{
             background: "#1a2040",
             padding: 20,
-            borderRadius: 12,
-            minHeight: 400
+            borderRadius: 14,
+            minHeight: 400,
+            border: "1px solid rgba(255,255,255,0.08)"
           }}
         >
           <div
@@ -627,32 +1044,113 @@ export default function SessionRunner() {
               gap: 12,
               alignItems: "center",
               flexWrap: "wrap",
-              marginBottom: 10
+              marginBottom: 14
             }}
           >
-            <div>
-              <h3 style={{ margin: 0 }}>Therapy View</h3>
-              <p style={{ color: "#aab6d3", margin: "6px 0 0 0" }}>
-                Follow the instructions on screen. The camera will start when you begin.
-              </p>
-            </div>
+            <h2 style={{ margin: 0 }}>Therapy View</h2>
 
             <div
               style={{
-                display: "inline-block",
                 padding: "6px 12px",
                 borderRadius: 999,
                 background: "rgba(124,198,255,0.12)",
                 color: "#7cc6ff",
                 fontSize: 12,
-                fontWeight: 600
+                fontWeight: 700
               }}
             >
-              {stageLabel}
+              {sessionComplete ? "Complete" : formatPhase(phase)}
             </div>
           </div>
 
-          <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              marginBottom: 14
+            }}
+          >
+            <button
+              onClick={beginSelectedRun}
+              disabled={!canBegin || engineStatus === "running" || engineStatus === "loading"}
+              style={{
+                background: "#9be7b0",
+                color: "#08111f",
+                fontWeight: 700,
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                cursor:
+                  canBegin && engineStatus !== "running" && engineStatus !== "loading"
+                    ? "pointer"
+                    : "not-allowed",
+                opacity:
+                  canBegin && engineStatus !== "running" && engineStatus !== "loading"
+                    ? 1
+                    : 0.5
+              }}
+            >
+              Begin Session
+            </button>
+
+            <button
+              onClick={endSession}
+              disabled={engineStatus !== "running" && engineStatus !== "error"}
+              style={{
+                background: "#7cc6ff",
+                color: "#08111f",
+                fontWeight: 700,
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                cursor:
+                  engineStatus === "running" || engineStatus === "error"
+                    ? "pointer"
+                    : "not-allowed",
+                opacity: engineStatus === "running" || engineStatus === "error" ? 1 : 0.5
+              }}
+            >
+              End Session
+            </button>
+
+            <button
+              onClick={resetExercise}
+              disabled={engineStatus === "idle"}
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                color: "white",
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                cursor: engineStatus !== "idle" ? "pointer" : "not-allowed",
+                opacity: engineStatus !== "idle" ? 1 : 0.5
+              }}
+            >
+              Reset
+            </button>
+
+            <button
+              onClick={stopCameraOnly}
+              disabled={engineStatus !== "running" && engineStatus !== "error"}
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                color: "white",
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                cursor:
+                  engineStatus === "running" || engineStatus === "error"
+                    ? "pointer"
+                    : "not-allowed",
+                opacity: engineStatus === "running" || engineStatus === "error" ? 1 : 0.5
+              }}
+            >
+              Stop Camera
+            </button>
+          </div>
+
+          <div style={{ position: "relative", width: "100%", maxWidth: 720 }}>
             <CameraViewport
               ref={cameraRef}
               onVideoReady={beginTracking}
@@ -674,6 +1172,23 @@ export default function SessionRunner() {
               <PoseCanvasOverlay frame={frame} width={640} height={420} />
             </div>
           </div>
+
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 13,
+              color: "#aab6d3",
+              lineHeight: 1.5
+            }}
+          >
+            {getFramingText(prescription)}
+          </div>
+
+          {engineError && (
+            <p style={{ color: "#ff8f8f", marginBottom: 0, marginTop: 12 }}>
+              {engineError}
+            </p>
+          )}
         </section>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -683,150 +1198,55 @@ export default function SessionRunner() {
             phase={phase}
             repCount={repCount}
             repTarget={prescription.repTarget}
+            exerciseName={currentExerciseLabel}
+            progressLabel={activeSession ? sessionProgressLabel : "Single exercise mode"}
+            minHeight={300}
           />
 
           <section
             style={{
               background: "#1a2040",
               padding: 20,
-              borderRadius: 12
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.08)"
             }}
           >
             <div
               style={{
-                display: "inline-block",
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "rgba(124,198,255,0.12)",
-                color: "#7cc6ff",
                 fontSize: 12,
-                marginBottom: 12
+                color: "#7cc6ff",
+                marginBottom: 12,
+                textTransform: "uppercase",
+                letterSpacing: 0.6
               }}
             >
-              Setup
+              Session Status
             </div>
 
-            <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-              <span style={{ fontSize: 14 }}>Saved Session</span>
-              <select
-                value={selectedSessionId}
-                onChange={(e) => setSelectedSessionId(e.target.value)}
-                disabled={runnerMode !== "idle"}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "#121933",
-                  color: "white",
-                  opacity: runnerMode !== "idle" ? 0.65 : 1
-                }}
-              >
-                <option value="">Select a saved session</option>
-                {sessions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label style={{ display: "grid", gap: 6, marginBottom: 14 }}>
-              <span style={{ fontSize: 14 }}>Exercise</span>
-              <select
-                value={selectedExerciseId}
-                onChange={(e) => setSelectedExerciseId(e.target.value)}
-                disabled={runnerMode === "session"}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "#121933",
-                  color: "white",
-                  opacity: runnerMode === "session" ? 0.65 : 1
-                }}
-              >
-                {exercises.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-              <button
-                onClick={beginManualExercise}
-                disabled={runnerMode !== "idle"}
-                style={{
-                  background: "#9be7b0",
-                  color: "#08111f",
-                  fontWeight: 700,
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "none",
-                  cursor: runnerMode === "idle" ? "pointer" : "not-allowed",
-                  opacity: runnerMode === "idle" ? 1 : 0.5
-                }}
-              >
-                {primaryActionLabel}
-              </button>
-
-              <button
-                onClick={beginSelectedSession}
-                disabled={!selectedSession || runnerMode !== "idle"}
-                style={{
-                  background: "#7cc6ff",
-                  color: "#08111f",
-                  fontWeight: 700,
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "none",
-                  cursor:
-                    selectedSession && runnerMode === "idle"
-                      ? "pointer"
-                      : "not-allowed",
-                  opacity: selectedSession && runnerMode === "idle" ? 1 : 0.5
-                }}
-              >
-                Begin Session
-              </button>
-
-              <button
-                onClick={endCurrentRun}
-                disabled={runnerMode === "idle"}
-                style={{
-                  background: "rgba(255,255,255,0.12)",
-                  color: "white",
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "none",
-                  cursor: runnerMode !== "idle" ? "pointer" : "not-allowed",
-                  opacity: runnerMode !== "idle" ? 1 : 0.5
-                }}
-              >
-                End
-              </button>
-
-              <button
-                onClick={resetExercise}
-                disabled={runnerMode === "idle"}
-                style={{
-                  background: "rgba(255,255,255,0.12)",
-                  color: "white",
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "none",
-                  cursor: runnerMode !== "idle" ? "pointer" : "not-allowed",
-                  opacity: runnerMode !== "idle" ? 1 : 0.5
-                }}
-              >
-                Reset
-              </button>
+            <div style={{ display: "grid", gap: 8, fontSize: 14 }}>
+              <div>
+                Current exercise: <strong>{currentExerciseLabel}</strong>
+              </div>
+              <div>
+                Progress: <strong>{activeSession ? sessionProgressLabel : `${repCount}/${prescription.repTarget} reps`}</strong>
+              </div>
+              <div>
+                Camera status: <strong>{engineStatus}</strong>
+              </div>
+              <div>
+                Voice coaching: <strong>{voiceEnabled ? "On" : "Off"}</strong>
+              </div>
+              <div>
+                AI coaching variation: <strong>{aiCoachingEnabled ? "On" : "Off"}</strong>
+              </div>
+              {activeMetricValue !== null && (
+                <div>
+                  Live metric: <strong>{activeMetricValue}</strong>
+                </div>
+              )}
             </div>
 
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
               <label
                 style={{
                   display: "flex",
@@ -862,102 +1282,6 @@ export default function SessionRunner() {
               </label>
             </div>
           </section>
-
-          <section
-            style={{
-              background: "#1a2040",
-              padding: 20,
-              borderRadius: 12
-            }}
-          >
-            <div
-              style={{
-                display: "inline-block",
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "rgba(124,198,255,0.12)",
-                color: "#7cc6ff",
-                fontSize: 12,
-                marginBottom: 12
-              }}
-            >
-              Current Exercise
-            </div>
-
-            <h3 style={{ marginTop: 0 }}>{prescription.name}</h3>
-            <p style={{ color: "#aab6d3", marginBottom: 10 }}>{prescription.description}</p>
-
-            <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
-              <div>
-                Target: <strong>{prescription.target.label}</strong>
-              </div>
-              {prescription.hold.required && (
-                <div>
-                  Hold: <strong>{prescription.hold.durationMs / 1000}s</strong>
-                </div>
-              )}
-              <div>
-                Reps: <strong>{prescription.repTarget}</strong>
-              </div>
-              {prescription.tempo?.label && (
-                <div>
-                  Tempo: <strong>{prescription.tempo.label}</strong>
-                </div>
-              )}
-              <div>
-                Template: <strong>{prescription.template}</strong>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gap: 8, marginTop: 14, fontSize: 14 }}>
-              <div>
-                Engine status: <strong>{engineStatus}</strong>
-              </div>
-              <div>
-                Phase: <strong>{phase}</strong>
-              </div>
-              <div>
-                Reps done: <strong>{repCount} / {prescription.repTarget}</strong>
-              </div>
-              <div>
-                Active metric: <strong>{activeMetricValue ?? "—"}</strong>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12, fontSize: 14, color: "#aab6d3" }}>
-              {activeSession ? (
-                <>
-                  <div>
-                    Session: <strong style={{ color: "white" }}>{activeSession.name}</strong>
-                  </div>
-                  <div>
-                    Progress: <strong style={{ color: "white" }}>{sessionProgressLabel}</strong>
-                  </div>
-                  {activeSessionExercise && (
-                    <div>
-                      Current item:{" "}
-                      <strong style={{ color: "white" }}>
-                        {activeSessionExercise.displayName}
-                      </strong>
-                    </div>
-                  )}
-                  {sessionComplete && (
-                    <div style={{ color: "#9be7b0", marginTop: 6 }}>
-                      Session complete.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div>Single exercise mode</div>
-              )}
-            </div>
-
-            {engineError && (
-              <p style={{ color: "#ff8f8f", marginBottom: 0 }}>{engineError}</p>
-            )}
-          </section>
-
-          <DebugPanel features={features} />
         </div>
       </div>
     </div>
