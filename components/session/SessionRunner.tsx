@@ -16,7 +16,6 @@ import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatu
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
-import { buildCoachingDecision } from "@/lib/coaching/coachingPolicy";
 import { useVoiceCoaching } from "@/lib/coaching/useVoiceCoaching";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
@@ -25,6 +24,7 @@ import {
   buildRehabState,
   type RehabEvent
 } from "@/lib/engine/rehabStateBuilder";
+import { buildCoachingOrchestration } from "@/lib/engine/coachingOrchestrator";
 import { generateCoaching } from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
@@ -34,34 +34,27 @@ import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
 
+type RunnerMode = "idle" | "manual" | "session";
+
 function createEmptyFeatures(): MovementFeatures {
   return {
     posture: "unknown",
-
     rightArmElevationDeg: null,
     leftArmElevationDeg: null,
     bilateralArmElevationDeg: null,
-
     rightElbowAngleDeg: null,
     leftElbowAngleDeg: null,
-
     torsoLeanDeg: null,
     shoulderTiltDeg: null,
-
     rightWristAboveShoulder: false,
     leftWristAboveShoulder: false,
-
     rightWristToShoulderDy: null,
     leftWristToShoulderDy: null,
-
     hipCenterY: null,
     hipHeightNormalized: null,
-
     kneeAngleLeft: null,
     kneeAngleRight: null,
-
     hipVelocityY: null,
-
     isStanding: false,
     isSeated: false
   };
@@ -71,8 +64,24 @@ function createIdleCoaching(): CoachingDecision {
   return {
     code: "idle",
     priority: "info",
-    message: "Start the camera and step into frame."
+    message: "Choose an exercise or session, then press Begin."
   };
+}
+
+function buildDefaultStageLabel(
+  mode: RunnerMode,
+  tracking: boolean,
+  phase: string,
+  sessionComplete: boolean
+): string {
+  if (sessionComplete) return "Complete";
+  if (!tracking) return "Ready";
+  if (phase === "holding") return "Hold";
+  if (phase === "lowering") return "Lower";
+  if (phase === "lifting") return "Lift";
+  if (mode === "session") return "In Session";
+  if (mode === "manual") return "In Exercise";
+  return "Ready";
 }
 
 export default function SessionRunner() {
@@ -98,7 +107,10 @@ export default function SessionRunner() {
 
   const aiRequestInFlightRef = useRef(false);
   const aiEventTokenRef = useRef(0);
+  const lastSpokenAtRef = useRef(0);
+  const currentModeRef = useRef<RunnerMode>("idle");
 
+  const [runnerMode, setRunnerMode] = useState<RunnerMode>("idle");
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
     exercises[0]?.id ?? ""
   );
@@ -153,6 +165,10 @@ export default function SessionRunner() {
   const prescription = sessionPrescription ?? manualPrescription;
 
   useEffect(() => {
+    currentModeRef.current = runnerMode;
+  }, [runnerMode]);
+
+  useEffect(() => {
     if (!exercises.find((item) => item.id === selectedExerciseId) && exercises[0]) {
       setSelectedExerciseId(exercises[0].id);
     }
@@ -203,6 +219,7 @@ export default function SessionRunner() {
     advancePendingRef.current = false;
     aiRequestInFlightRef.current = false;
     aiEventTokenRef.current = 0;
+    lastSpokenAtRef.current = 0;
 
     setRepCount(0);
     setPhase("ready");
@@ -228,7 +245,6 @@ export default function SessionRunner() {
     }
 
     clearAdvanceTimeout();
-
     videoRef.current = null;
 
     setEngineStatus("idle");
@@ -237,6 +253,7 @@ export default function SessionRunner() {
     setFeatures(createEmptyFeatures());
 
     stopSessionMode();
+    setRunnerMode("idle");
     resetExerciseState();
   }
 
@@ -327,11 +344,10 @@ export default function SessionRunner() {
             event = "rep_complete";
           } else if (output.repState.justFailedRep) {
             event = "rep_failed";
-          } else if (
-            previousPhase === "ready" &&
-            output.repState.phase === "lifting"
-          ) {
+          } else if (previousPhase === "ready" && output.repState.phase === "lifting") {
             event = "start";
+          } else if (previousPhase !== output.repState.phase) {
+            event = "phase_change";
           }
 
           repStateRef.current = output.repState;
@@ -341,9 +357,35 @@ export default function SessionRunner() {
           setActiveMetricValue(output.activeMetricValue);
 
           const now = Date.now();
+          const orchestration = buildCoachingOrchestration({
+            event,
+            output,
+            prescription: activePrescription,
+            previousPhase,
+            currentPhase: output.repState.phase,
+            nowMs: now,
+            lastSpokenAtMs: lastSpokenAtRef.current,
+            aiEnabled: aiCoachingEnabled
+          });
+
+          if (orchestration.shouldUpdatePanel) {
+            if (orchestration.stickyMs > 0) {
+              setStickyCoaching(orchestration.decision, orchestration.stickyMs);
+            } else if (
+              stickyCoachingRef.current &&
+              now < stickyCoachingUntilRef.current
+            ) {
+              setCoaching(stickyCoachingRef.current);
+            } else {
+              stickyCoachingRef.current = null;
+              stickyCoachingUntilRef.current = 0;
+              setCoaching(orchestration.decision);
+            }
+          }
 
           const shouldAskAi =
-            aiCoachingEnabled &&
+            orchestration.trigger === "ai" &&
+            orchestration.shouldSpeak &&
             !aiRequestInFlightRef.current &&
             (event === "start" ||
               event === "rep_complete" ||
@@ -367,14 +409,17 @@ export default function SessionRunner() {
                 if (!message) return;
                 if (aiEventTokenRef.current !== eventToken) return;
 
+                const aiDecision: CoachingDecision = {
+                  code: orchestration.decision.code,
+                  priority: orchestration.decision.priority,
+                  message
+                };
+
                 setStickyCoaching(
-                  {
-                    code: "idle",
-                    priority: "info",
-                    message
-                  },
-                  event === "rep_failed" ? 4000 : 2600
+                  aiDecision,
+                  event === "rep_failed" ? 4000 : 2400
                 );
+                lastSpokenAtRef.current = Date.now();
               })
               .catch((error) => {
                 console.error("LLM coaching failed:", error);
@@ -384,6 +429,8 @@ export default function SessionRunner() {
                   aiRequestInFlightRef.current = false;
                 }
               });
+          } else if (orchestration.shouldSpeak) {
+            lastSpokenAtRef.current = now;
           }
 
           if (output.isComplete && currentActiveSession && !advancePendingRef.current) {
@@ -420,46 +467,6 @@ export default function SessionRunner() {
                 2600
               );
             }
-          } else if (output.repState.justFailedRep) {
-            const failureDecision = buildCoachingDecision(output, activePrescription);
-            setStickyCoaching(
-              {
-                ...failureDecision,
-                message: `${failureDecision.message} Pause and reset before trying again.`
-              },
-              4000
-            );
-          } else if (output.repState.justCompletedRep) {
-            setStickyCoaching(
-              {
-                code: "good_rep",
-                priority: "encourage",
-                message: `${activePrescription.coaching.success} Begin again when ready.`
-              },
-              1800
-            );
-          } else if (output.repState.justCompletedHold) {
-            setStickyCoaching(
-              {
-                code: "hold_complete",
-                priority: "encourage",
-                message: activePrescription.coaching.lower
-              },
-              1200
-            );
-          } else if (output.holdRemainingMs !== null) {
-            const seconds = Math.max(1, Math.ceil(output.holdRemainingMs / 1000));
-            setCoaching({
-              code: "keep_holding",
-              priority: "info",
-              message: `Hold ${seconds}`
-            });
-          } else if (stickyCoachingRef.current && now < stickyCoachingUntilRef.current) {
-            setCoaching(stickyCoachingRef.current);
-          } else {
-            stickyCoachingRef.current = null;
-            stickyCoachingUntilRef.current = 0;
-            setCoaching(buildCoachingDecision(output, activePrescription));
           }
         } catch (error) {
           if (!trackingActiveRef.current) return;
@@ -497,13 +504,34 @@ export default function SessionRunner() {
     }
   }
 
-  async function startSelectedSession() {
+  async function beginManualExercise() {
+    stopSessionMode();
+    setRunnerMode("manual");
+    resetExerciseState();
+    setSessionComplete(false);
+
+    setStickyCoaching(
+      {
+        code: "start_exercise",
+        priority: "info",
+        message: `Beginning ${prescription.name}. ${prescription.coaching.intro}`
+      },
+      1800
+    );
+
+    try {
+      await cameraRef.current?.startCamera();
+    } catch {}
+  }
+
+  async function beginSelectedSession() {
     const sessionToStart = selectedSessionRef.current;
     if (!sessionToStart) return;
 
     const firstExercise = sessionToStart.exercises[0];
     if (!firstExercise) return;
 
+    setRunnerMode("session");
     setActiveSessionId(sessionToStart.id);
     setSessionExerciseIndex(0);
     sessionExerciseIndexRef.current = 0;
@@ -511,6 +539,7 @@ export default function SessionRunner() {
     setSessionComplete(false);
     setSelectedExerciseId(firstExercise.prescriptionId);
     resetExerciseState();
+
     setStickyCoaching(
       {
         code: "start_exercise",
@@ -525,9 +554,8 @@ export default function SessionRunner() {
     } catch {}
   }
 
-  function exitSessionMode() {
-    stopSessionMode();
-    resetExerciseState();
+  function endCurrentRun() {
+    cameraRef.current?.stopCamera();
   }
 
   function resetExercise() {
@@ -545,7 +573,9 @@ export default function SessionRunner() {
   }, [activeSession, sessionExerciseIndex]);
 
   useEffect(() => {
-    resetExerciseState();
+    if (runnerMode === "idle") {
+      resetExerciseState();
+    }
   }, [selectedExerciseId]);
 
   useEffect(() => {
@@ -558,7 +588,17 @@ export default function SessionRunner() {
     ? `Exercise ${Math.min(sessionExerciseIndex + 1, activeSession.exercises.length)} of ${
         activeSession.exercises.length
       }`
-    : "Manual exercise mode";
+    : "Single exercise";
+
+  const stageLabel = buildDefaultStageLabel(
+    runnerMode,
+    engineStatus === "running",
+    phase,
+    sessionComplete
+  );
+
+  const primaryActionLabel =
+    runnerMode === "session" ? "Session Running" : "Begin Exercise";
 
   return (
     <div style={{ marginTop: 30 }}>
@@ -567,7 +607,7 @@ export default function SessionRunner() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1.4fr 1fr",
+          gridTemplateColumns: "1.45fr 1fr",
           gap: 20,
           alignItems: "start"
         }}
@@ -580,24 +620,51 @@ export default function SessionRunner() {
             minHeight: 400
           }}
         >
-          <h3 style={{ marginTop: 0 }}>Vision Surface</h3>
-          <p style={{ color: "#aab6d3" }}>
-            Start a session or use manual exercise mode.
-          </p>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginBottom: 10
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0 }}>Therapy View</h3>
+              <p style={{ color: "#aab6d3", margin: "6px 0 0 0" }}>
+                Follow the instructions on screen. The camera will start when you begin.
+              </p>
+            </div>
+
+            <div
+              style={{
+                display: "inline-block",
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: "rgba(124,198,255,0.12)",
+                color: "#7cc6ff",
+                fontSize: 12,
+                fontWeight: 600
+              }}
+            >
+              {stageLabel}
+            </div>
+          </div>
 
           <div style={{ position: "relative", width: "100%", maxWidth: 640 }}>
             <CameraViewport
               ref={cameraRef}
               onVideoReady={beginTracking}
               onCameraStop={stopTracking}
-              showStartButton={!activeSession}
+              showStartButton={false}
             />
 
             <div
               style={{
                 position: "absolute",
                 left: 0,
-                top: 52,
+                top: 0,
                 width: "100%",
                 maxWidth: 640,
                 height: 420,
@@ -610,7 +677,13 @@ export default function SessionRunner() {
         </section>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <CoachingPanel title="Coaching" message={coaching.message} />
+          <CoachingPanel
+            title="Live Coaching"
+            message={coaching.message}
+            phase={phase}
+            repCount={repCount}
+            repTarget={prescription.repTarget}
+          />
 
           <section
             style={{
@@ -621,62 +694,16 @@ export default function SessionRunner() {
           >
             <div
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 12,
-                gap: 12,
-                flexWrap: "wrap"
+                display: "inline-block",
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: "rgba(124,198,255,0.12)",
+                color: "#7cc6ff",
+                fontSize: 12,
+                marginBottom: 12
               }}
             >
-              <div
-                style={{
-                  display: "inline-block",
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "rgba(124,198,255,0.12)",
-                  color: "#7cc6ff",
-                  fontSize: 12
-                }}
-              >
-                Session Control
-              </div>
-
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                <label
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    fontSize: 14,
-                    color: "white"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={voiceEnabled}
-                    onChange={(e) => setVoiceEnabled(e.target.checked)}
-                  />
-                  Voice coaching
-                </label>
-
-                <label
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    fontSize: 14,
-                    color: "white"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={aiCoachingEnabled}
-                    onChange={(e) => setAiCoachingEnabled(e.target.checked)}
-                  />
-                  AI coaching layer
-                </label>
-              </div>
+              Setup
             </div>
 
             <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
@@ -684,13 +711,15 @@ export default function SessionRunner() {
               <select
                 value={selectedSessionId}
                 onChange={(e) => setSelectedSessionId(e.target.value)}
+                disabled={runnerMode !== "idle"}
                 style={{
                   width: "100%",
                   padding: "10px 12px",
                   borderRadius: 10,
                   border: "1px solid rgba(255,255,255,0.12)",
                   background: "#121933",
-                  color: "white"
+                  color: "white",
+                  opacity: runnerMode !== "idle" ? 0.65 : 1
                 }}
               >
                 <option value="">Select a saved session</option>
@@ -702,10 +731,34 @@ export default function SessionRunner() {
               </select>
             </label>
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <label style={{ display: "grid", gap: 6, marginBottom: 14 }}>
+              <span style={{ fontSize: 14 }}>Exercise</span>
+              <select
+                value={selectedExerciseId}
+                onChange={(e) => setSelectedExerciseId(e.target.value)}
+                disabled={runnerMode === "session"}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "#121933",
+                  color: "white",
+                  opacity: runnerMode === "session" ? 0.65 : 1
+                }}
+              >
+                {exercises.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
               <button
-                onClick={startSelectedSession}
-                disabled={!selectedSession}
+                onClick={beginManualExercise}
+                disabled={runnerMode !== "idle"}
                 style={{
                   background: "#9be7b0",
                   color: "#08111f",
@@ -713,56 +766,100 @@ export default function SessionRunner() {
                   padding: "10px 14px",
                   borderRadius: 10,
                   border: "none",
-                  cursor: selectedSession ? "pointer" : "not-allowed",
-                  opacity: selectedSession ? 1 : 0.5
+                  cursor: runnerMode === "idle" ? "pointer" : "not-allowed",
+                  opacity: runnerMode === "idle" ? 1 : 0.5
                 }}
               >
-                Start Session
+                {primaryActionLabel}
               </button>
 
               <button
-                onClick={exitSessionMode}
-                disabled={!activeSession}
+                onClick={beginSelectedSession}
+                disabled={!selectedSession || runnerMode !== "idle"}
+                style={{
+                  background: "#7cc6ff",
+                  color: "#08111f",
+                  fontWeight: 700,
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  cursor:
+                    selectedSession && runnerMode === "idle"
+                      ? "pointer"
+                      : "not-allowed",
+                  opacity: selectedSession && runnerMode === "idle" ? 1 : 0.5
+                }}
+              >
+                Begin Session
+              </button>
+
+              <button
+                onClick={endCurrentRun}
+                disabled={runnerMode === "idle"}
                 style={{
                   background: "rgba(255,255,255,0.12)",
                   color: "white",
                   padding: "10px 14px",
                   borderRadius: 10,
                   border: "none",
-                  cursor: activeSession ? "pointer" : "not-allowed",
-                  opacity: activeSession ? 1 : 0.5
+                  cursor: runnerMode !== "idle" ? "pointer" : "not-allowed",
+                  opacity: runnerMode !== "idle" ? 1 : 0.5
                 }}
               >
-                Exit Session
+                End
+              </button>
+
+              <button
+                onClick={resetExercise}
+                disabled={runnerMode === "idle"}
+                style={{
+                  background: "rgba(255,255,255,0.12)",
+                  color: "white",
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  cursor: runnerMode !== "idle" ? "pointer" : "not-allowed",
+                  opacity: runnerMode !== "idle" ? 1 : 0.5
+                }}
+              >
+                Reset
               </button>
             </div>
 
-            <div style={{ marginTop: 12, fontSize: 14, color: "#aab6d3" }}>
-              {activeSession ? (
-                <>
-                  <div>
-                    Session: <strong style={{ color: "white" }}>{activeSession.name}</strong>
-                  </div>
-                  <div>
-                    Progress: <strong style={{ color: "white" }}>{sessionProgressLabel}</strong>
-                  </div>
-                  {activeSessionExercise && (
-                    <div>
-                      Current item:{" "}
-                      <strong style={{ color: "white" }}>
-                        {activeSessionExercise.displayName}
-                      </strong>
-                    </div>
-                  )}
-                  {sessionComplete && (
-                    <div style={{ color: "#9be7b0", marginTop: 6 }}>
-                      Session complete.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div>Manual exercise mode</div>
-              )}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  fontSize: 14,
+                  color: "white"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={voiceEnabled}
+                  onChange={(e) => setVoiceEnabled(e.target.checked)}
+                />
+                Voice coaching
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  fontSize: 14,
+                  color: "white"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={aiCoachingEnabled}
+                  onChange={(e) => setAiCoachingEnabled(e.target.checked)}
+                />
+                AI coaching variation
+              </label>
             </div>
           </section>
 
@@ -785,36 +882,6 @@ export default function SessionRunner() {
               }}
             >
               Current Exercise
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label
-                htmlFor="exercise-select"
-                style={{ display: "block", marginBottom: 6, fontSize: 14 }}
-              >
-                Exercise
-              </label>
-              <select
-                id="exercise-select"
-                value={selectedExerciseId}
-                onChange={(e) => setSelectedExerciseId(e.target.value)}
-                disabled={!!activeSession}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "#121933",
-                  color: "white",
-                  opacity: activeSession ? 0.65 : 1
-                }}
-              >
-                {exercises.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <h3 style={{ marginTop: 0 }}>{prescription.name}</h3>
@@ -857,16 +924,32 @@ export default function SessionRunner() {
               </div>
             </div>
 
-            <div style={{ marginTop: 14 }}>
-              <button
-                onClick={resetExercise}
-                style={{
-                  background: "rgba(255,255,255,0.12)",
-                  color: "white"
-                }}
-              >
-                Reset Exercise
-              </button>
+            <div style={{ marginTop: 12, fontSize: 14, color: "#aab6d3" }}>
+              {activeSession ? (
+                <>
+                  <div>
+                    Session: <strong style={{ color: "white" }}>{activeSession.name}</strong>
+                  </div>
+                  <div>
+                    Progress: <strong style={{ color: "white" }}>{sessionProgressLabel}</strong>
+                  </div>
+                  {activeSessionExercise && (
+                    <div>
+                      Current item:{" "}
+                      <strong style={{ color: "white" }}>
+                        {activeSessionExercise.displayName}
+                      </strong>
+                    </div>
+                  )}
+                  {sessionComplete && (
+                    <div style={{ color: "#9be7b0", marginTop: 6 }}>
+                      Session complete.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div>Single exercise mode</div>
+              )}
             </div>
 
             {engineError && (
