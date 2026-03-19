@@ -28,22 +28,6 @@ import {
 import { buildCoachingOrchestration } from "@/lib/engine/coachingOrchestrator";
 import { generateCoaching } from "@/lib/ai/llmCoach";
 
-type AiCoachingDebug = {
-  requestedAt: number;
-  requestEvent: string;
-  requestExercise: string;
-  requestIntent: string;
-  requestIssues: string[];
-  history: unknown;
-  httpOk: boolean | null;
-  httpStatus: number | null;
-  usedFallback: boolean;
-  returnedMessage: string | null;
-  promptPreview: string | null;
-  model: string | null;
-  error: string | null;
-};
-
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
 import type { CoachingDecision } from "@/lib/types/coaching";
@@ -51,6 +35,20 @@ import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
 
+type PreviewExerciseItem = {
+  id: string;
+  displayName: string;
+  prescription: ExercisePrescription;
+  seconds: number;
+  sessionName: string;
+};
+
+type SessionPreviewData = {
+  session: TherapySession;
+  items: PreviewExerciseItem[];
+  durationSeconds: number;
+  totalReps: number;
+};
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -135,20 +133,6 @@ function inferSessionGoal(exerciseIds: string[]): string {
   return "Support safe, guided rehabilitation movement.";
 }
 
-type PreviewExerciseItem = {
-  id: string;
-  displayName: string;
-  prescription: ExercisePrescription;
-  seconds: number;
-};
-
-type SessionPreviewData = {
-  session: TherapySession;
-  items: PreviewExerciseItem[];
-  durationSeconds: number;
-  totalReps: number;
-};
-
 function buildSessionPreviewData(
   session: TherapySession,
   prescriptions: ExercisePrescription[]
@@ -164,7 +148,8 @@ function buildSessionPreviewData(
         id: prescription.id,
         displayName: item.displayName,
         prescription,
-        seconds: estimateExerciseSeconds(prescription)
+        seconds: estimateExerciseSeconds(prescription),
+        sessionName: session.name
       };
     })
     .filter((item): item is PreviewExerciseItem => item !== null);
@@ -187,6 +172,30 @@ function getFramingText(prescription: ExercisePrescription | null): string {
   }
 
   return "Stand or sit centered in frame with your upper body and both arms visible.";
+}
+
+function extractAiMessage(result: unknown): string | null {
+  if (typeof result === "string") return result;
+  if (
+    result &&
+    typeof result === "object" &&
+    "message" in result &&
+    typeof (result as { message?: unknown }).message === "string"
+  ) {
+    return (result as { message: string }).message;
+  }
+  return null;
+}
+
+function extractAiDebug(result: unknown): any {
+  if (
+    result &&
+    typeof result === "object" &&
+    "debug" in result
+  ) {
+    return (result as { debug?: unknown }).debug ?? null;
+  }
+  return null;
 }
 
 export default function SessionRunner() {
@@ -240,7 +249,7 @@ export default function SessionRunner() {
   const [lastPrimaryIssue, setLastPrimaryIssue] = useState("idle");
   const [lastDetectedIssues, setLastDetectedIssues] = useState<string[]>([]);
   const [lastFailureReason, setLastFailureReason] = useState<string | null>(null);
-  const [lastAiDebug, setLastAiDebug] = useState<AiCoachingDebug | null>(null);
+  const [lastAiDebug, setLastAiDebug] = useState<any>(null);
 
   useVoiceCoaching(coaching.message, {
     enabled: voiceEnabled,
@@ -279,7 +288,7 @@ export default function SessionRunner() {
   }, [combinedQueue]);
 
   const activePreview = sessionPreviews[previewIndex] ?? null;
-  const currentQueueItem = combinedQueue[queueIndexRef.current] ?? null;
+  const currentQueueItem = activeQueueRef.current[queueIndexRef.current] ?? null;
   const currentPrescription = currentQueueItem?.prescription ?? null;
 
   useEffect(() => {
@@ -342,8 +351,8 @@ export default function SessionRunner() {
     setFeatures(createEmptyFeatures());
     setSessionStarted(false);
     setSessionComplete(false);
-    queueIndexRef.current = 0;
     activeQueueRef.current = [];
+    queueIndexRef.current = 0;
     prescriptionRef.current = null;
     resetExerciseState();
     setCoaching(createIdleCoaching());
@@ -501,27 +510,31 @@ export default function SessionRunner() {
             aiEventTokenRef.current = eventToken;
             aiRequestInFlightRef.current = true;
 
-        generateCoaching(rehabState)
-  .then((result) => {
-    if (!result) return;
+            generateCoaching(rehabState)
+              .then((result) => {
+                if (!result) return;
 
-    setLastAiDebug(result.debug);
+                const aiDebug = extractAiDebug(result);
+                if (aiDebug) {
+                  setLastAiDebug(aiDebug);
+                }
 
-    if (!result.message) return;
-    if (aiEventTokenRef.current !== eventToken) return;
+                const aiMessage = extractAiMessage(result);
+                if (!aiMessage) return;
+                if (aiEventTokenRef.current !== eventToken) return;
 
-    const aiDecision: CoachingDecision = {
-      code: orchestration.decision.code,
-      priority: orchestration.decision.priority,
-      message: result.message
-    };
+                const aiDecision: CoachingDecision = {
+                  code: orchestration.decision.code,
+                  priority: orchestration.decision.priority,
+                  message: aiMessage
+                };
 
-    setStickyCoaching(
-      aiDecision,
-      event === "rep_failed" ? 4000 : 2400
-    );
-    lastSpokenAtRef.current = Date.now();
-  })
+                setStickyCoaching(
+                  aiDecision,
+                  event === "rep_failed" ? 4000 : 2400
+                );
+                lastSpokenAtRef.current = Date.now();
+              })
               .catch((error) => {
                 console.error("LLM coaching failed:", error);
               })
@@ -652,9 +665,11 @@ export default function SessionRunner() {
   function resetSession() {
     clearAdvanceTimeout();
     queueIndexRef.current = 0;
+
     if (activeQueueRef.current[0]) {
       prescriptionRef.current = activeQueueRef.current[0].prescription;
     }
+
     setSessionComplete(false);
     resetExerciseState();
     setCoaching(
@@ -682,8 +697,8 @@ export default function SessionRunner() {
   const currentExerciseLabel = currentQueueItem?.displayName ?? "No active exercise";
   const currentQueueIndex = queueIndexRef.current;
   const overallProgressLabel =
-    combinedQueue.length > 0
-      ? `Exercise ${Math.min(currentQueueIndex + 1, combinedQueue.length)} of ${combinedQueue.length}`
+    activeQueueRef.current.length > 0
+      ? `Exercise ${Math.min(currentQueueIndex + 1, activeQueueRef.current.length)} of ${activeQueueRef.current.length}`
       : "No session selected";
 
   const holdSeconds =
@@ -762,7 +777,8 @@ export default function SessionRunner() {
                   engineStatus === "running" || engineStatus === "error"
                     ? "pointer"
                     : "not-allowed",
-                opacity: engineStatus === "running" || engineStatus === "error" ? 1 : 0.5
+                opacity:
+                  engineStatus === "running" || engineStatus === "error" ? 1 : 0.5
               }}
             >
               End Session
