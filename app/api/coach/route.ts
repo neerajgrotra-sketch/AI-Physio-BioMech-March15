@@ -94,9 +94,17 @@ Now return the best single coaching sentence.
 }
 
 export async function POST(req: NextRequest) {
+  const model = "gpt-4o-mini";
+
   try {
     const state = (await req.json()) as CoachState;
     const prompt = buildPrompt(state);
+
+    console.log("coach route hit", {
+      event: state.event,
+      exerciseName: state.exerciseName,
+      intent: state.intent
+    });
 
     const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -105,7 +113,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model,
         temperature: 0.3,
         max_tokens: 40,
         messages: [
@@ -122,12 +130,22 @@ export async function POST(req: NextRequest) {
       })
     });
 
+    console.log("openai status", aiResponse.status);
+
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error("OpenAI coach API error:", errorText);
 
+      const fallback = "Keep the movement slow and controlled.";
+
       return NextResponse.json({
-        message: "Keep the movement slow and controlled."
+        message: fallback,
+        debug: {
+          openAiStatus: aiResponse.status,
+          usedFallback: true,
+          promptPreview: prompt.slice(0, 1200),
+          model
+        }
       });
     }
 
@@ -137,12 +155,29 @@ export async function POST(req: NextRequest) {
       json.choices?.[0]?.message?.content?.trim() ||
       "Keep the movement slow and controlled.";
 
-    return NextResponse.json({ message });
+    return NextResponse.json({
+      message,
+      debug: {
+        openAiStatus: aiResponse.status,
+        usedFallback: false,
+        promptPreview: prompt.slice(0, 1200),
+        model
+      }
+    });
   } catch (error) {
     console.error("Coach API route error:", error);
 
+    const fallback = "Keep the movement slow and controlled.";
+
     return NextResponse.json({
-      message: "Keep the movement slow and controlled."
+      message: fallback,
+      debug: {
+        openAiStatus: null,
+        usedFallback: true,
+        promptPreview: null,
+        model,
+        error: error instanceof Error ? error.message : "Unknown route error."
+      }
     });
   }
 }
