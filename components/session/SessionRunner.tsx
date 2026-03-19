@@ -8,6 +8,8 @@ import CameraViewport, {
 } from "@/components/camera/CameraViewport";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
+import DebugPanel from "@/components/debug/DebugPanel";
+import AiDebugPanel from "@/components/debug/AiDebugPanel";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
 
 import { ACTIVE_EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
@@ -24,7 +26,10 @@ import {
   type RehabEvent
 } from "@/lib/engine/rehabStateBuilder";
 import { buildCoachingOrchestration } from "@/lib/engine/coachingOrchestrator";
-import { generateCoaching } from "@/lib/ai/llmCoach";
+import {
+  generateCoaching,
+  type AiCoachingDebug
+} from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
@@ -148,11 +153,7 @@ function buildSessionPreviewData(
         seconds: estimateExerciseSeconds(prescription)
       };
     })
-    .filter(
-      (
-        item
-      ): item is PreviewExerciseItem => item !== null
-    );
+    .filter((item): item is PreviewExerciseItem => item !== null);
 
   return {
     session,
@@ -202,6 +203,7 @@ export default function SessionRunner() {
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
+  const [showDebug, setShowDebug] = useState(true);
 
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
@@ -219,6 +221,12 @@ export default function SessionRunner() {
     "idle" | "loading" | "running" | "error"
   >("idle");
   const [engineError, setEngineError] = useState("");
+
+  const [lastEvent, setLastEvent] = useState<RehabEvent>("idle");
+  const [lastPrimaryIssue, setLastPrimaryIssue] = useState("idle");
+  const [lastDetectedIssues, setLastDetectedIssues] = useState<string[]>([]);
+  const [lastFailureReason, setLastFailureReason] = useState<string | null>(null);
+  const [lastAiDebug, setLastAiDebug] = useState<AiCoachingDebug | null>(null);
 
   useVoiceCoaching(coaching.message, {
     enabled: voiceEnabled,
@@ -297,6 +305,10 @@ export default function SessionRunner() {
     setPhase("ready");
     setHoldRemainingMs(null);
     setActiveMetricValue(null);
+    setLastEvent("idle");
+    setLastPrimaryIssue("idle");
+    setLastDetectedIssues([]);
+    setLastFailureReason(null);
   }
 
   function stopTracking() {
@@ -421,6 +433,18 @@ export default function SessionRunner() {
           setPhase(output.repState.phase);
           setHoldRemainingMs(output.holdRemainingMs);
           setActiveMetricValue(output.activeMetricValue);
+          setLastEvent(event);
+          setLastPrimaryIssue(output.primaryIssue);
+
+          const rehabState = buildRehabState(
+            smoothedFeatures,
+            output.repState,
+            activePrescription,
+            event
+          );
+
+          setLastDetectedIssues(rehabState.detectedIssues);
+          setLastFailureReason(rehabState.failureReason);
 
           const now = Date.now();
           const orchestration = buildCoachingOrchestration({
@@ -459,26 +483,21 @@ export default function SessionRunner() {
               event === "exercise_complete");
 
           if (shouldAskAi) {
-            const rehabState = buildRehabState(
-              smoothedFeatures,
-              output.repState,
-              activePrescription,
-              event
-            );
-
             const eventToken = Date.now();
             aiEventTokenRef.current = eventToken;
             aiRequestInFlightRef.current = true;
 
             generateCoaching(rehabState)
-              .then((message) => {
-                if (!message) return;
+              .then((result) => {
+                setLastAiDebug(result.debug);
+
+                if (!result.message) return;
                 if (aiEventTokenRef.current !== eventToken) return;
 
                 const aiDecision: CoachingDecision = {
                   code: orchestration.decision.code,
                   priority: orchestration.decision.priority,
-                  message
+                  message: result.message
                 };
 
                 setStickyCoaching(
@@ -639,11 +658,16 @@ export default function SessionRunner() {
     };
   }, []);
 
-  const canBegin = combinedQueue.length > 0 && engineStatus !== "running" && engineStatus !== "loading";
+  const canBegin =
+    combinedQueue.length > 0 &&
+    engineStatus !== "running" &&
+    engineStatus !== "loading";
+
   const currentExerciseLabel = currentQueueItem?.displayName ?? "No active exercise";
+  const currentQueueIndex = queueIndexRef.current;
   const overallProgressLabel =
     combinedQueue.length > 0
-      ? `Exercise ${Math.min(queueIndexRef.current + 1, combinedQueue.length)} of ${combinedQueue.length}`
+      ? `Exercise ${Math.min(currentQueueIndex + 1, combinedQueue.length)} of ${combinedQueue.length}`
       : "No session selected";
 
   const holdSeconds =
@@ -754,6 +778,20 @@ export default function SessionRunner() {
               }}
             >
               {selectorCollapsed ? "Expand" : "Collapse"}
+            </button>
+
+            <button
+              onClick={() => setShowDebug((v) => !v)}
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                color: "white",
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                cursor: "pointer"
+              }}
+            >
+              {showDebug ? "Hide Debug" : "Show Debug"}
             </button>
           </div>
         </div>
@@ -1228,6 +1266,32 @@ export default function SessionRunner() {
           </section>
         </div>
       </div>
+
+      {showDebug && (
+        <div style={{ display: "grid", gap: 20, marginTop: 20 }}>
+          <DebugPanel features={features} />
+
+          <AiDebugPanel
+            runtime={{
+              phase,
+              repCount,
+              repTarget: currentPrescription?.repTarget ?? 0,
+              holdSeconds,
+              activeMetricValue,
+              engineStatus,
+              currentExercise: currentExerciseLabel,
+              overallProgress: overallProgressLabel,
+              lastEvent,
+              primaryIssue: lastPrimaryIssue,
+              detectedIssues: lastDetectedIssues,
+              failureReason: lastFailureReason,
+              aiRequestInFlight: aiRequestInFlightRef.current
+            }}
+            features={features}
+            aiDebug={lastAiDebug}
+          />
+        </div>
+      )}
     </div>
   );
 }
