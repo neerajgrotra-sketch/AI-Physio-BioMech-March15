@@ -34,16 +34,7 @@ type AiCoachingDebug = {
   requestExercise: string;
   requestIntent: string;
   requestIssues: string[];
-  history: {
-    lastIssues: string[];
-    repeatedIssue?: string;
-    repeatedIssueCount: number;
-    dominantIssue?: string;
-    trend: "improving" | "worsening" | "stable";
-    consecutiveSuccesses: number;
-    consecutiveFailures: number;
-    recentEvents: string[];
-  };
+  history: unknown;
   httpOk: boolean | null;
   httpStatus: number | null;
   usedFallback: boolean;
