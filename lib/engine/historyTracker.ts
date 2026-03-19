@@ -1,38 +1,121 @@
 import type { RehabState } from "@/lib/engine/rehabStateBuilder";
 
-type HistoryState = {
+export type HistoryState = {
   lastIssues: string[];
   repeatedIssue?: string;
+  repeatedIssueCount: number;
+  dominantIssue?: string;
   trend: "improving" | "worsening" | "stable";
+  consecutiveSuccesses: number;
+  consecutiveFailures: number;
+  recentEvents: string[];
 };
 
-let previousIssues: string[] = [];
+type TrackerBucket = {
+  lastIssues: string[];
+  issueCounts: Record<string, number>;
+  consecutiveSuccesses: number;
+  consecutiveFailures: number;
+  recentEvents: string[];
+};
 
-export function buildHistory(state: RehabState): HistoryState {
-  const currentIssues = state.detectedIssues;
+const tracker = new Map<string, TrackerBucket>();
 
-  let repeatedIssue: string | undefined;
+function getBucketKey(state: RehabState): string {
+  return `${state.exerciseId}:${state.side}`;
+}
 
-  for (const issue of currentIssues) {
-    if (previousIssues.includes(issue)) {
-      repeatedIssue = issue;
-      break;
+function getOrCreateBucket(key: string): TrackerBucket {
+  const existing = tracker.get(key);
+  if (existing) return existing;
+
+  const created: TrackerBucket = {
+    lastIssues: [],
+    issueCounts: {},
+    consecutiveSuccesses: 0,
+    consecutiveFailures: 0,
+    recentEvents: []
+  };
+
+  tracker.set(key, created);
+  return created;
+}
+
+function deriveTrend(
+  previousIssues: string[],
+  currentIssues: string[]
+): "improving" | "worsening" | "stable" {
+  if (currentIssues.length < previousIssues.length) return "improving";
+  if (currentIssues.length > previousIssues.length) return "worsening";
+
+  const previousSet = new Set(previousIssues);
+  const currentSet = new Set(currentIssues);
+
+  const same =
+    previousSet.size === currentSet.size &&
+    [...previousSet].every((issue) => currentSet.has(issue));
+
+  return same ? "stable" : "stable";
+}
+
+function getDominantIssue(issueCounts: Record<string, number>): string | undefined {
+  let dominantIssue: string | undefined;
+  let maxCount = 0;
+
+  for (const [issue, count] of Object.entries(issueCounts)) {
+    if (count > maxCount) {
+      dominantIssue = issue;
+      maxCount = count;
     }
   }
 
-  let trend: "improving" | "worsening" | "stable" = "stable";
+  return dominantIssue;
+}
 
-  if (currentIssues.length < previousIssues.length) {
-    trend = "improving";
-  } else if (currentIssues.length > previousIssues.length) {
-    trend = "worsening";
+export function resetHistoryTracker(): void {
+  tracker.clear();
+}
+
+export function buildHistory(state: RehabState): HistoryState {
+  const key = getBucketKey(state);
+  const bucket = getOrCreateBucket(key);
+
+  const currentIssues = [...state.detectedIssues];
+  const repeatedIssue = currentIssues.find((issue) =>
+    bucket.lastIssues.includes(issue)
+  );
+
+  if (state.event === "rep_complete") {
+    bucket.consecutiveSuccesses += 1;
+    bucket.consecutiveFailures = 0;
+  } else if (state.event === "rep_failed") {
+    bucket.consecutiveFailures += 1;
+    bucket.consecutiveSuccesses = 0;
   }
 
-  previousIssues = currentIssues;
+  for (const issue of currentIssues) {
+    bucket.issueCounts[issue] = (bucket.issueCounts[issue] ?? 0) + 1;
+  }
+
+  bucket.recentEvents = [...bucket.recentEvents, state.event].slice(-5);
+
+  const repeatedIssueCount = repeatedIssue
+    ? bucket.issueCounts[repeatedIssue] ?? 1
+    : 0;
+
+  const trend = deriveTrend(bucket.lastIssues, currentIssues);
+  const dominantIssue = getDominantIssue(bucket.issueCounts);
+
+  bucket.lastIssues = currentIssues;
 
   return {
     lastIssues: currentIssues,
     repeatedIssue,
-    trend
+    repeatedIssueCount,
+    dominantIssue,
+    trend,
+    consecutiveSuccesses: bucket.consecutiveSuccesses,
+    consecutiveFailures: bucket.consecutiveFailures,
+    recentEvents: bucket.recentEvents
   };
 }
