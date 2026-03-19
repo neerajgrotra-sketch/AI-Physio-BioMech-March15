@@ -33,8 +33,6 @@ import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
 
-type RunnerMode = "session" | "exercise";
-
 function createEmptyFeatures(): MovementFeatures {
   return {
     posture: "unknown",
@@ -59,14 +57,11 @@ function createEmptyFeatures(): MovementFeatures {
   };
 }
 
-function createIdleCoaching(mode: RunnerMode): CoachingDecision {
+function createIdleCoaching(): CoachingDecision {
   return {
     code: "idle",
     priority: "info",
-    message:
-      mode === "session"
-        ? "Choose a session, then press Begin Session."
-        : "Choose an exercise, then press Begin Session."
+    message: "Select one or more sessions, then press Begin Session."
   };
 }
 
@@ -99,34 +94,6 @@ function formatDurationRange(totalSeconds: number): string {
   return `About ${minMinutes}-${maxMinutes} min`;
 }
 
-function inferExerciseGoal(prescription: ExercisePrescription): string {
-  if (prescription.id === "right-arm-raise") {
-    return "Improve right shoulder mobility and controlled movement.";
-  }
-
-  if (prescription.id === "left-arm-raise") {
-    return "Improve left shoulder mobility and controlled movement.";
-  }
-
-  if (prescription.id === "both-arm-raise") {
-    return "Improve bilateral shoulder mobility and arm symmetry.";
-  }
-
-  if (prescription.id === "sit-to-stand") {
-    return "Improve lower-body strength and sit-to-stand control.";
-  }
-
-  if (prescription.category === "upper_body") {
-    return "Improve upper-body mobility and controlled movement.";
-  }
-
-  if (prescription.category === "transfer") {
-    return "Improve transfer ability and movement confidence.";
-  }
-
-  return "Support safe and controlled therapeutic movement.";
-}
-
 function inferSessionGoal(exerciseIds: string[]): string {
   const set = new Set(exerciseIds);
 
@@ -136,7 +103,7 @@ function inferSessionGoal(exerciseIds: string[]): string {
     set.has("both-arm-raise")
   ) {
     if (set.has("sit-to-stand")) {
-      return "Improve upper-body mobility, controlled movement, and functional transitions.";
+      return "Improve upper-body mobility, posture control, and functional movement.";
     }
 
     return "Improve shoulder mobility, arm control, and upright posture.";
@@ -149,12 +116,24 @@ function inferSessionGoal(exerciseIds: string[]): string {
   return "Support safe, guided rehabilitation movement.";
 }
 
-function getSessionPreview(
-  session: TherapySession | null,
-  prescriptions: ExercisePrescription[]
-) {
-  if (!session) return null;
+type PreviewExerciseItem = {
+  id: string;
+  displayName: string;
+  prescription: ExercisePrescription;
+  seconds: number;
+};
 
+type SessionPreviewData = {
+  session: TherapySession;
+  items: PreviewExerciseItem[];
+  durationSeconds: number;
+  totalReps: number;
+};
+
+function buildSessionPreviewData(
+  session: TherapySession,
+  prescriptions: ExercisePrescription[]
+): SessionPreviewData {
   const items = session.exercises
     .map((item) => {
       const prescription =
@@ -172,48 +151,24 @@ function getSessionPreview(
     .filter(
       (
         item
-      ): item is {
-        id: string;
-        displayName: string;
-        prescription: ExercisePrescription;
-        seconds: number;
-      } => item !== null
+      ): item is PreviewExerciseItem => item !== null
     );
 
-  const totalSeconds = items.reduce((sum, item) => sum + item.seconds, 0);
-  const totalReps = items.reduce((sum, item) => sum + item.prescription.repTarget, 0);
-
   return {
-    title: session.name,
-    goal: inferSessionGoal(items.map((item) => item.id)),
-    durationLabel: formatDurationRange(totalSeconds),
-    totalExercises: items.length,
-    totalReps,
-    items
+    session,
+    items,
+    durationSeconds: items.reduce((sum, item) => sum + item.seconds, 0),
+    totalReps: items.reduce((sum, item) => sum + item.prescription.repTarget, 0)
   };
 }
 
-function getExercisePreview(prescription: ExercisePrescription) {
-  return {
-    title: prescription.name,
-    goal: inferExerciseGoal(prescription),
-    durationLabel: formatDurationRange(estimateExerciseSeconds(prescription)),
-    totalExercises: 1,
-    totalReps: prescription.repTarget,
-    items: [
-      {
-        id: prescription.id,
-        displayName: prescription.name,
-        prescription,
-        seconds: estimateExerciseSeconds(prescription)
-      }
-    ]
-  };
-}
+function getFramingText(prescription: ExercisePrescription | null): string {
+  if (!prescription) {
+    return "Stand or sit centered in frame with your upper body clearly visible.";
+  }
 
-function getFramingText(prescription: ExercisePrescription): string {
   if (prescription.id === "sit-to-stand") {
-    return "Frame your full body and chair clearly, with your hips and knees visible.";
+    return "Frame your full body and chair clearly, with hips and knees visible.";
   }
 
   return "Stand or sit centered in frame with your upper body and both arms visible.";
@@ -236,21 +191,19 @@ export default function SessionRunner() {
   const stickyCoachingUntilRef = useRef<number>(0);
   const stickyCoachingRef = useRef<CoachingDecision | null>(null);
   const prescriptionRef = useRef<ExercisePrescription | null>(null);
-  const sessionExerciseIndexRef = useRef(0);
-  const activeSessionRef = useRef<TherapySession | null>(null);
-  const selectedSessionRef = useRef<TherapySession | null>(null);
+
+  const activeQueueRef = useRef<PreviewExerciseItem[]>([]);
+  const queueIndexRef = useRef(0);
 
   const aiRequestInFlightRef = useRef(false);
   const aiEventTokenRef = useRef(0);
   const lastSpokenAtRef = useRef(0);
 
-  const [runnerMode, setRunnerMode] = useState<RunnerMode>("session");
-  const [selectedExerciseId, setSelectedExerciseId] = useState<string>(
-    exercises[0]?.id ?? ""
-  );
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [sessionExerciseIndex, setSessionExerciseIndex] = useState(0);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [selectorCollapsed, setSelectorCollapsed] = useState(false);
+
+  const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [aiCoachingEnabled, setAiCoachingEnabled] = useState(true);
@@ -259,10 +212,9 @@ export default function SessionRunner() {
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
   const [repCount, setRepCount] = useState(0);
   const [phase, setPhase] = useState("ready");
+  const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
-  const [coaching, setCoaching] = useState<CoachingDecision>(
-    createIdleCoaching("session")
-  );
+  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
@@ -274,78 +226,49 @@ export default function SessionRunner() {
     rate: 0.92
   });
 
-  const selectedSession = useMemo<TherapySession | null>(() => {
-    return sessions.find((item) => item.id === selectedSessionId) ?? null;
-  }, [sessions, selectedSessionId]);
-
-  const activeSession = useMemo<TherapySession | null>(() => {
-    return sessions.find((item) => item.id === activeSessionId) ?? null;
-  }, [sessions, activeSessionId]);
-
-  const activeSessionExercise = useMemo(() => {
-    if (!activeSession) return null;
-    return activeSession.exercises[sessionExerciseIndex] ?? null;
-  }, [activeSession, sessionExerciseIndex]);
-
-  const manualPrescription = useMemo(() => {
-    return exercises.find((item) => item.id === selectedExerciseId) ?? exercises[0];
-  }, [selectedExerciseId, exercises]);
-
-  const sessionPrescription = useMemo(() => {
-    if (!activeSessionExercise) return null;
-    return (
-      exercises.find((item) => item.id === activeSessionExercise.prescriptionId) ?? null
-    );
-  }, [activeSessionExercise, exercises]);
-
-  const prescription = sessionPrescription ?? manualPrescription;
-
-  const sessionPreview = useMemo(() => {
-    return getSessionPreview(selectedSession, exercises);
-  }, [selectedSession, exercises]);
-
-  const exercisePreview = useMemo(() => {
-    return getExercisePreview(manualPrescription);
-  }, [manualPrescription]);
-
-  const preview = runnerMode === "session" ? sessionPreview : exercisePreview;
-
   useEffect(() => {
-    if (!exercises.find((item) => item.id === selectedExerciseId) && exercises[0]) {
-      setSelectedExerciseId(exercises[0].id);
+    if (selectedSessionIds.length === 0 && sessions[0]) {
+      setSelectedSessionIds([sessions[0].id]);
     }
-  }, [exercises, selectedExerciseId]);
+  }, [sessions, selectedSessionIds.length]);
+
+  const selectedSessions = useMemo(() => {
+    return sessions.filter((session) => selectedSessionIds.includes(session.id));
+  }, [sessions, selectedSessionIds]);
+
+  const sessionPreviews = useMemo(() => {
+    return selectedSessions.map((session) => buildSessionPreviewData(session, exercises));
+  }, [selectedSessions, exercises]);
+
+  const combinedQueue = useMemo(() => {
+    return sessionPreviews.flatMap((preview) => preview.items);
+  }, [sessionPreviews]);
+
+  const combinedDurationSeconds = useMemo(() => {
+    return sessionPreviews.reduce((sum, preview) => sum + preview.durationSeconds, 0);
+  }, [sessionPreviews]);
+
+  const combinedTotalReps = useMemo(() => {
+    return sessionPreviews.reduce((sum, preview) => sum + preview.totalReps, 0);
+  }, [sessionPreviews]);
+
+  const combinedGoal = useMemo(() => {
+    return inferSessionGoal(combinedQueue.map((item) => item.id));
+  }, [combinedQueue]);
+
+  const activePreview = sessionPreviews[previewIndex] ?? null;
+  const currentQueueItem = combinedQueue[queueIndexRef.current] ?? null;
+  const currentPrescription = currentQueueItem?.prescription ?? null;
 
   useEffect(() => {
-    if (!selectedSessionId && sessions[0]) {
-      setSelectedSessionId(sessions[0].id);
-    } else if (
-      selectedSessionId &&
-      !sessions.find((item) => item.id === selectedSessionId)
-    ) {
-      setSelectedSessionId(sessions[0]?.id ?? "");
+    prescriptionRef.current = currentPrescription;
+  }, [currentPrescription]);
+
+  useEffect(() => {
+    if (previewIndex > Math.max(sessionPreviews.length - 1, 0)) {
+      setPreviewIndex(0);
     }
-  }, [sessions, selectedSessionId]);
-
-  useEffect(() => {
-    prescriptionRef.current = prescription;
-  }, [prescription]);
-
-  useEffect(() => {
-    sessionExerciseIndexRef.current = sessionExerciseIndex;
-  }, [sessionExerciseIndex]);
-
-  useEffect(() => {
-    activeSessionRef.current = activeSession;
-  }, [activeSession]);
-
-  useEffect(() => {
-    selectedSessionRef.current = selectedSession;
-  }, [selectedSession]);
-
-  useEffect(() => {
-    setCoaching(createIdleCoaching(runnerMode));
-  }, [runnerMode]);
+  }, [previewIndex, sessionPreviews.length]);
 
   function clearAdvanceTimeout() {
     if (exerciseAdvanceTimeoutRef.current !== null) {
@@ -372,17 +295,8 @@ export default function SessionRunner() {
 
     setRepCount(0);
     setPhase("ready");
+    setHoldRemainingMs(null);
     setActiveMetricValue(null);
-    setCoaching(createIdleCoaching(runnerMode));
-  }
-
-  function stopSessionMode() {
-    clearAdvanceTimeout();
-    setActiveSessionId(null);
-    setSessionExerciseIndex(0);
-    setSessionComplete(false);
-    sessionExerciseIndexRef.current = 0;
-    activeSessionRef.current = null;
   }
 
   function stopTracking() {
@@ -400,9 +314,13 @@ export default function SessionRunner() {
     setEngineError("");
     setFrame(null);
     setFeatures(createEmptyFeatures());
-
-    stopSessionMode();
+    setSessionStarted(false);
+    setSessionComplete(false);
+    queueIndexRef.current = 0;
+    activeQueueRef.current = [];
+    prescriptionRef.current = null;
     resetExerciseState();
+    setCoaching(createIdleCoaching());
   }
 
   async function beginTracking(video: HTMLVideoElement) {
@@ -426,7 +344,6 @@ export default function SessionRunner() {
         const liveVideo = videoRef.current;
         const detector = detectorRef.current;
         const activePrescription = prescriptionRef.current;
-        const currentActiveSession = activeSessionRef.current;
 
         if (!liveVideo || !detector || !activePrescription) return;
 
@@ -502,6 +419,7 @@ export default function SessionRunner() {
 
           setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
+          setHoldRemainingMs(output.holdRemainingMs);
           setActiveMetricValue(output.activeMetricValue);
 
           const now = Date.now();
@@ -581,11 +499,11 @@ export default function SessionRunner() {
             lastSpokenAtRef.current = now;
           }
 
-          if (output.isComplete && currentActiveSession && !advancePendingRef.current) {
+          if (output.isComplete && !advancePendingRef.current) {
             advancePendingRef.current = true;
 
-            const nextIndex = sessionExerciseIndexRef.current + 1;
-            const nextExercise = currentActiveSession.exercises[nextIndex] ?? null;
+            const nextIndex = queueIndexRef.current + 1;
+            const nextExercise = activeQueueRef.current[nextIndex] ?? null;
 
             if (nextExercise) {
               setStickyCoaching(
@@ -599,8 +517,8 @@ export default function SessionRunner() {
 
               clearAdvanceTimeout();
               exerciseAdvanceTimeoutRef.current = window.setTimeout(() => {
-                setSessionExerciseIndex(nextIndex);
-                sessionExerciseIndexRef.current = nextIndex;
+                queueIndexRef.current = nextIndex;
+                prescriptionRef.current = nextExercise.prescription;
                 advancePendingRef.current = false;
                 resetExerciseState();
               }, 2200);
@@ -652,44 +570,40 @@ export default function SessionRunner() {
     }
   }
 
-  async function beginSelectedRun() {
-    if (runnerMode === "session") {
-      const sessionToStart = selectedSessionRef.current;
-      if (!sessionToStart) return;
-
-      const firstExercise = sessionToStart.exercises[0];
-      if (!firstExercise) return;
-
-      setActiveSessionId(sessionToStart.id);
-      setSessionExerciseIndex(0);
-      sessionExerciseIndexRef.current = 0;
-      activeSessionRef.current = sessionToStart;
-      setSessionComplete(false);
-      setSelectedExerciseId(firstExercise.prescriptionId);
-      resetExerciseState();
-
-      setStickyCoaching(
-        {
-          code: "start_exercise",
-          priority: "info",
-          message: `Session started. Please step into view.`
-        },
-        1800
-      );
-    } else {
-      stopSessionMode();
-      setSessionComplete(false);
-      resetExerciseState();
-
-      setStickyCoaching(
-        {
-          code: "start_exercise",
-          priority: "info",
-          message: `Exercise started. Please step into view.`
-        },
-        1800
-      );
+  function toggleSessionSelection(sessionId: string) {
+    if (sessionStarted || engineStatus === "loading" || engineStatus === "running") {
+      return;
     }
+
+    setSelectedSessionIds((current) => {
+      if (current.includes(sessionId)) {
+        const next = current.filter((id) => id !== sessionId);
+        return next.length > 0 ? next : current;
+      }
+
+      return [...current, sessionId];
+    });
+  }
+
+  async function beginCombinedSession() {
+    if (combinedQueue.length === 0) return;
+
+    activeQueueRef.current = combinedQueue;
+    queueIndexRef.current = 0;
+    prescriptionRef.current = combinedQueue[0].prescription;
+
+    setSessionStarted(true);
+    setSessionComplete(false);
+    resetExerciseState();
+
+    setStickyCoaching(
+      {
+        code: "start_exercise",
+        priority: "info",
+        message: "Session started. Please step into view."
+      },
+      1800
+    );
 
     try {
       await cameraRef.current?.startCamera();
@@ -700,23 +614,24 @@ export default function SessionRunner() {
     cameraRef.current?.stopCamera();
   }
 
-  function stopCameraOnly() {
-    cameraRef.current?.stopCamera();
-  }
-
-  function resetExercise() {
+  function resetSession() {
     clearAdvanceTimeout();
-    resetExerciseState();
-  }
-
-  useEffect(() => {
-    if (!activeSession) return;
-
-    const current = activeSession.exercises[sessionExerciseIndex];
-    if (current) {
-      setSelectedExerciseId(current.prescriptionId);
+    queueIndexRef.current = 0;
+    if (activeQueueRef.current[0]) {
+      prescriptionRef.current = activeQueueRef.current[0].prescription;
     }
-  }, [activeSession, sessionExerciseIndex]);
+    setSessionComplete(false);
+    resetExerciseState();
+    setCoaching(
+      sessionStarted
+        ? {
+            code: "start_exercise",
+            priority: "info",
+            message: "Session reset. Press Begin Session to start again."
+          }
+        : createIdleCoaching()
+    );
+  }
 
   useEffect(() => {
     return () => {
@@ -724,17 +639,15 @@ export default function SessionRunner() {
     };
   }, []);
 
-  const sessionProgressLabel = activeSession
-    ? `Exercise ${Math.min(sessionExerciseIndex + 1, activeSession.exercises.length)} of ${
-        activeSession.exercises.length
-      }`
-    : "Single exercise";
+  const canBegin = combinedQueue.length > 0 && engineStatus !== "running" && engineStatus !== "loading";
+  const currentExerciseLabel = currentQueueItem?.displayName ?? "No active exercise";
+  const overallProgressLabel =
+    combinedQueue.length > 0
+      ? `Exercise ${Math.min(queueIndexRef.current + 1, combinedQueue.length)} of ${combinedQueue.length}`
+      : "No session selected";
 
-  const currentExerciseLabel =
-    activeSessionExercise?.displayName ?? prescription.name;
-
-  const canBegin =
-    runnerMode === "session" ? Boolean(selectedSession) : Boolean(manualPrescription);
+  const holdSeconds =
+    holdRemainingMs !== null ? Math.max(1, Math.ceil(holdRemainingMs / 1000)) : null;
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -760,320 +673,27 @@ export default function SessionRunner() {
       >
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "220px minmax(260px, 320px) 1fr",
-            gap: 16,
-            alignItems: "start"
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+            marginBottom: selectorCollapsed ? 0 : 16,
+            flexWrap: "wrap"
           }}
         >
           <div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "#7cc6ff",
-                marginBottom: 10,
-                textTransform: "uppercase",
-                letterSpacing: 0.6
-              }}
-            >
-              Mode
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                background: "#121933",
-                borderRadius: 12,
-                padding: 4,
-                gap: 4
-              }}
-            >
-              <button
-                onClick={() => {
-                  setRunnerMode("session");
-                  stopSessionMode();
-                  resetExerciseState();
-                }}
-                style={{
-                  flex: 1,
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "none",
-                  background:
-                    runnerMode === "session" ? "#7cc6ff" : "transparent",
-                  color: runnerMode === "session" ? "#08111f" : "white",
-                  fontWeight: 700,
-                  cursor: "pointer"
-                }}
-              >
-                Sessions
-              </button>
-
-              <button
-                onClick={() => {
-                  setRunnerMode("exercise");
-                  stopSessionMode();
-                  resetExerciseState();
-                }}
-                style={{
-                  flex: 1,
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "none",
-                  background:
-                    runnerMode === "exercise" ? "#7cc6ff" : "transparent",
-                  color: runnerMode === "exercise" ? "#08111f" : "white",
-                  fontWeight: 700,
-                  cursor: "pointer"
-                }}
-              >
-                Single Exercise
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "#7cc6ff",
-                marginBottom: 10,
-                textTransform: "uppercase",
-                letterSpacing: 0.6
-              }}
-            >
-              {runnerMode === "session" ? "Available Sessions" : "Available Exercises"}
-            </div>
-
-            {runnerMode === "session" ? (
-              <select
-                value={selectedSessionId}
-                onChange={(e) => setSelectedSessionId(e.target.value)}
-                disabled={engineStatus === "running" || engineStatus === "loading"}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "#121933",
-                  color: "white",
-                  opacity:
-                    engineStatus === "running" || engineStatus === "loading"
-                      ? 0.65
-                      : 1
-                }}
-              >
-                <option value="">Select a session</option>
-                {sessions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                value={selectedExerciseId}
-                onChange={(e) => setSelectedExerciseId(e.target.value)}
-                disabled={engineStatus === "running" || engineStatus === "loading"}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "#121933",
-                  color: "white",
-                  opacity:
-                    engineStatus === "running" || engineStatus === "loading"
-                      ? 0.65
-                      : 1
-                }}
-              >
-                {exercises.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <div
-            style={{
-              background: "#121933",
-              borderRadius: 12,
-              padding: 16,
-              minHeight: 150
-            }}
-          >
-            <div
-              style={{
-                fontSize: 12,
-                color: "#7cc6ff",
-                marginBottom: 10,
-                textTransform: "uppercase",
-                letterSpacing: 0.6
-              }}
-            >
-              Preview
-            </div>
-
-            {preview ? (
-              <>
-                <h3 style={{ marginTop: 0, marginBottom: 10 }}>{preview.title}</h3>
-
-                <div style={{ color: "#d8e2ff", marginBottom: 10, lineHeight: 1.5 }}>
-                  {preview.goal}
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 10,
-                    flexWrap: "wrap",
-                    marginBottom: 14
-                  }}
-                >
-                  <span
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: 999,
-                      background: "rgba(124,198,255,0.12)",
-                      color: "#7cc6ff",
-                      fontSize: 12
-                    }}
-                  >
-                    {preview.durationLabel}
-                  </span>
-
-                  <span
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: 999,
-                      background: "rgba(255,255,255,0.08)",
-                      color: "white",
-                      fontSize: 12
-                    }}
-                  >
-                    {preview.totalExercises} exercise
-                    {preview.totalExercises === 1 ? "" : "s"}
-                  </span>
-
-                  <span
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: 999,
-                      background: "rgba(255,255,255,0.08)",
-                      color: "white",
-                      fontSize: 12
-                    }}
-                  >
-                    {preview.totalReps} total reps
-                  </span>
-                </div>
-
-                <div style={{ display: "grid", gap: 8 }}>
-                  {preview.items.map((item, index) => (
-                    <div
-                      key={`${item.id}-${index}`}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr auto",
-                        gap: 10,
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        background: "rgba(255,255,255,0.04)"
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{item.displayName}</div>
-                        <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 2 }}>
-                          {item.prescription.repTarget} reps
-                          {item.prescription.hold.required
-                            ? ` • ${item.prescription.hold.durationMs / 1000}s hold`
-                            : ""}
-                          {item.prescription.tempo?.label
-                            ? ` • ${item.prescription.tempo.label}`
-                            : ""}
-                        </div>
-                      </div>
-
-                      <div
-                        style={{
-                          alignSelf: "center",
-                          fontSize: 12,
-                          color: "#aab6d3",
-                          whiteSpace: "nowrap"
-                        }}
-                      >
-                        {formatDurationRange(item.seconds)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div style={{ color: "#aab6d3" }}>
-                Select a session to preview what is included.
+            <h2 style={{ margin: 0 }}>Session Selector</h2>
+            {!selectorCollapsed && (
+              <div style={{ color: "#aab6d3", marginTop: 6, fontSize: 14 }}>
+                Select one or more sessions and review the combined plan before starting.
               </div>
             )}
           </div>
-        </div>
-      </section>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1.5fr 1fr",
-          gap: 20,
-          alignItems: "start"
-        }}
-      >
-        <section
-          style={{
-            background: "#1a2040",
-            padding: 20,
-            borderRadius: 14,
-            minHeight: 400,
-            border: "1px solid rgba(255,255,255,0.08)"
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-              alignItems: "center",
-              flexWrap: "wrap",
-              marginBottom: 14
-            }}
-          >
-            <h2 style={{ margin: 0 }}>Therapy View</h2>
-
-            <div
-              style={{
-                padding: "6px 12px",
-                borderRadius: 999,
-                background: "rgba(124,198,255,0.12)",
-                color: "#7cc6ff",
-                fontSize: 12,
-                fontWeight: 700
-              }}
-            >
-              {sessionComplete ? "Complete" : formatPhase(phase)}
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-              marginBottom: 14
-            }}
-          >
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
-              onClick={beginSelectedRun}
-              disabled={!canBegin || engineStatus === "running" || engineStatus === "loading"}
+              onClick={beginCombinedSession}
+              disabled={!canBegin}
               style={{
                 background: "#9be7b0",
                 color: "#08111f",
@@ -1081,14 +701,8 @@ export default function SessionRunner() {
                 padding: "10px 14px",
                 borderRadius: 10,
                 border: "none",
-                cursor:
-                  canBegin && engineStatus !== "running" && engineStatus !== "loading"
-                    ? "pointer"
-                    : "not-allowed",
-                opacity:
-                  canBegin && engineStatus !== "running" && engineStatus !== "loading"
-                    ? 1
-                    : 0.5
+                cursor: canBegin ? "pointer" : "not-allowed",
+                opacity: canBegin ? 1 : 0.5
               }}
             >
               Begin Session
@@ -1115,39 +729,368 @@ export default function SessionRunner() {
             </button>
 
             <button
-              onClick={resetExercise}
-              disabled={engineStatus === "idle"}
+              onClick={resetSession}
               style={{
                 background: "rgba(255,255,255,0.12)",
                 color: "white",
                 padding: "10px 14px",
                 borderRadius: 10,
                 border: "none",
-                cursor: engineStatus !== "idle" ? "pointer" : "not-allowed",
-                opacity: engineStatus !== "idle" ? 1 : 0.5
+                cursor: "pointer"
               }}
             >
-              Reset
+              Reset Session
             </button>
 
             <button
-              onClick={stopCameraOnly}
-              disabled={engineStatus !== "running" && engineStatus !== "error"}
+              onClick={() => setSelectorCollapsed((v) => !v)}
               style={{
                 background: "rgba(255,255,255,0.12)",
                 color: "white",
                 padding: "10px 14px",
                 borderRadius: 10,
                 border: "none",
-                cursor:
-                  engineStatus === "running" || engineStatus === "error"
-                    ? "pointer"
-                    : "not-allowed",
-                opacity: engineStatus === "running" || engineStatus === "error" ? 1 : 0.5
+                cursor: "pointer"
               }}
             >
-              Stop Camera
+              {selectorCollapsed ? "Expand" : "Collapse"}
             </button>
+          </div>
+        </div>
+
+        {!selectorCollapsed && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "340px 1fr",
+              gap: 18,
+              alignItems: "start"
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "#7cc6ff",
+                  marginBottom: 10,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.6
+                }}
+              >
+                Available Sessions
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                {sessions.map((session) => {
+                  const checked = selectedSessionIds.includes(session.id);
+
+                  return (
+                    <label
+                      key={session.id}
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "flex-start",
+                        padding: "12px 14px",
+                        borderRadius: 12,
+                        background: checked ? "rgba(124,198,255,0.12)" : "#121933",
+                        border: checked
+                          ? "1px solid rgba(124,198,255,0.35)"
+                          : "1px solid rgba(255,255,255,0.08)",
+                        cursor: "pointer"
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSessionSelection(session.id)}
+                        style={{ marginTop: 2 }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{session.name}</div>
+                        <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 4 }}>
+                          {session.exercises.length} exercise
+                          {session.exercises.length === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: "#121933",
+                borderRadius: 12,
+                padding: 16,
+                minHeight: 200
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "center",
+                  marginBottom: 14,
+                  flexWrap: "wrap"
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#7cc6ff",
+                    textTransform: "uppercase",
+                    letterSpacing: 0.6
+                  }}
+                >
+                  Session Preview
+                </div>
+
+                {sessionPreviews.length > 1 && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() =>
+                        setPreviewIndex((current) =>
+                          current === 0 ? sessionPreviews.length - 1 : current - 1
+                        )
+                      }
+                      style={{
+                        background: "rgba(255,255,255,0.08)",
+                        color: "white",
+                        border: "none",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        cursor: "pointer"
+                      }}
+                    >
+                      Previous
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        setPreviewIndex((current) =>
+                          current === sessionPreviews.length - 1 ? 0 : current + 1
+                        )
+                      }
+                      style={{
+                        background: "rgba(255,255,255,0.08)",
+                        color: "white",
+                        border: "none",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        cursor: "pointer"
+                      }}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {sessionPreviews.length > 0 ? (
+                <>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1.1fr 1fr",
+                      gap: 16,
+                      marginBottom: 18
+                    }}
+                  >
+                    <div>
+                      <h3 style={{ marginTop: 0, marginBottom: 10 }}>Combined Summary</h3>
+
+                      <div style={{ color: "#d8e2ff", marginBottom: 10, lineHeight: 1.5 }}>
+                        {combinedGoal}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 999,
+                            background: "rgba(124,198,255,0.12)",
+                            color: "#7cc6ff",
+                            fontSize: 12
+                          }}
+                        >
+                          {formatDurationRange(combinedDurationSeconds)}
+                        </span>
+
+                        <span
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 999,
+                            background: "rgba(255,255,255,0.08)",
+                            color: "white",
+                            fontSize: 12
+                          }}
+                        >
+                          {selectedSessions.length} session
+                          {selectedSessions.length === 1 ? "" : "s"}
+                        </span>
+
+                        <span
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 999,
+                            background: "rgba(255,255,255,0.08)",
+                            color: "white",
+                            fontSize: 12
+                          }}
+                        >
+                          {combinedQueue.length} exercise
+                          {combinedQueue.length === 1 ? "" : "s"}
+                        </span>
+
+                        <span
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 999,
+                            background: "rgba(255,255,255,0.08)",
+                            color: "white",
+                            fontSize: 12
+                          }}
+                        >
+                          {combinedTotalReps} total reps
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 style={{ marginTop: 0, marginBottom: 10 }}>
+                        {activePreview?.session.name ?? "Session"}
+                      </h3>
+
+                      <div style={{ color: "#aab6d3", marginBottom: 10, lineHeight: 1.5 }}>
+                        {activePreview
+                          ? inferSessionGoal(activePreview.items.map((item) => item.id))
+                          : "Select a session to preview it."}
+                      </div>
+
+                      {activePreview && (
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <span
+                            style={{
+                              padding: "5px 10px",
+                              borderRadius: 999,
+                              background: "rgba(124,198,255,0.12)",
+                              color: "#7cc6ff",
+                              fontSize: 12
+                            }}
+                          >
+                            {formatDurationRange(activePreview.durationSeconds)}
+                          </span>
+
+                          <span
+                            style={{
+                              padding: "5px 10px",
+                              borderRadius: 999,
+                              background: "rgba(255,255,255,0.08)",
+                              color: "white",
+                              fontSize: 12
+                            }}
+                          >
+                            {activePreview.totalReps} reps
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {(activePreview?.items ?? []).map((item, index) => (
+                      <div
+                        key={`${item.id}-${index}`}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr auto",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          background: "rgba(255,255,255,0.04)"
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{item.displayName}</div>
+                          <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 2 }}>
+                            {item.prescription.repTarget} reps
+                            {item.prescription.hold.required
+                              ? ` • ${item.prescription.hold.durationMs / 1000}s hold`
+                              : ""}
+                            {item.prescription.tempo?.label
+                              ? ` • ${item.prescription.tempo.label}`
+                              : ""}
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            alignSelf: "center",
+                            fontSize: 12,
+                            color: "#aab6d3",
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          {formatDurationRange(item.seconds)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: "#aab6d3" }}>
+                  Select one or more sessions to preview the combined plan.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.55fr 1fr",
+          gap: 20,
+          alignItems: "start"
+        }}
+      >
+        <section
+          style={{
+            background: "#1a2040",
+            padding: 20,
+            borderRadius: 14,
+            minHeight: 400,
+            border: "1px solid rgba(255,255,255,0.08)"
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+              marginBottom: 14,
+              flexWrap: "wrap"
+            }}
+          >
+            <h2 style={{ margin: 0 }}>Therapy View</h2>
+
+            <div
+              style={{
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: "rgba(124,198,255,0.12)",
+                color: "#7cc6ff",
+                fontSize: 12,
+                fontWeight: 700
+              }}
+            >
+              {sessionComplete ? "Complete" : formatPhase(phase)}
+            </div>
           </div>
 
           <div style={{ position: "relative", width: "100%", maxWidth: 720 }}>
@@ -1181,7 +1124,7 @@ export default function SessionRunner() {
               lineHeight: 1.5
             }}
           >
-            {getFramingText(prescription)}
+            {getFramingText(currentPrescription)}
           </div>
 
           {engineError && (
@@ -1197,10 +1140,11 @@ export default function SessionRunner() {
             message={coaching.message}
             phase={phase}
             repCount={repCount}
-            repTarget={prescription.repTarget}
+            repTarget={currentPrescription?.repTarget ?? 0}
             exerciseName={currentExerciseLabel}
-            progressLabel={activeSession ? sessionProgressLabel : "Single exercise mode"}
-            minHeight={300}
+            progressLabel={overallProgressLabel}
+            holdSeconds={holdSeconds}
+            minHeight={340}
           />
 
           <section
@@ -1223,12 +1167,12 @@ export default function SessionRunner() {
               Session Status
             </div>
 
-            <div style={{ display: "grid", gap: 8, fontSize: 14 }}>
+            <div style={{ display: "grid", gap: 10, fontSize: 15 }}>
               <div>
                 Current exercise: <strong>{currentExerciseLabel}</strong>
               </div>
               <div>
-                Progress: <strong>{activeSession ? sessionProgressLabel : `${repCount}/${prescription.repTarget} reps`}</strong>
+                Progress: <strong>{overallProgressLabel}</strong>
               </div>
               <div>
                 Camera status: <strong>{engineStatus}</strong>
