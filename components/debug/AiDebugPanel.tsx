@@ -1,5 +1,29 @@
 import type { MovementFeatures } from "@/lib/types/movement";
-import type { AiCoachingDebug } from "@/lib/ai/llmCoach";
+
+type AiCoachingDebug = {
+  requestedAt: number;
+  requestEvent: string;
+  requestExercise: string;
+  requestIntent: string;
+  requestIssues: string[];
+  history: {
+    lastIssues: string[];
+    repeatedIssue?: string;
+    repeatedIssueCount: number;
+    dominantIssue?: string;
+    trend: "improving" | "worsening" | "stable";
+    consecutiveSuccesses: number;
+    consecutiveFailures: number;
+    recentEvents: string[];
+  };
+  httpOk: boolean | null;
+  httpStatus: number | null;
+  usedFallback: boolean;
+  returnedMessage: string | null;
+  promptPreview: string | null;
+  model: string | null;
+  error: string | null;
+};
 
 type Props = {
   runtime: {
