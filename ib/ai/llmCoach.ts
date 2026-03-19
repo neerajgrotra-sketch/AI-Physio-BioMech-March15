@@ -27,7 +27,8 @@ export async function generateCoaching(
     returnedMessage: null,
     promptPreview: null,
     model: null,
-    error: null
+    error: null,
+    openAiError: null
   };
 
   try {
@@ -63,8 +64,7 @@ export async function generateCoaching(
       data = null;
     }
 
-    const message =
-      typeof data?.message === "string" ? data.message : null;
+    const message = typeof data?.message === "string" ? data.message : null;
 
     return {
       message,
@@ -78,11 +78,11 @@ export async function generateCoaching(
           typeof data?.debug?.promptPreview === "string"
             ? data.debug.promptPreview
             : null,
-        model:
-          typeof data?.debug?.model === "string" ? data.debug.model : null,
-        error:
-          !response.ok
-            ? `Coach route returned HTTP ${response.status}.`
+        model: typeof data?.debug?.model === "string" ? data.debug.model : null,
+        error: !response.ok ? `Coach route returned HTTP ${response.status}.` : null,
+        openAiError:
+          typeof data?.debug?.openAiError === "string"
+            ? data.debug.openAiError
             : null
       }
     };
