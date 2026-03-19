@@ -136,6 +136,13 @@ export async function POST(req: NextRequest) {
       const errorText = await aiResponse.text();
       console.error("OpenAI coach API error:", errorText);
 
+      let parsedError: any = null;
+      try {
+        parsedError = JSON.parse(errorText);
+      } catch {
+        parsedError = null;
+      }
+
       const fallback = "Keep the movement slow and controlled.";
 
       return NextResponse.json({
@@ -144,7 +151,11 @@ export async function POST(req: NextRequest) {
           openAiStatus: aiResponse.status,
           usedFallback: true,
           promptPreview: prompt.slice(0, 1200),
-          model
+          model,
+          openAiError:
+            parsedError?.error?.message ??
+            parsedError?.message ??
+            errorText
         }
       });
     }
@@ -161,7 +172,8 @@ export async function POST(req: NextRequest) {
         openAiStatus: aiResponse.status,
         usedFallback: false,
         promptPreview: prompt.slice(0, 1200),
-        model
+        model,
+        openAiError: null
       }
     });
   } catch (error) {
@@ -176,7 +188,7 @@ export async function POST(req: NextRequest) {
         usedFallback: true,
         promptPreview: null,
         model,
-        error: error instanceof Error ? error.message : "Unknown route error."
+        openAiError: error instanceof Error ? error.message : "Unknown route error."
       }
     });
   }
