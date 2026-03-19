@@ -26,7 +26,7 @@ export async function generateCoaching(
     if (!response.ok) return null;
 
     const data = await response.json();
-    return data.message ?? null;
+    return typeof data.message === "string" ? data.message : null;
   } catch (error) {
     console.error("AI coaching error:", error);
     return null;
