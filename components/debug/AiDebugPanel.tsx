@@ -1,29 +1,5 @@
 import type { MovementFeatures } from "@/lib/types/movement";
 
-type AiCoachingDebug = {
-  requestedAt: number;
-  requestEvent: string;
-  requestExercise: string;
-  requestIntent: string;
-  requestIssues: string[];
-  history: unknown;
-  httpOk: boolean | null;
-  httpStatus: number | null;
-  usedFallback: boolean;
-  returnedMessage: string | null;
-  promptPreview: string | null;
-  model: string | null;
-  error: string | null;
-};
-  httpOk: boolean | null;
-  httpStatus: number | null;
-  usedFallback: boolean;
-  returnedMessage: string | null;
-  promptPreview: string | null;
-  model: string | null;
-  error: string | null;
-};
-
 type Props = {
   runtime: {
     phase: string;
@@ -41,7 +17,7 @@ type Props = {
     aiRequestInFlight: boolean;
   };
   features: MovementFeatures;
-  aiDebug: AiCoachingDebug | null;
+  aiDebug: any;
 };
 
 function valueOrDash(value: unknown): string {
@@ -133,10 +109,10 @@ export default function AiDebugPanel({ runtime, features, aiDebug }: Props) {
           {aiDebug ? (
             <div style={{ display: "grid", gap: 8, fontSize: 14 }}>
               <div>Requested at: <strong>{new Date(aiDebug.requestedAt).toLocaleTimeString()}</strong></div>
-              <div>Request event: <strong>{aiDebug.requestEvent}</strong></div>
-              <div>Request exercise: <strong>{aiDebug.requestExercise}</strong></div>
-              <div>Intent: <strong>{aiDebug.requestIntent}</strong></div>
-              <div>Request issues: <strong>{prettyList(aiDebug.requestIssues)}</strong></div>
+              <div>Request event: <strong>{valueOrDash(aiDebug.requestEvent)}</strong></div>
+              <div>Request exercise: <strong>{valueOrDash(aiDebug.requestExercise)}</strong></div>
+              <div>Intent: <strong>{valueOrDash(aiDebug.requestIntent)}</strong></div>
+              <div>Request issues: <strong>{prettyList(aiDebug.requestIssues ?? [])}</strong></div>
               <div>HTTP ok: <strong>{valueOrDash(aiDebug.httpOk)}</strong></div>
               <div>HTTP status: <strong>{valueOrDash(aiDebug.httpStatus)}</strong></div>
               <div>Used fallback: <strong>{aiDebug.usedFallback ? "yes" : "no"}</strong></div>
