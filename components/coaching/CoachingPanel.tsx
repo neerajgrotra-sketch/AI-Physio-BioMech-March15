@@ -6,6 +6,7 @@ type Props = {
   repTarget?: number;
   exerciseName?: string;
   progressLabel?: string;
+  holdSeconds?: number | null;
   minHeight?: number;
 };
 
@@ -27,13 +28,14 @@ export default function CoachingPanel({
   repTarget,
   exerciseName,
   progressLabel,
-  minHeight = 280
+  holdSeconds,
+  minHeight = 320
 }: Props) {
   return (
     <section
       style={{
         background: "#1a2040",
-        padding: 22,
+        padding: 24,
         borderRadius: 14,
         minHeight,
         display: "flex",
@@ -49,7 +51,7 @@ export default function CoachingPanel({
             justifyContent: "space-between",
             gap: 12,
             alignItems: "center",
-            marginBottom: 14,
+            marginBottom: 16,
             flexWrap: "wrap"
           }}
         >
@@ -64,29 +66,44 @@ export default function CoachingPanel({
           >
             <span
               style={{
-                padding: "5px 10px",
+                padding: "6px 11px",
                 borderRadius: 999,
                 background: "rgba(124,198,255,0.12)",
                 color: "#7cc6ff",
-                fontSize: 12,
+                fontSize: 13,
                 fontWeight: 700
               }}
             >
               {formatPhase(phase)}
             </span>
 
-            {typeof repCount === "number" && typeof repTarget === "number" && (
+            {typeof repCount === "number" && typeof repTarget === "number" && repTarget > 0 && (
               <span
                 style={{
-                  padding: "5px 10px",
+                  padding: "6px 11px",
                   borderRadius: 999,
                   background: "rgba(255,255,255,0.08)",
                   color: "white",
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 700
                 }}
               >
-                {repCount}/{repTarget} reps
+                Rep {repCount}/{repTarget}
+              </span>
+            )}
+
+            {typeof holdSeconds === "number" && (
+              <span
+                style={{
+                  padding: "6px 11px",
+                  borderRadius: 999,
+                  background: "rgba(155,231,176,0.14)",
+                  color: "#9be7b0",
+                  fontSize: 13,
+                  fontWeight: 700
+                }}
+              >
+                Hold {holdSeconds}s
               </span>
             )}
           </div>
@@ -94,11 +111,11 @@ export default function CoachingPanel({
 
         <div
           style={{
-            fontSize: 30,
+            fontSize: 32,
             lineHeight: 1.35,
             fontWeight: 700,
-            marginTop: 16,
-            marginBottom: 18,
+            marginTop: 18,
+            marginBottom: 22,
             letterSpacing: -0.2
           }}
         >
@@ -109,8 +126,8 @@ export default function CoachingPanel({
       <div
         style={{
           display: "grid",
-          gap: 8,
-          fontSize: 14,
+          gap: 10,
+          fontSize: 15,
           color: "#aab6d3"
         }}
       >
