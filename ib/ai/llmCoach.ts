@@ -1,36 +1,20 @@
 import type { RehabState } from "@/lib/engine/rehabStateBuilder";
-import { deriveCoachingIntent, type CoachingIntent } from "@/lib/engine/coachingIntent";
-import { buildHistory, type HistoryState } from "@/lib/engine/historyTracker";
-
-export type AiCoachingDebug = {
-  requestedAt: number;
-  requestEvent: string;
-  requestExercise: string;
-  requestIntent: CoachingIntent;
-  requestIssues: string[];
-  history: HistoryState;
-  httpOk: boolean | null;
-  httpStatus: number | null;
-  usedFallback: boolean;
-  returnedMessage: string | null;
-  promptPreview: string | null;
-  model: string | null;
-  error: string | null;
-};
+import { deriveCoachingIntent } from "@/lib/engine/coachingIntent";
+import { buildHistory } from "@/lib/engine/historyTracker";
 
 export type AiCoachingResult = {
   message: string | null;
-  debug: AiCoachingDebug;
+  debug: any;
 };
 
 export async function generateCoaching(
   state: RehabState
-): Promise<AiCoachingResult> {
+): Promise<AiCoachingResult | null> {
   const requestedAt = Date.now();
   const history = buildHistory(state);
   const intent = deriveCoachingIntent(state, history);
 
-  const debugBase: AiCoachingDebug = {
+  const debugBase = {
     requestedAt,
     requestEvent: state.event,
     requestExercise: state.exerciseName,
