@@ -1,51 +1,73 @@
 import { NextRequest, NextResponse } from "next/server";
 
+function buildPrompt(state: any): string {
+  const issues =
+    Array.isArray(state.detectedIssues) && state.detectedIssues.length > 0
+      ? state.detectedIssues.join(", ")
+      : "none";
+
+  return `
+You are a professional physiotherapist coaching a patient live during a rehab exercise.
+
+Your job is to sound calm, natural, specific, and helpful.
+You are NOT a chatbot.
+You are giving short live coaching during movement.
+
+PATIENT CONTEXT
+Exercise: ${state.exerciseName}
+Template: ${state.template}
+Side: ${state.side}
+Phase: ${state.phase}
+Event: ${state.event}
+Reps: ${state.repCount}/${state.repTarget}
+
+POSTURE
+Posture: ${state.posture}
+Standing: ${state.isStanding}
+Seated: ${state.isSeated}
+
+MOVEMENT QUALITY
+Detected issues: ${issues}
+Failure reason: ${state.failureReason ?? "none"}
+
+EVALUATION
+Reached target: ${state.evaluation?.reachedTarget ?? false}
+Hold satisfied: ${state.evaluation?.holdSatisfied ?? false}
+
+HISTORY
+Repeated issue: ${state.history?.repeatedIssue ?? "none"}
+Trend: ${state.history?.trend ?? "stable"}
+
+COACHING INTENT
+Intent: ${state.intent ?? "stabilize"}
+
+IMPORTANT RULES
+- Return exactly ONE short coaching sentence
+- Maximum 12 words
+- Be direct and human
+- Focus on the single most important correction or cue
+- Do not explain
+- Do not mention data, angles, metrics, or analysis
+- Do not say "begin when ready"
+- Do not sound robotic
+- Prefer phrasing a real physiotherapist would use
+
+STYLE EXAMPLES
+- "Lift a little higher."
+- "Good, now lower slowly."
+- "Stay tall through your torso."
+- "Hold it there."
+- "Better — keep both arms even."
+- "Nice rep. Let's do another."
+
+Now return the best single coaching sentence.
+`.trim();
+}
+
 export async function POST(req: NextRequest) {
   try {
     const state = await req.json();
-
-    const prompt = `
-You are a professional physiotherapist coaching a patient live.
-
-STYLE:
-- Natural, human, conversational
-- Max 12 words
-- Never robotic
-- Never generic
-
-GOAL:
-- Improve movement quality
-- Focus ONLY on the most important issue
-
-CONTEXT:
-Exercise: ${state.exerciseName}
-Phase: ${state.phase}
-Reps: ${state.repCount}/${state.repTarget}
-
-Intent: ${state.intent}
-
-Issues:
-${state.detectedIssues.join(", ") || "none"}
-
-History:
-- Repeated issue: ${state.history?.repeatedIssue || "none"}
-- Trend: ${state.history?.trend || "stable"}
-
-RULES:
-- If issue exists → correct clearly
-- If repeated → emphasize ("still", "again")
-- If improving → encourage
-- If starting → guide
-- NEVER say "begin when ready"
-
-EXAMPLES:
-- "Lift higher — you're still below shoulder level."
-- "Better, now slow it down."
-- "Keep your torso upright."
-- "Good rep — now control the descent."
-
-Return ONE short coaching sentence.
-`;
+    const prompt = buildPrompt(state);
 
     const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -55,33 +77,41 @@ Return ONE short coaching sentence.
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
+        temperature: 0.35,
+        max_tokens: 40,
         messages: [
           {
             role: "system",
             content:
-              "You are a physiotherapist giving real-time movement coaching."
+              "You are a physiotherapist giving short real-time movement coaching."
           },
           {
             role: "user",
             content: prompt
           }
-        ],
-        temperature: 0.5
+        ]
       })
     });
+
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      console.error("OpenAI coach API error:", errorText);
+      return NextResponse.json({
+        message: "Keep the movement slow and controlled."
+      });
+    }
 
     const json = await aiResponse.json();
 
     const message =
-      json.choices?.[0]?.message?.content?.trim() ??
-      "Adjust your movement and try again.";
+      json.choices?.[0]?.message?.content?.trim() ||
+      "Keep the movement slow and controlled.";
 
     return NextResponse.json({ message });
   } catch (error) {
-    console.error("Coach API error:", error);
-
+    console.error("Coach API route error:", error);
     return NextResponse.json({
-      message: "Focus on controlled movement."
+      message: "Keep the movement slow and controlled."
     });
   }
 }
