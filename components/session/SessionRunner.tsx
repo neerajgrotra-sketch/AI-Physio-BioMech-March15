@@ -510,25 +510,27 @@ export default function SessionRunner() {
             aiEventTokenRef.current = eventToken;
             aiRequestInFlightRef.current = true;
 
-            generateCoaching(rehabState)
-              .then((result) => {
-                setLastAiDebug(result.debug);
+        generateCoaching(rehabState)
+  .then((result) => {
+    if (!result) return;
 
-                if (!result.message) return;
-                if (aiEventTokenRef.current !== eventToken) return;
+    setLastAiDebug(result.debug);
 
-                const aiDecision: CoachingDecision = {
-                  code: orchestration.decision.code,
-                  priority: orchestration.decision.priority,
-                  message: result.message
-                };
+    if (!result.message) return;
+    if (aiEventTokenRef.current !== eventToken) return;
 
-                setStickyCoaching(
-                  aiDecision,
-                  event === "rep_failed" ? 4000 : 2400
-                );
-                lastSpokenAtRef.current = Date.now();
-              })
+    const aiDecision: CoachingDecision = {
+      code: orchestration.decision.code,
+      priority: orchestration.decision.priority,
+      message: result.message
+    };
+
+    setStickyCoaching(
+      aiDecision,
+      event === "rep_failed" ? 4000 : 2400
+    );
+    lastSpokenAtRef.current = Date.now();
+  })
               .catch((error) => {
                 console.error("LLM coaching failed:", error);
               })
