@@ -1,19 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
 
-function buildPrompt(state: any): string {
+type CoachState = {
+  exerciseName: string;
+  template: string;
+  side: string;
+  phase: string;
+  event: string;
+  repCount: number;
+  repTarget: number;
+  posture: string;
+  isStanding: boolean;
+  isSeated: boolean;
+  detectedIssues: string[];
+  failureReason: string | null;
+  evaluation?: {
+    reachedTarget?: boolean;
+    holdSatisfied?: boolean;
+  };
+  intent?: string;
+  history?: {
+    repeatedIssue?: string;
+    repeatedIssueCount?: number;
+    dominantIssue?: string;
+    trend?: string;
+    consecutiveSuccesses?: number;
+    consecutiveFailures?: number;
+    recentEvents?: string[];
+  };
+};
+
+function buildPrompt(state: CoachState): string {
   const issues =
-    Array.isArray(state.detectedIssues) && state.detectedIssues.length > 0
-      ? state.detectedIssues.join(", ")
+    state.detectedIssues.length > 0 ? state.detectedIssues.join(", ") : "none";
+
+  const repeatedLabel =
+    state.history?.repeatedIssue && state.history.repeatedIssueCount
+      ? `${state.history.repeatedIssue} (${state.history.repeatedIssueCount} times)`
       : "none";
 
   return `
-You are a professional physiotherapist coaching a patient live during a rehab exercise.
+You are a real physiotherapist giving short live coaching during a rehab session.
 
-Your job is to sound calm, natural, specific, and helpful.
-You are NOT a chatbot.
-You are giving short live coaching during movement.
-
-PATIENT CONTEXT
+SESSION CONTEXT
 Exercise: ${state.exerciseName}
 Template: ${state.template}
 Side: ${state.side}
@@ -21,7 +49,7 @@ Phase: ${state.phase}
 Event: ${state.event}
 Reps: ${state.repCount}/${state.repTarget}
 
-POSTURE
+PATIENT STATE
 Posture: ${state.posture}
 Standing: ${state.isStanding}
 Seated: ${state.isSeated}
@@ -29,28 +57,28 @@ Seated: ${state.isSeated}
 MOVEMENT QUALITY
 Detected issues: ${issues}
 Failure reason: ${state.failureReason ?? "none"}
-
-EVALUATION
 Reached target: ${state.evaluation?.reachedTarget ?? false}
 Hold satisfied: ${state.evaluation?.holdSatisfied ?? false}
 
-HISTORY
-Repeated issue: ${state.history?.repeatedIssue ?? "none"}
+MEMORY
+Repeated issue: ${repeatedLabel}
+Dominant issue: ${state.history?.dominantIssue ?? "none"}
 Trend: ${state.history?.trend ?? "stable"}
+Consecutive successes: ${state.history?.consecutiveSuccesses ?? 0}
+Consecutive failures: ${state.history?.consecutiveFailures ?? 0}
 
-COACHING INTENT
+COACHING GOAL
 Intent: ${state.intent ?? "stabilize"}
 
-IMPORTANT RULES
-- Return exactly ONE short coaching sentence
-- Maximum 12 words
-- Be direct and human
-- Focus on the single most important correction or cue
-- Do not explain
-- Do not mention data, angles, metrics, or analysis
-- Do not say "begin when ready"
-- Do not sound robotic
-- Prefer phrasing a real physiotherapist would use
+INSTRUCTIONS
+Return exactly ONE short coaching sentence.
+Maximum 12 words.
+Sound calm, natural, and specific.
+Focus on only the most important cue.
+Do not mention angles, metrics, analytics, or data.
+Do not say "begin when ready".
+Do not narrate what the model sees.
+Do not use more than one sentence.
 
 STYLE EXAMPLES
 - "Lift a little higher."
@@ -58,7 +86,8 @@ STYLE EXAMPLES
 - "Stay tall through your torso."
 - "Hold it there."
 - "Better — keep both arms even."
-- "Nice rep. Let's do another."
+- "Reset and try that rep again."
+- "Nice rep. Keep that control."
 
 Now return the best single coaching sentence.
 `.trim();
@@ -66,7 +95,7 @@ Now return the best single coaching sentence.
 
 export async function POST(req: NextRequest) {
   try {
-    const state = await req.json();
+    const state = (await req.json()) as CoachState;
     const prompt = buildPrompt(state);
 
     const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -77,13 +106,13 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.35,
+        temperature: 0.3,
         max_tokens: 40,
         messages: [
           {
             role: "system",
             content:
-              "You are a physiotherapist giving short real-time movement coaching."
+              "You are a physiotherapist giving brief real-time movement coaching."
           },
           {
             role: "user",
@@ -96,6 +125,7 @@ export async function POST(req: NextRequest) {
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error("OpenAI coach API error:", errorText);
+
       return NextResponse.json({
         message: "Keep the movement slow and controlled."
       });
@@ -110,6 +140,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message });
   } catch (error) {
     console.error("Coach API route error:", error);
+
     return NextResponse.json({
       message: "Keep the movement slow and controlled."
     });
