@@ -4,6 +4,9 @@ type Props = {
   phase?: string;
   repCount?: number;
   repTarget?: number;
+  exerciseName?: string;
+  progressLabel?: string;
+  minHeight?: number;
 };
 
 function formatPhase(phase?: string) {
@@ -13,7 +16,7 @@ function formatPhase(phase?: string) {
   if (phase === "lowering") return "Lower";
   if (phase === "ready") return "Ready";
   if (phase === "complete") return "Complete";
-  return phase;
+  return "Tracking";
 }
 
 export default function CoachingPanel({
@@ -21,73 +24,108 @@ export default function CoachingPanel({
   message,
   phase,
   repCount,
-  repTarget
+  repTarget,
+  exerciseName,
+  progressLabel,
+  minHeight = 280
 }: Props) {
   return (
     <section
       style={{
         background: "#1a2040",
-        padding: 20,
-        borderRadius: 12
+        padding: 22,
+        borderRadius: 14,
+        minHeight,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        border: "1px solid rgba(255,255,255,0.08)"
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 12,
-          flexWrap: "wrap"
-        }}
-      >
-        <h3 style={{ margin: 0 }}>{title}</h3>
-
+      <div>
         <div
           style={{
             display: "flex",
-            gap: 8,
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+            marginBottom: 14,
             flexWrap: "wrap"
           }}
         >
-          <span
+          <h2 style={{ margin: 0 }}>{title}</h2>
+
+          <div
             style={{
-              padding: "4px 10px",
-              borderRadius: 999,
-              background: "rgba(124,198,255,0.12)",
-              color: "#7cc6ff",
-              fontSize: 12
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap"
             }}
           >
-            {formatPhase(phase)}
-          </span>
-
-          {typeof repCount === "number" && typeof repTarget === "number" && (
             <span
               style={{
-                padding: "4px 10px",
+                padding: "5px 10px",
                 borderRadius: 999,
-                background: "rgba(255,255,255,0.08)",
-                color: "white",
-                fontSize: 12
+                background: "rgba(124,198,255,0.12)",
+                color: "#7cc6ff",
+                fontSize: 12,
+                fontWeight: 700
               }}
             >
-              {repCount}/{repTarget} reps
+              {formatPhase(phase)}
             </span>
-          )}
+
+            {typeof repCount === "number" && typeof repTarget === "number" && (
+              <span
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: 999,
+                  background: "rgba(255,255,255,0.08)",
+                  color: "white",
+                  fontSize: 12,
+                  fontWeight: 700
+                }}
+              >
+                {repCount}/{repTarget} reps
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div
+          style={{
+            fontSize: 30,
+            lineHeight: 1.35,
+            fontWeight: 700,
+            marginTop: 16,
+            marginBottom: 18,
+            letterSpacing: -0.2
+          }}
+        >
+          {message}
         </div>
       </div>
 
-      <p
+      <div
         style={{
-          marginBottom: 0,
-          lineHeight: 1.5,
-          fontSize: 24,
-          fontWeight: 600
+          display: "grid",
+          gap: 8,
+          fontSize: 14,
+          color: "#aab6d3"
         }}
       >
-        {message}
-      </p>
+        {exerciseName && (
+          <div>
+            Current exercise: <strong style={{ color: "white" }}>{exerciseName}</strong>
+          </div>
+        )}
+
+        {progressLabel && (
+          <div>
+            Progress: <strong style={{ color: "white" }}>{progressLabel}</strong>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
