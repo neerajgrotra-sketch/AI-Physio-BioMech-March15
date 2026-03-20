@@ -6,7 +6,6 @@ import * as poseDetection from "@tensorflow-models/pose-detection";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
-import { useRealVoiceCoaching } from "@/lib/coaching/useRealVoiceCoaching";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
@@ -19,6 +18,7 @@ import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeature
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
 import { useVoiceCoaching } from "@/lib/coaching/useVoiceCoaching";
+import { useRealVoiceCoaching } from "@/lib/coaching/useRealVoiceCoaching";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
@@ -198,6 +198,71 @@ function extractAiDebug(result: unknown): any {
   return null;
 }
 
+function normalizeMessage(message: string): string {
+  return message.trim().replace(/\s+/g, " ");
+}
+
+function getMessagePriority(
+  message: string,
+  event: RehabEvent,
+  phase: string
+): number {
+  const normalized = normalizeMessage(message).toLowerCase();
+
+  if (event === "exercise_complete") return 100;
+  if (event === "rep_failed") return 90;
+  if (event === "rep_complete") return 80;
+  if (event === "start") return 75;
+
+  if (normalized.startsWith("hold")) return 70;
+  if (phase === "lowering") return 65;
+
+  if (
+    normalized.includes("lift slowly") ||
+    normalized.includes("lower slowly") ||
+    normalized.includes("reset") ||
+    normalized.includes("hold steady") ||
+    normalized.includes("stay in control") ||
+    normalized.includes("continue with")
+  ) {
+    return 60;
+  }
+
+  if (
+    normalized.includes("ready") ||
+    normalized.includes("tracking") ||
+    normalized.includes("begin when ready")
+  ) {
+    return 10;
+  }
+
+  return 40;
+}
+
+function getMessageLockMs(message: string, event: RehabEvent): number {
+  const normalized = normalizeMessage(message).toLowerCase();
+
+  if (event === "exercise_complete") return 2600;
+  if (event === "rep_failed") return 2400;
+  if (event === "rep_complete") return 1800;
+  if (event === "start") return 2200;
+
+  if (normalized.startsWith("hold")) return 900;
+
+  return 1400;
+}
+
+function isWeakGenericMessage(message: string): boolean {
+  const normalized = normalizeMessage(message).toLowerCase();
+
+  return (
+    normalized === "tracking movement." ||
+    normalized === "ready" ||
+    normalized === "begin when ready" ||
+    normalized.includes("begin when ready")
+  );
+}
+
 export default function SessionRunner() {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
@@ -212,10 +277,7 @@ export default function SessionRunner() {
   const advancePendingRef = useRef(false);
   const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
   const featureHistoryRef = useRef(new FeatureHistory(5));
-  const stickyCoachingUntilRef = useRef<number>(0);
-  const stickyCoachingRef = useRef<CoachingDecision | null>(null);
   const prescriptionRef = useRef<ExercisePrescription | null>(null);
-
   const activeQueueRef = useRef<PreviewExerciseItem[]>([]);
   const queueIndexRef = useRef(0);
 
@@ -223,16 +285,23 @@ export default function SessionRunner() {
   const aiEventTokenRef = useRef(0);
   const lastSpokenAtRef = useRef(0);
 
+  const displayMessageUntilRef = useRef<number>(0);
+  const displayMessagePriorityRef = useRef<number>(0);
+  const lastDisplayedMessageRef = useRef<string>("");
+  const lastDisplayedHoldSecondRef = useRef<number | null>(null);
+  const sessionStartedRef = useRef(false);
+
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
   const [statusCollapsed, setStatusCollapsed] = useState(false);
   const [showDebug, setShowDebug] = useState(true);
-const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
+
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [aiCoachingEnabled, setAiCoachingEnabled] = useState(true);
+  const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
@@ -252,16 +321,17 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
   const [lastFailureReason, setLastFailureReason] = useState<string | null>(null);
   const [lastAiDebug, setLastAiDebug] = useState<any>(null);
 
- useVoiceCoaching(coaching.message, {
-  enabled: voiceEnabled && !realVoiceEnabled,
-  cooldownMs: 3200,
-  rate: 0.94
-});
+  useVoiceCoaching(coaching.message, {
+    enabled: voiceEnabled && !realVoiceEnabled,
+    cooldownMs: 3200,
+    rate: 0.94
+  });
+
   useRealVoiceCoaching(coaching.message, {
-  enabled: voiceEnabled && realVoiceEnabled,
-  cooldownMs: 3200,
-  voice: "marin"
-});
+    enabled: voiceEnabled && realVoiceEnabled,
+    cooldownMs: 3200,
+    voice: "marin"
+  });
 
   useEffect(() => {
     if (selectedSessionIds.length === 0 && sessions[0]) {
@@ -314,17 +384,69 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
     }
   }
 
-  function setStickyCoaching(decision: CoachingDecision, durationMs = 2200) {
-    stickyCoachingRef.current = decision;
-    stickyCoachingUntilRef.current = Date.now() + durationMs;
-    setCoaching(decision);
+  function resetDisplayController() {
+    displayMessageUntilRef.current = 0;
+    displayMessagePriorityRef.current = 0;
+    lastDisplayedMessageRef.current = "";
+    lastDisplayedHoldSecondRef.current = null;
+  }
+
+  function updateDisplayedCoaching(
+    decision: CoachingDecision,
+    event: RehabEvent,
+    phaseValue: string,
+    now: number,
+    options?: {
+      force?: boolean;
+      holdSecond?: number | null;
+    }
+  ) {
+    const message = normalizeMessage(decision.message);
+    if (!message) return;
+
+    if (sessionStartedRef.current && isWeakGenericMessage(message)) {
+      return;
+    }
+
+    const priority = getMessagePriority(message, event, phaseValue);
+    const lockMs = getMessageLockMs(message, event);
+    const currentPriority = displayMessagePriorityRef.current;
+    const displayLocked = now < displayMessageUntilRef.current;
+    const sameMessage = message === lastDisplayedMessageRef.current;
+
+    if (options?.holdSecond !== undefined) {
+      const currentHoldSecond = options.holdSecond;
+      if (currentHoldSecond === lastDisplayedHoldSecondRef.current && sameMessage) {
+        return;
+      }
+      lastDisplayedHoldSecondRef.current = currentHoldSecond ?? null;
+    }
+
+    if (!options?.force) {
+      if (sameMessage) return;
+
+      if (displayLocked && priority < currentPriority) {
+        return;
+      }
+
+      if (displayLocked && priority === currentPriority && event === "phase_change") {
+        return;
+      }
+    }
+
+    displayMessagePriorityRef.current = priority;
+    displayMessageUntilRef.current = now + lockMs;
+    lastDisplayedMessageRef.current = message;
+
+    setCoaching({
+      ...decision,
+      message
+    });
   }
 
   function resetExerciseState() {
     repStateRef.current = createInitialRepState();
     featureHistoryRef.current.clear();
-    stickyCoachingRef.current = null;
-    stickyCoachingUntilRef.current = 0;
     advancePendingRef.current = false;
     aiRequestInFlightRef.current = false;
     aiEventTokenRef.current = 0;
@@ -338,6 +460,7 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
     setLastPrimaryIssue("idle");
     setLastDetectedIssues([]);
     setLastFailureReason(null);
+    resetDisplayController();
   }
 
   function stopTracking() {
@@ -350,6 +473,9 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
 
     clearAdvanceTimeout();
     videoRef.current = null;
+
+    sessionStartedRef.current = false;
+    resetDisplayController();
 
     setEngineStatus("idle");
     setEngineError("");
@@ -503,24 +629,26 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
               message: guidedMessage
             };
 
-            if (orchestration.stickyMs > 0 || event !== "idle") {
-              setStickyCoaching(guidedDecision, Math.max(orchestration.stickyMs, 1400));
-            } else {
-              setCoaching(guidedDecision);
-            }
+            const holdSecond =
+              output.holdRemainingMs !== null
+                ? Math.max(1, Math.ceil(output.holdRemainingMs / 1000))
+                : null;
+
+            updateDisplayedCoaching(guidedDecision, event, output.repState.phase, now, {
+              force:
+                event === "rep_complete" ||
+                event === "rep_failed" ||
+                event === "start" ||
+                event === "exercise_complete",
+              holdSecond
+            });
           } else if (orchestration.shouldUpdatePanel) {
-            if (orchestration.stickyMs > 0) {
-              setStickyCoaching(orchestration.decision, orchestration.stickyMs);
-            } else if (
-              stickyCoachingRef.current &&
-              now < stickyCoachingUntilRef.current
-            ) {
-              setCoaching(stickyCoachingRef.current);
-            } else {
-              stickyCoachingRef.current = null;
-              stickyCoachingUntilRef.current = 0;
-              setCoaching(orchestration.decision);
-            }
+            updateDisplayedCoaching(
+              orchestration.decision,
+              event,
+              output.repState.phase,
+              now
+            );
           }
 
           const shouldAskAi =
@@ -556,10 +684,14 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
                   message: aiMessage
                 };
 
-                setStickyCoaching(
+                updateDisplayedCoaching(
                   aiDecision,
-                  event === "rep_failed" ? 4000 : 2400
+                  event,
+                  output.repState.phase,
+                  Date.now(),
+                  { force: true }
                 );
+
                 lastSpokenAtRef.current = Date.now();
               })
               .catch((error) => {
@@ -581,13 +713,16 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
             const nextExercise = activeQueueRef.current[nextIndex] ?? null;
 
             if (nextExercise) {
-              setStickyCoaching(
+              updateDisplayedCoaching(
                 {
                   code: "exercise_complete",
                   priority: "encourage",
                   message: `Exercise complete. Next: ${nextExercise.displayName}.`
                 },
-                2200
+                "exercise_complete",
+                output.repState.phase,
+                Date.now(),
+                { force: true }
               );
 
               clearAdvanceTimeout();
@@ -599,13 +734,16 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
               }, 2200);
             } else {
               setSessionComplete(true);
-              setStickyCoaching(
+              updateDisplayedCoaching(
                 {
                   code: "exercise_complete",
                   priority: "encourage",
                   message: "Session complete. Well done."
                 },
-                2600
+                "exercise_complete",
+                output.repState.phase,
+                Date.now(),
+                { force: true }
               );
             }
           }
@@ -668,18 +806,23 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
     prescriptionRef.current = combinedQueue[0].prescription;
 
     setSessionStarted(true);
+    sessionStartedRef.current = true;
     setSessionComplete(false);
     setSelectorCollapsed(true);
     setStatusCollapsed(false);
+    resetDisplayController();
     resetExerciseState();
 
-    setStickyCoaching(
+    updateDisplayedCoaching(
       {
         code: "start_exercise",
         priority: "info",
         message: "Session started. Please step into view."
       },
-      1800
+      "start",
+      "ready",
+      Date.now(),
+      { force: true }
     );
 
     try {
@@ -701,14 +844,19 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
 
     setSessionComplete(false);
     resetExerciseState();
-    setCoaching(
+
+    updateDisplayedCoaching(
       sessionStarted
         ? {
             code: "start_exercise",
             priority: "info",
             message: "Session reset. Press Begin Session to start again."
           }
-        : createIdleCoaching()
+        : createIdleCoaching(),
+      "idle",
+      "ready",
+      Date.now(),
+      { force: true }
     );
   }
 
@@ -1292,97 +1440,98 @@ const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
         </div>
 
         {!statusCollapsed && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-              gap: 14,
-              fontSize: 14
-            }}
-          >
-            <div>
-              Current exercise:
-              <div style={{ fontWeight: 700, marginTop: 4 }}>{currentExerciseLabel}</div>
-            </div>
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                gap: 14,
+                fontSize: 14
+              }}
+            >
+              <div>
+                Current exercise:
+                <div style={{ fontWeight: 700, marginTop: 4 }}>{currentExerciseLabel}</div>
+              </div>
 
-            <div>
-              Progress:
-              <div style={{ fontWeight: 700, marginTop: 4 }}>{overallProgressLabel}</div>
-            </div>
+              <div>
+                Progress:
+                <div style={{ fontWeight: 700, marginTop: 4 }}>{overallProgressLabel}</div>
+              </div>
 
-            <div>
-              Camera status:
-              <div style={{ fontWeight: 700, marginTop: 4 }}>{engineStatus}</div>
-            </div>
+              <div>
+                Camera status:
+                <div style={{ fontWeight: 700, marginTop: 4 }}>{engineStatus}</div>
+              </div>
 
-            <div>
-              Voice coaching:
-              <div style={{ fontWeight: 700, marginTop: 4 }}>
-                {voiceEnabled ? "On" : "Off"}
+              <div>
+                Voice coaching:
+                <div style={{ fontWeight: 700, marginTop: 4 }}>
+                  {voiceEnabled ? "On" : "Off"}
+                </div>
+              </div>
+
+              <div>
+                AI coaching:
+                <div style={{ fontWeight: 700, marginTop: 4 }}>
+                  {aiCoachingEnabled ? "On" : "Off"}
+                </div>
               </div>
             </div>
 
-            <div>
-              AI coaching:
-              <div style={{ fontWeight: 700, marginTop: 4 }}>
-                {aiCoachingEnabled ? "On" : "Off"}
-              </div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14 }}>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  fontSize: 14,
+                  color: "white"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={voiceEnabled}
+                  onChange={(e) => setVoiceEnabled(e.target.checked)}
+                />
+                Voice coaching
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  fontSize: 14,
+                  color: "white"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={aiCoachingEnabled}
+                  onChange={(e) => setAiCoachingEnabled(e.target.checked)}
+                />
+                AI coaching variation
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  fontSize: 14,
+                  color: "white"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={realVoiceEnabled}
+                  onChange={(e) => setRealVoiceEnabled(e.target.checked)}
+                />
+                Real voice
+              </label>
             </div>
-          </div>
-        )}
-
-        {!statusCollapsed && (
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14 }}>
-            <label
-              style={{
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                fontSize: 14,
-                color: "white"
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={voiceEnabled}
-                onChange={(e) => setVoiceEnabled(e.target.checked)}
-              />
-              Voice coaching
-            </label>
-
-            <label
-              style={{
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                fontSize: 14,
-                color: "white"
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={aiCoachingEnabled}
-                onChange={(e) => setAiCoachingEnabled(e.target.checked)}
-              />
-              AI coaching variation
-            </label>
-                <label
-      style={{
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        fontSize: 14,
-        color: "white"
-      }}
-    >
-      <input
-        type="checkbox"
-        checked={realVoiceEnabled}
-        onChange={(e) => setRealVoiceEnabled(e.target.checked)}
-      />
-      Real voice
-    </label>
-          </div>
+          </>
         )}
       </section>
 
