@@ -26,6 +26,7 @@ import {
   type RehabEvent
 } from "@/lib/engine/rehabStateBuilder";
 import { buildCoachingOrchestration } from "@/lib/engine/coachingOrchestrator";
+import { buildGuidedMessage } from "@/lib/engine/sessionGuidance";
 import { generateCoaching } from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
@@ -95,7 +96,6 @@ function estimateExerciseSeconds(prescription: ExercisePrescription): number {
   const holdSec = prescription.hold.required
     ? prescription.hold.durationMs / 1000
     : 0;
-
   const repSeconds = Math.max(6, 4 + holdSec + 2);
   return prescription.repTarget * repSeconds;
 }
@@ -176,6 +176,7 @@ function getFramingText(prescription: ExercisePrescription | null): string {
 
 function extractAiMessage(result: unknown): string | null {
   if (typeof result === "string") return result;
+
   if (
     result &&
     typeof result === "object" &&
@@ -184,17 +185,15 @@ function extractAiMessage(result: unknown): string | null {
   ) {
     return (result as { message: string }).message;
   }
+
   return null;
 }
 
 function extractAiDebug(result: unknown): any {
-  if (
-    result &&
-    typeof result === "object" &&
-    "debug" in result
-  ) {
+  if (result && typeof result === "object" && "debug" in result) {
     return (result as { debug?: unknown }).debug ?? null;
   }
+
   return null;
 }
 
@@ -226,6 +225,7 @@ export default function SessionRunner() {
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
+  const [statusCollapsed, setStatusCollapsed] = useState(false);
   const [showDebug, setShowDebug] = useState(true);
 
   const [sessionStarted, setSessionStarted] = useState(false);
@@ -481,7 +481,28 @@ export default function SessionRunner() {
             aiEnabled: aiCoachingEnabled
           });
 
-          if (orchestration.shouldUpdatePanel) {
+          const guidedMessage = buildGuidedMessage({
+            event,
+            prescription: activePrescription,
+            repState: output.repState,
+            holdRemainingMs: output.holdRemainingMs,
+            previousPhase,
+            currentPhase: output.repState.phase
+          });
+
+          if (guidedMessage) {
+            const guidedDecision: CoachingDecision = {
+              code: orchestration.decision.code,
+              priority: orchestration.decision.priority,
+              message: guidedMessage
+            };
+
+            if (orchestration.stickyMs > 0 || event !== "idle") {
+              setStickyCoaching(guidedDecision, Math.max(orchestration.stickyMs, 1400));
+            } else {
+              setCoaching(guidedDecision);
+            }
+          } else if (orchestration.shouldUpdatePanel) {
             if (orchestration.stickyMs > 0) {
               setStickyCoaching(orchestration.decision, orchestration.stickyMs);
             } else if (
@@ -642,6 +663,8 @@ export default function SessionRunner() {
 
     setSessionStarted(true);
     setSessionComplete(false);
+    setSelectorCollapsed(true);
+    setStatusCollapsed(false);
     resetExerciseState();
 
     setStickyCoaching(
@@ -809,7 +832,7 @@ export default function SessionRunner() {
                 cursor: "pointer"
               }}
             >
-              {selectorCollapsed ? "Expand" : "Collapse"}
+              {selectorCollapsed ? "Expand Selector" : "Collapse Selector"}
             </button>
 
             <button
@@ -1123,9 +1146,9 @@ export default function SessionRunner() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1.55fr 1fr",
+          gridTemplateColumns: "1fr 1fr",
           gap: 20,
-          alignItems: "start"
+          alignItems: "stretch"
         }}
       >
         <section
@@ -1133,8 +1156,10 @@ export default function SessionRunner() {
             background: "#1a2040",
             padding: 20,
             borderRadius: 14,
-            minHeight: 400,
-            border: "1px solid rgba(255,255,255,0.08)"
+            minHeight: 540,
+            border: "1px solid rgba(255,255,255,0.08)",
+            display: "flex",
+            flexDirection: "column"
           }}
         >
           <div
@@ -1204,100 +1229,140 @@ export default function SessionRunner() {
           )}
         </section>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <CoachingPanel
-            title="Live Coaching"
-            message={coaching.message}
-            phase={phase}
-            repCount={repCount}
-            repTarget={currentPrescription?.repTarget ?? 0}
-            exerciseName={currentExerciseLabel}
-            progressLabel={overallProgressLabel}
-            holdSeconds={holdSeconds}
-            minHeight={340}
-          />
+        <CoachingPanel
+          title="Live Coaching"
+          message={coaching.message}
+          phase={phase}
+          repCount={repCount}
+          repTarget={currentPrescription?.repTarget ?? 0}
+          exerciseName={currentExerciseLabel}
+          progressLabel={overallProgressLabel}
+          holdSeconds={holdSeconds}
+          minHeight={540}
+        />
+      </div>
 
-          <section
+      <section
+        style={{
+          background: "#1a2040",
+          padding: 16,
+          borderRadius: 14,
+          marginTop: 20,
+          border: "1px solid rgba(255,255,255,0.08)"
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginBottom: statusCollapsed ? 0 : 12
+          }}
+        >
+          <div>
+            <h3 style={{ margin: 0 }}>Session Status</h3>
+            {!statusCollapsed && (
+              <div style={{ color: "#aab6d3", marginTop: 4, fontSize: 13 }}>
+                Current session progress and coaching settings.
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => setStatusCollapsed((v) => !v)}
             style={{
-              background: "#1a2040",
-              padding: 20,
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.08)"
+              background: "rgba(255,255,255,0.12)",
+              color: "white",
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "none",
+              cursor: "pointer"
             }}
           >
-            <div
+            {statusCollapsed ? "Expand Status" : "Collapse Status"}
+          </button>
+        </div>
+
+        {!statusCollapsed && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+              gap: 14,
+              fontSize: 14
+            }}
+          >
+            <div>
+              Current exercise:
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{currentExerciseLabel}</div>
+            </div>
+
+            <div>
+              Progress:
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{overallProgressLabel}</div>
+            </div>
+
+            <div>
+              Camera status:
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{engineStatus}</div>
+            </div>
+
+            <div>
+              Voice coaching:
+              <div style={{ fontWeight: 700, marginTop: 4 }}>
+                {voiceEnabled ? "On" : "Off"}
+              </div>
+            </div>
+
+            <div>
+              AI coaching:
+              <div style={{ fontWeight: 700, marginTop: 4 }}>
+                {aiCoachingEnabled ? "On" : "Off"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!statusCollapsed && (
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14 }}>
+            <label
               style={{
-                fontSize: 12,
-                color: "#7cc6ff",
-                marginBottom: 12,
-                textTransform: "uppercase",
-                letterSpacing: 0.6
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                fontSize: 14,
+                color: "white"
               }}
             >
-              Session Status
-            </div>
+              <input
+                type="checkbox"
+                checked={voiceEnabled}
+                onChange={(e) => setVoiceEnabled(e.target.checked)}
+              />
+              Voice coaching
+            </label>
 
-            <div style={{ display: "grid", gap: 10, fontSize: 15 }}>
-              <div>
-                Current exercise: <strong>{currentExerciseLabel}</strong>
-              </div>
-              <div>
-                Progress: <strong>{overallProgressLabel}</strong>
-              </div>
-              <div>
-                Camera status: <strong>{engineStatus}</strong>
-              </div>
-              <div>
-                Voice coaching: <strong>{voiceEnabled ? "On" : "Off"}</strong>
-              </div>
-              <div>
-                AI coaching variation: <strong>{aiCoachingEnabled ? "On" : "Off"}</strong>
-              </div>
-              {activeMetricValue !== null && (
-                <div>
-                  Live metric: <strong>{activeMetricValue}</strong>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
-              <label
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: "white"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(e) => setVoiceEnabled(e.target.checked)}
-                />
-                Voice coaching
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: "white"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={aiCoachingEnabled}
-                  onChange={(e) => setAiCoachingEnabled(e.target.checked)}
-                />
-                AI coaching variation
-              </label>
-            </div>
-          </section>
-        </div>
-      </div>
+            <label
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                fontSize: 14,
+                color: "white"
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={aiCoachingEnabled}
+                onChange={(e) => setAiCoachingEnabled(e.target.checked)}
+              />
+              AI coaching variation
+            </label>
+          </div>
+        )}
+      </section>
 
       {showDebug && (
         <div style={{ display: "grid", gap: 20, marginTop: 20 }}>
