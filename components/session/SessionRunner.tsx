@@ -6,6 +6,7 @@ import * as poseDetection from "@tensorflow-models/pose-detection";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
+import { useRealVoiceCoaching } from "@/lib/coaching/useRealVoiceCoaching";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
@@ -227,7 +228,7 @@ export default function SessionRunner() {
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
   const [statusCollapsed, setStatusCollapsed] = useState(false);
   const [showDebug, setShowDebug] = useState(true);
-
+const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -251,11 +252,16 @@ export default function SessionRunner() {
   const [lastFailureReason, setLastFailureReason] = useState<string | null>(null);
   const [lastAiDebug, setLastAiDebug] = useState<any>(null);
 
-  useVoiceCoaching(coaching.message, {
-    enabled: voiceEnabled,
-    cooldownMs: 1800,
-    rate: 0.92
-  });
+ useVoiceCoaching(coaching.message, {
+  enabled: voiceEnabled && !realVoiceEnabled,
+  cooldownMs: 3200,
+  rate: 0.94
+});
+  useRealVoiceCoaching(coaching.message, {
+  enabled: voiceEnabled && realVoiceEnabled,
+  cooldownMs: 3200,
+  voice: "marin"
+});
 
   useEffect(() => {
     if (selectedSessionIds.length === 0 && sessions[0]) {
@@ -1360,6 +1366,22 @@ export default function SessionRunner() {
               />
               AI coaching variation
             </label>
+                <label
+      style={{
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        fontSize: 14,
+        color: "white"
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={realVoiceEnabled}
+        onChange={(e) => setRealVoiceEnabled(e.target.checked)}
+      />
+      Real voice
+    </label>
           </div>
         )}
       </section>
