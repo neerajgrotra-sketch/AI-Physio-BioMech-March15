@@ -39,7 +39,10 @@ function buildPrompt(state: CoachState): string {
       : "none";
 
   return `
-You are a real physiotherapist giving short live coaching during a rehab session.
+You are a real physiotherapist guiding a live rehab exercise.
+
+Your job is not only to correct mistakes.
+Your job is to guide the patient through the movement.
 
 SESSION CONTEXT
 Exercise: ${state.exerciseName}
@@ -71,25 +74,40 @@ COACHING GOAL
 Intent: ${state.intent ?? "stabilize"}
 
 INSTRUCTIONS
-Return exactly ONE short coaching sentence.
-Maximum 12 words.
-Sound calm, natural, and specific.
-Focus on only the most important cue.
-Do not mention angles, metrics, analytics, or data.
-Do not say "begin when ready".
-Do not narrate what the model sees.
-Do not use more than one sentence.
+Respond with exactly ONE short coaching sentence.
+Maximum 14 words.
 
-STYLE EXAMPLES
-- "Lift a little higher."
-- "Good, now lower slowly."
-- "Stay tall through your torso."
-- "Hold it there."
-- "Better — keep both arms even."
-- "Reset and try that rep again."
-- "Nice rep. Keep that control."
+Behavior:
+- If event is start, guide the first movement clearly.
+- If event is rep_complete, briefly acknowledge success and guide the next rep.
+- If event is rep_failed, clearly correct the most important issue.
+- If a repeated issue exists, prioritize that issue.
+- If phase is holding, encourage stability.
+- If phase is lowering, guide controlled descent.
 
-Now return the best single coaching sentence.
+Tone:
+- calm
+- confident
+- human
+- slightly encouraging
+- never robotic
+
+Avoid:
+- "begin when ready"
+- generic praise alone
+- mentioning metrics, data, or analysis
+- sounding like a chatbot
+
+Examples:
+- "Lift your right arm slowly to shoulder height."
+- "Good. Now repeat that with the same control."
+- "Lift a little higher on this next rep."
+- "Hold steady. Stay tall through your torso."
+- "Lower slowly and keep control."
+- "Reset your arm, then try again."
+- "Good. Keep both arms even this time."
+
+Return ONLY the sentence.
 `.trim();
 }
 
@@ -100,12 +118,6 @@ export async function POST(req: NextRequest) {
     const state = (await req.json()) as CoachState;
     const prompt = buildPrompt(state);
 
-    console.log("coach route hit", {
-      event: state.event,
-      exerciseName: state.exerciseName,
-      intent: state.intent
-    });
-
     const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -114,13 +126,13 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.3,
-        max_tokens: 40,
+        temperature: 0.45,
+        max_tokens: 50,
         messages: [
           {
             role: "system",
             content:
-              "You are a physiotherapist giving brief real-time movement coaching."
+              "You are a physiotherapist giving short live exercise guidance."
           },
           {
             role: "user",
@@ -130,11 +142,8 @@ export async function POST(req: NextRequest) {
       })
     });
 
-    console.log("openai status", aiResponse.status);
-
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error("OpenAI coach API error:", errorText);
 
       let parsedError: any = null;
       try {
@@ -143,7 +152,7 @@ export async function POST(req: NextRequest) {
         parsedError = null;
       }
 
-      const fallback = "Keep the movement slow and controlled.";
+      const fallback = "Move slowly and stay in control.";
 
       return NextResponse.json({
         message: fallback,
@@ -164,7 +173,7 @@ export async function POST(req: NextRequest) {
 
     const message =
       json.choices?.[0]?.message?.content?.trim() ||
-      "Keep the movement slow and controlled.";
+      "Move slowly and stay in control.";
 
     return NextResponse.json({
       message,
@@ -177,9 +186,7 @@ export async function POST(req: NextRequest) {
       }
     });
   } catch (error) {
-    console.error("Coach API route error:", error);
-
-    const fallback = "Keep the movement slow and controlled.";
+    const fallback = "Move slowly and stay in control.";
 
     return NextResponse.json({
       message: fallback,
