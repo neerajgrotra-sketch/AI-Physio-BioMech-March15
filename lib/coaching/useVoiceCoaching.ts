@@ -8,14 +8,24 @@ type UseVoiceCoachingOptions = {
   rate?: number;
   pitch?: number;
   volume?: number;
+  minMessageLength?: number;
+  suppressPatterns?: RegExp[];
 };
 
 const DEFAULT_OPTIONS: Required<UseVoiceCoachingOptions> = {
   enabled: true,
-  cooldownMs: 1800,
-  rate: 0.92,
+  cooldownMs: 3200,
+  rate: 0.94,
   pitch: 1,
-  volume: 1
+  volume: 1,
+  minMessageLength: 8,
+  suppressPatterns: [
+    /^hold\b/i,
+    /^hold\.\s*\d/i,
+    /^ready\b/i,
+    /^tracking\b/i,
+    /^move slowly and stay in control\.?$/i
+  ]
 };
 
 function canUseSpeechSynthesis(): boolean {
@@ -24,6 +34,15 @@ function canUseSpeechSynthesis(): boolean {
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, " ");
+}
+
+function shouldSuppress(
+  message: string,
+  options: Required<UseVoiceCoachingOptions>
+): boolean {
+  if (!message || message.length < options.minMessageLength) return true;
+
+  return options.suppressPatterns.some((pattern) => pattern.test(message));
 }
 
 export function useVoiceCoaching(
@@ -43,12 +62,13 @@ export function useVoiceCoaching(
     const normalized = normalizeMessage(message);
     if (!normalized) return;
 
-    // Avoid speaking the initial mount message immediately.
     if (!mountedRef.current) {
       mountedRef.current = true;
       lastSpokenMessageRef.current = normalized;
       return;
     }
+
+    if (shouldSuppress(normalized, config)) return;
 
     const now = Date.now();
     const sameMessage = normalized === lastSpokenMessageRef.current;
@@ -73,7 +93,9 @@ export function useVoiceCoaching(
     config.cooldownMs,
     config.rate,
     config.pitch,
-    config.volume
+    config.volume,
+    config.minMessageLength,
+    config.suppressPatterns
   ]);
 
   useEffect(() => {
