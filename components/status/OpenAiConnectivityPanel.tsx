@@ -22,8 +22,22 @@ export default function OpenAiConnectivityPanel() {
         cache: "no-store"
       });
 
-      const json = (await response.json()) as ConnectivityResult;
-      setResult(json);
+      const rawText = await response.text();
+
+      let parsed: ConnectivityResult | null = null;
+
+      try {
+        parsed = JSON.parse(rawText) as ConnectivityResult;
+      } catch {
+        parsed = {
+          ok: false,
+          status: response.status,
+          model: "gpt-4o-mini",
+          body: `Non-JSON response received:\n\n${rawText.slice(0, 800)}`
+        };
+      }
+
+      setResult(parsed);
     } catch (error) {
       setResult({
         ok: false,
@@ -121,9 +135,7 @@ export default function OpenAiConnectivityPanel() {
           <div>
             Model: <strong>{result.model}</strong>
           </div>
-          <div>
-            Response:
-          </div>
+          <div>Response:</div>
           <pre
             style={{
               margin: 0,
@@ -132,7 +144,9 @@ export default function OpenAiConnectivityPanel() {
               background: "rgba(255,255,255,0.04)",
               padding: 10,
               borderRadius: 8,
-              color: "white"
+              color: "white",
+              maxHeight: 260,
+              overflow: "auto"
             }}
           >
             {result.body}
