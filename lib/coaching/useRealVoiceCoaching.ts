@@ -17,7 +17,8 @@ const DEFAULT_OPTIONS: Required<UseRealVoiceCoachingOptions> = {
     /^hold\b/i,
     /^hold\.\s*\d/i,
     /^ready\b/i,
-    /^tracking\b/i
+    /^tracking\b/i,
+    /^move slowly and stay in control\.?$/i
   ]
 };
 
@@ -38,6 +39,7 @@ export function useRealVoiceCoaching(
   const lastSpokenMessageRef = useRef("");
   const lastSpokenAtRef = useRef(0);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const currentObjectUrlRef = useRef<string | null>(null);
   const mountedRef = useRef(false);
 
   useEffect(() => {
@@ -86,7 +88,14 @@ export function useRealVoiceCoaching(
           currentAudioRef.current = null;
         }
 
+        if (currentObjectUrlRef.current) {
+          URL.revokeObjectURL(currentObjectUrlRef.current);
+          currentObjectUrlRef.current = null;
+        }
+
         const url = URL.createObjectURL(blob);
+        currentObjectUrlRef.current = url;
+
         const audio = new Audio(url);
         currentAudioRef.current = audio;
 
@@ -94,7 +103,10 @@ export function useRealVoiceCoaching(
         lastSpokenAtRef.current = now;
 
         audio.onended = () => {
-          URL.revokeObjectURL(url);
+          if (currentObjectUrlRef.current) {
+            URL.revokeObjectURL(currentObjectUrlRef.current);
+            currentObjectUrlRef.current = null;
+          }
           if (currentAudioRef.current === audio) {
             currentAudioRef.current = null;
           }
@@ -102,7 +114,7 @@ export function useRealVoiceCoaching(
 
         await audio.play();
       } catch {
-        // fail silently for now
+        // silent fail
       }
     }
 
@@ -126,6 +138,11 @@ export function useRealVoiceCoaching(
           currentAudioRef.current.pause();
         } catch {}
         currentAudioRef.current = null;
+      }
+
+      if (currentObjectUrlRef.current) {
+        URL.revokeObjectURL(currentObjectUrlRef.current);
+        currentObjectUrlRef.current = null;
       }
     };
   }, []);
