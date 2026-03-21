@@ -2,26 +2,26 @@ import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { RehabEvent } from "@/lib/engine/rehabStateBuilder";
 import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 
-export function buildExerciseIntro(prescription: ExercisePrescription): string {
+function getExerciseCoreInstruction(prescription: ExercisePrescription): string {
   switch (prescription.id) {
     case "right-arm-raise":
-      return "We are starting right arm raises. Lift to shoulder height, hold, then lower slowly.";
+      return "Lift your right arm to shoulder height, hold, then lower slowly.";
 
     case "left-arm-raise":
-      return "We are starting left arm raises. Lift to shoulder height, hold, then lower slowly.";
+      return "Lift your left arm to shoulder height, hold, then lower slowly.";
 
     case "both-arm-raise":
-      return "We are starting both arm raises. Lift both arms evenly, hold, then lower slowly.";
+      return "Lift both arms evenly to shoulder height, hold, then lower slowly.";
 
     case "sit-to-stand":
-      return "We are starting sit to stand. Stand up fully, hold, then sit down slowly.";
+      return "Stand up fully, pause, then sit down slowly with control.";
 
     default:
-      return `${prescription.name}. Move slowly and with control.`;
+      return "Move slowly and with control.";
   }
 }
 
-export function buildNextRepGuidance(prescription: ExercisePrescription): string {
+function getExerciseContinuation(prescription: ExercisePrescription): string {
   switch (prescription.id) {
     case "right-arm-raise":
       return "Continue with the right arm raise. Lift slowly to shoulder height.";
@@ -30,22 +30,82 @@ export function buildNextRepGuidance(prescription: ExercisePrescription): string
       return "Continue with the left arm raise. Lift slowly to shoulder height.";
 
     case "both-arm-raise":
-      return "Continue with both arms. Lift them together slowly and evenly.";
+      return "Continue. Lift both arms together slowly and evenly.";
 
     case "sit-to-stand":
-      return "Continue. Stand up smoothly, then lower back down with control.";
+      return "Continue. Stand tall, then lower back down slowly.";
 
     default:
-      return "Continue with the next repetition slowly and with control.";
+      return "Continue the next repetition slowly and with control.";
   }
 }
 
-export function buildRepSuccessGuidance(
+function getFailureResetCue(prescription: ExercisePrescription): string {
+  switch (prescription.id) {
+    case "right-arm-raise":
+      return "Reset your right arm, then lift again slowly.";
+
+    case "left-arm-raise":
+      return "Reset your left arm, then lift again slowly.";
+
+    case "both-arm-raise":
+      return "Reset both arms, then lift them together again.";
+
+    case "sit-to-stand":
+      return "Reset in the chair, then try again slowly.";
+
+    default:
+      return "Reset and try again slowly.";
+  }
+}
+
+function getExerciseCompleteCue(prescription: ExercisePrescription): string {
+  switch (prescription.id) {
+    case "right-arm-raise":
+      return "Right arm raises complete. Well done.";
+
+    case "left-arm-raise":
+      return "Left arm raises complete. Well done.";
+
+    case "both-arm-raise":
+      return "Both arm raises complete. Well done.";
+
+    case "sit-to-stand":
+      return "Sit to stand complete. Well done.";
+
+    default:
+      return `${prescription.name} complete. Well done.`;
+  }
+}
+
+function buildExerciseIntro(prescription: ExercisePrescription): string {
+  switch (prescription.id) {
+    case "right-arm-raise":
+      return "We are starting right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
+
+    case "left-arm-raise":
+      return "We are starting left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
+
+    case "both-arm-raise":
+      return "We are starting both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
+
+    case "sit-to-stand":
+      return "We are starting sit to stand. Stand up fully, pause, then sit down slowly.";
+
+    default:
+      return `${prescription.name}. ${getExerciseCoreInstruction(prescription)}`;
+  }
+}
+
+function buildRepSuccessGuidance(
   prescription: ExercisePrescription,
-  repCount: number
+  repCount: number,
+  repTarget: number
 ): string {
-  if (repCount <= 0) {
-    return buildNextRepGuidance(prescription);
+  const remaining = Math.max(0, repTarget - repCount);
+
+  if (remaining <= 0) {
+    return getExerciseCompleteCue(prescription);
   }
 
   switch (prescription.id) {
@@ -59,35 +119,14 @@ export function buildRepSuccessGuidance(
       return "Good. Continue lifting both arms evenly and with control.";
 
     case "sit-to-stand":
-      return "Good. Continue standing tall, then lower back down slowly.";
+      return "Good. Stand tall again, then lower back down slowly.";
 
     default:
-      return "Good. Continue the next repetition with control.";
+      return getExerciseContinuation(prescription);
   }
 }
 
-export function buildRepFailureGuidance(
-  prescription: ExercisePrescription
-): string {
-  switch (prescription.id) {
-    case "right-arm-raise":
-      return "Reset your right arm, then lift again slowly.";
-
-    case "left-arm-raise":
-      return "Reset your left arm, then lift again slowly.";
-
-    case "both-arm-raise":
-      return "Reset both arms, then lift them together again.";
-
-    case "sit-to-stand":
-      return "Reset in the chair, then try the movement again slowly.";
-
-    default:
-      return "Reset and try the repetition again slowly.";
-  }
-}
-
-export function buildHoldCountdownMessage(
+function buildHoldCountdownMessage(
   holdRemainingMs: number,
   phase: string
 ): string | null {
@@ -102,14 +141,8 @@ export function buildHoldCountdownMessage(
   return "Hold steady.";
 }
 
-export function buildLoweringCue(): string {
+function buildLoweringCue(): string {
   return "Lower slowly and stay in control.";
-}
-
-export function buildExerciseCompleteMessage(
-  prescription: ExercisePrescription
-): string {
-  return `${prescription.name} complete. Well done.`;
 }
 
 export function buildGuidedMessage(params: {
@@ -134,26 +167,27 @@ export function buildGuidedMessage(params: {
   }
 
   if (event === "rep_complete") {
-    return buildRepSuccessGuidance(prescription, repState.repCount);
+    return buildRepSuccessGuidance(
+      prescription,
+      repState.repCount,
+      prescription.repTarget
+    );
   }
 
   if (event === "rep_failed") {
-    return buildRepFailureGuidance(prescription);
+    return getFailureResetCue(prescription);
   }
 
   if (event === "exercise_complete") {
-    return buildExerciseCompleteMessage(prescription);
-  }
-
-  if (
-    previousPhase !== currentPhase &&
-    currentPhase === "lowering"
-  ) {
-    return buildLoweringCue();
+    return getExerciseCompleteCue(prescription);
   }
 
   if (holdRemainingMs !== null) {
     return buildHoldCountdownMessage(holdRemainingMs, currentPhase);
+  }
+
+  if (previousPhase !== currentPhase && currentPhase === "lowering") {
+    return buildLoweringCue();
   }
 
   return null;
