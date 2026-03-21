@@ -8,7 +8,8 @@ export async function GET() {
       return NextResponse.json({
         ok: false,
         status: null,
-        error: "Missing OPENAI_API_KEY"
+        model: "gpt-4o-mini",
+        body: "Missing OPENAI_API_KEY"
       });
     }
 
@@ -53,7 +54,8 @@ export async function GET() {
     return NextResponse.json({
       ok: false,
       status: null,
-      error: error instanceof Error ? error.message : "Unknown error"
+      model: "gpt-4o-mini",
+      body: error instanceof Error ? error.message : "Unknown error"
     });
   }
 }
