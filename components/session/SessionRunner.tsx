@@ -614,14 +614,16 @@ export default function SessionRunner() {
             aiEnabled: aiCoachingEnabled
           });
 
-          const guidedMessage = buildGuidedMessage({
-            event,
-            prescription: activePrescription,
-            repState: output.repState,
-            holdRemainingMs: output.holdRemainingMs,
-            previousPhase,
-            currentPhase: output.repState.phase
-          });
+       const guidedMessage = buildGuidedMessage({
+  event,
+  prescription: activePrescription,
+  repState: output.repState,
+  holdRemainingMs: output.holdRemainingMs,
+  previousPhase,
+  currentPhase: output.repState.phase,
+  primaryIssue: output.primaryIssue,
+  detectedIssues: rehabState.detectedIssues
+});
 
           if (guidedMessage) {
             const guidedDecision: CoachingDecision = {
