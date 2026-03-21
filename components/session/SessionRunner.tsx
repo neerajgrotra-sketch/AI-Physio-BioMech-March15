@@ -2,10 +2,11 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
-
+import OpenAiConnectivityPanel from "@/components/status/OpenAiConnectivityPanel";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
+
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
@@ -1423,6 +1424,11 @@ export default function SessionRunner() {
               </div>
             )}
           </div>
+          {!statusCollapsed && (
+  <div style={{ marginTop: 14 }}>
+    <OpenAiConnectivityPanel />
+  </div>
+)}
 
           <button
             onClick={() => setStatusCollapsed((v) => !v)}
