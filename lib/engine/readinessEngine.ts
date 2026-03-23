@@ -91,7 +91,11 @@ function isUpperBodyVisible(frame: PoseFrame | null): boolean {
     "right_elbow"
   ];
 
-  return required.every((name) => isVisible(frame, name, 0.35));
+  const visibleCount = required.filter((name) =>
+  isVisible(frame, name, 0.35)
+).length;
+
+return visibleCount >= 3; // instead of all 5
 }
 
 function areHandsVisibleForExercise(
