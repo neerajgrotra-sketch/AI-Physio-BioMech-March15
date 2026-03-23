@@ -36,29 +36,43 @@ const CONNECTIONS: Array<[string, string]> = [
 function getFrameKeypoints(frame: PoseFrame | null): OverlayKeypoint[] {
   if (!frame || typeof frame !== "object") return [];
 
-const maybeKeypoints =
-  (frame as any).keypoints ||
-  (frame as any).landmarks ||
-  (frame as any).points;
+  const landmarks = (frame as any).landmarks;
+  if (!landmarks || typeof landmarks !== "object") return [];
 
-if (!Array.isArray(maybeKeypoints)) return [];
-
-  return maybeKeypoints.filter((kp: any) => {
-    return (
-      kp &&
-      typeof kp.name === "string" &&
-      typeof kp.x === "number" &&
-      typeof kp.y === "number"
-    );
-  }) as OverlayKeypoint[];
+  return Object.entries(landmarks)
+    .filter(([name, kp]) => {
+      return (
+        typeof name === "string" &&
+        kp &&
+        typeof (kp as any).x === "number" &&
+        typeof (kp as any).y === "number"
+      );
+    })
+    .map(([name, kp]) => ({
+      name,
+      x: (kp as any).x,
+      y: (kp as any).y,
+      score: (kp as any).score ?? 1
+    }));
 }
 
 function getKeypoint(frame: PoseFrame | null, name: string): OverlayKeypoint | null {
-  const keypoints = getFrameKeypoints(frame);
-  return keypoints.find((kp) => kp.name === name) ?? null;
+  const landmarks = (frame as any)?.landmarks;
+  const kp = landmarks?.[name];
+  if (!kp || typeof kp.x !== "number" || typeof kp.y !== "number") return null;
+
+  return {
+    name,
+    x: kp.x,
+    y: kp.y,
+    score: kp.score ?? 1
+  };
 }
 
-function isVisible(keypoint: OverlayKeypoint | null, minScore = 0.25): keypoint is OverlayKeypoint {
+function isVisible(
+  keypoint: OverlayKeypoint | null,
+  minScore = 0.2
+): keypoint is OverlayKeypoint {
   if (!keypoint) return false;
   return (keypoint.score ?? 1) >= minScore;
 }
