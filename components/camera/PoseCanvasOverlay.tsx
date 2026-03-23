@@ -36,8 +36,12 @@ const CONNECTIONS: Array<[string, string]> = [
 function getFrameKeypoints(frame: PoseFrame | null): OverlayKeypoint[] {
   if (!frame || typeof frame !== "object") return [];
 
-  const maybeKeypoints = (frame as any).keypoints;
-  if (!Array.isArray(maybeKeypoints)) return [];
+const maybeKeypoints =
+  (frame as any).keypoints ||
+  (frame as any).landmarks ||
+  (frame as any).points;
+
+if (!Array.isArray(maybeKeypoints)) return [];
 
   return maybeKeypoints.filter((kp: any) => {
     return (
