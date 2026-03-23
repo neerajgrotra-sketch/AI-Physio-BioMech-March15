@@ -2,15 +2,15 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as poseDetection from "@tensorflow-models/pose-detection";
-import OpenAiConnectivityPanel from "@/components/status/OpenAiConnectivityPanel";
+
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
-
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
 import CoachingPanel from "@/components/coaching/CoachingPanel";
 import DebugPanel from "@/components/debug/DebugPanel";
 import AiDebugPanel from "@/components/debug/AiDebugPanel";
+import OpenAiConnectivityPanel from "@/components/status/OpenAiConnectivityPanel";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
 
 import { ACTIVE_EXERCISE_LIBRARY } from "@/lib/exercises/exerciseLibrary";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/engine/rehabStateBuilder";
 import { buildCoachingOrchestration } from "@/lib/engine/coachingOrchestrator";
 import { buildGuidedMessage } from "@/lib/engine/sessionGuidance";
+import { evaluateReadiness } from "@/lib/engine/readinessEngine";
 import { generateCoaching } from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
@@ -311,6 +312,7 @@ export default function SessionRunner() {
   const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
+  const [framingWarning, setFramingWarning] = useState<string | null>(null);
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
@@ -457,6 +459,7 @@ export default function SessionRunner() {
     setPhase("ready");
     setHoldRemainingMs(null);
     setActiveMetricValue(null);
+    setFramingWarning(null);
     setLastEvent("idle");
     setLastPrimaryIssue("idle");
     setLastDetectedIssues([]);
@@ -487,6 +490,7 @@ export default function SessionRunner() {
     activeQueueRef.current = [];
     queueIndexRef.current = 0;
     prescriptionRef.current = null;
+    setFramingWarning(null);
     resetExerciseState();
     setCoaching(createIdleCoaching());
   }
@@ -602,6 +606,21 @@ export default function SessionRunner() {
           setLastDetectedIssues(rehabState.detectedIssues);
           setLastFailureReason(rehabState.failureReason);
 
+          const readiness = evaluateReadiness({
+            frame: normalized,
+            features: smoothedFeatures,
+            prescription: activePrescription,
+            hasCompletedRaiseTest:
+              output.repState.repCount > 0 || output.repState.phase !== "ready",
+            averageBrightness: null
+          });
+
+          if (!readiness.ready) {
+            setFramingWarning(`Warning: ${readiness.message}`);
+          } else {
+            setFramingWarning(null);
+          }
+
           const now = Date.now();
           const orchestration = buildCoachingOrchestration({
             event,
@@ -614,16 +633,16 @@ export default function SessionRunner() {
             aiEnabled: aiCoachingEnabled
           });
 
-       const guidedMessage = buildGuidedMessage({
-  event,
-  prescription: activePrescription,
-  repState: output.repState,
-  holdRemainingMs: output.holdRemainingMs,
-  previousPhase,
-  currentPhase: output.repState.phase,
-  primaryIssue: output.primaryIssue,
-  detectedIssues: rehabState.detectedIssues
-});
+          const guidedMessage = buildGuidedMessage({
+            event,
+            prescription: activePrescription,
+            repState: output.repState,
+            holdRemainingMs: output.holdRemainingMs,
+            previousPhase,
+            currentPhase: output.repState.phase,
+            primaryIssue: output.primaryIssue,
+            detectedIssues: rehabState.detectedIssues
+          });
 
           if (guidedMessage) {
             const guidedDecision: CoachingDecision = {
@@ -1389,6 +1408,7 @@ export default function SessionRunner() {
         <CoachingPanel
           title="Live Coaching"
           message={coaching.message}
+          secondaryMessage={framingWarning}
           phase={phase}
           repCount={repCount}
           repTarget={currentPrescription?.repTarget ?? 0}
@@ -1426,11 +1446,6 @@ export default function SessionRunner() {
               </div>
             )}
           </div>
-          {!statusCollapsed && (
-  <div style={{ marginTop: 14 }}>
-    <OpenAiConnectivityPanel />
-  </div>
-)}
 
           <button
             onClick={() => setStatusCollapsed((v) => !v)}
@@ -1538,6 +1553,10 @@ export default function SessionRunner() {
                 />
                 Real voice
               </label>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <OpenAiConnectivityPanel />
             </div>
           </>
         )}
