@@ -748,16 +748,16 @@ export default function SessionRunner() {
 
             const now = Date.now();
             updateDisplayedCoaching(
-              {
-                code: "framing_complete",
-                priority: "encourage",
-                message: "Framing looks good. We can begin."
-              },
-              "start",
-              "ready",
-              now,
-              { force: true }
-            );
+  {
+    code: "good_rep",
+    priority: "encourage",
+    message: "Framing looks good. We can begin."
+  },
+  "start",
+  "ready",
+  now,
+  { force: true }
+);
           }
 
           const effectiveCalibrationComplete =
