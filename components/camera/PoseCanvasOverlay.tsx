@@ -11,7 +11,12 @@ type Props = {
   className?: string;
 };
 
-type FrameKeypoint = PoseFrame["keypoints"] extends Array<infer T> ? T : never;
+type OverlayKeypoint = {
+  name: string;
+  x: number;
+  y: number;
+  score?: number | null;
+};
 
 const CONNECTIONS: Array<[string, string]> = [
   ["left_shoulder", "right_shoulder"],
@@ -28,14 +33,30 @@ const CONNECTIONS: Array<[string, string]> = [
   ["right_knee", "right_ankle"]
 ];
 
-function getKeypoint(frame: PoseFrame | null, name: string): FrameKeypoint | null {
-  if (!frame?.keypoints) return null;
-  return frame.keypoints.find((kp) => kp.name === name) ?? null;
+function getFrameKeypoints(frame: PoseFrame | null): OverlayKeypoint[] {
+  if (!frame || typeof frame !== "object") return [];
+
+  const maybeKeypoints = (frame as any).keypoints;
+  if (!Array.isArray(maybeKeypoints)) return [];
+
+  return maybeKeypoints.filter((kp: any) => {
+    return (
+      kp &&
+      typeof kp.name === "string" &&
+      typeof kp.x === "number" &&
+      typeof kp.y === "number"
+    );
+  }) as OverlayKeypoint[];
 }
 
-function isVisible(keypoint: FrameKeypoint | null, minScore = 0.25): boolean {
+function getKeypoint(frame: PoseFrame | null, name: string): OverlayKeypoint | null {
+  const keypoints = getFrameKeypoints(frame);
+  return keypoints.find((kp) => kp.name === name) ?? null;
+}
+
+function isVisible(keypoint: OverlayKeypoint | null, minScore = 0.25): boolean {
   if (!keypoint) return false;
-  return (keypoint.score ?? 0) >= minScore;
+  return (keypoint.score ?? 1) >= minScore;
 }
 
 export default function PoseCanvasOverlay({
@@ -68,7 +89,10 @@ export default function PoseCanvasOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, renderWidth, renderHeight);
 
-    if (!frame?.personDetected || !frame.keypoints?.length) {
+    const personDetected = Boolean((frame as any)?.personDetected);
+    const keypoints = getFrameKeypoints(frame);
+
+    if (!personDetected || keypoints.length === 0) {
       return;
     }
 
@@ -92,7 +116,7 @@ export default function PoseCanvasOverlay({
       ctx.stroke();
     }
 
-    for (const keypoint of frame.keypoints) {
+    for (const keypoint of keypoints) {
       if (!isVisible(keypoint)) continue;
 
       const x = keypoint.x * renderWidth;
