@@ -54,7 +54,7 @@ function getKeypoint(frame: PoseFrame | null, name: string): OverlayKeypoint | n
   return keypoints.find((kp) => kp.name === name) ?? null;
 }
 
-function isVisible(keypoint: OverlayKeypoint | null, minScore = 0.25): boolean {
+function isVisible(keypoint: OverlayKeypoint | null, minScore = 0.25): keypoint is OverlayKeypoint {
   if (!keypoint) return false;
   return (keypoint.score ?? 1) >= minScore;
 }
