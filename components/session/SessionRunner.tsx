@@ -34,7 +34,7 @@ import { generateCoaching } from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
-import type { CoachingDecision, CoachingCode } from "@/lib/types/coaching";
+import type { CoachingDecision } from "@/lib/types/coaching";
 import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
@@ -362,13 +362,6 @@ function buildPassiveFramingBanner(
   };
 }
 
-function pickCode(
-  fallback: CoachingCode,
-  preferred?: CoachingDecision | null
-): CoachingCode {
-  return preferred?.code ?? fallback;
-}
-
 export default function SessionRunner() {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
@@ -378,6 +371,7 @@ export default function SessionRunner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const exerciseAdvanceTimeoutRef = useRef<number | null>(null);
+  const startIntroTimeoutRef = useRef<number | null>(null);
 
   const trackingActiveRef = useRef(false);
   const advancePendingRef = useRef(false);
@@ -399,6 +393,7 @@ export default function SessionRunner() {
   const sessionStartedRef = useRef(false);
   const sessionCalibrationCompleteRef = useRef(false);
   const introShownForExerciseRef = useRef<string | null>(null);
+  const exerciseIntroReleasedRef = useRef(false);
 
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -438,7 +433,7 @@ export default function SessionRunner() {
   useVoiceCoaching(coaching.message, {
     enabled: voiceEnabled && !realVoiceEnabled,
     cooldownMs: 3200,
-    rate: 0.94
+    rate: 0.92
   });
 
   useRealVoiceCoaching(coaching.message, {
@@ -495,6 +490,13 @@ export default function SessionRunner() {
     if (exerciseAdvanceTimeoutRef.current !== null) {
       window.clearTimeout(exerciseAdvanceTimeoutRef.current);
       exerciseAdvanceTimeoutRef.current = null;
+    }
+  }
+
+  function clearStartIntroTimeout() {
+    if (startIntroTimeoutRef.current !== null) {
+      window.clearTimeout(startIntroTimeoutRef.current);
+      startIntroTimeoutRef.current = null;
     }
   }
 
@@ -558,6 +560,28 @@ export default function SessionRunner() {
     });
   }
 
+  function releaseExerciseIntro(prescription: ExercisePrescription | null, delayMs = 900) {
+    if (!prescription) return;
+    if (exerciseIntroReleasedRef.current) return;
+
+    exerciseIntroReleasedRef.current = true;
+    clearStartIntroTimeout();
+
+    startIntroTimeoutRef.current = window.setTimeout(() => {
+      updateDisplayedCoaching(
+        {
+          code: "start_exercise",
+          priority: "info",
+          message: getStartMessage(prescription)
+        },
+        "start",
+        "ready",
+        Date.now(),
+        { force: true }
+      );
+    }, delayMs);
+  }
+
   function resetExerciseRuntimeState() {
     repStateRef.current = createInitialRepState();
     featureHistoryRef.current.clear();
@@ -580,6 +604,7 @@ export default function SessionRunner() {
   function resetSessionCalibrationState() {
     sessionCalibrationCompleteRef.current = false;
     introShownForExerciseRef.current = null;
+    exerciseIntroReleasedRef.current = false;
     setFramingCalibrated(false);
   }
 
@@ -592,6 +617,7 @@ export default function SessionRunner() {
     }
 
     clearAdvanceTimeout();
+    clearStartIntroTimeout();
     videoRef.current = null;
 
     sessionStartedRef.current = false;
@@ -762,6 +788,8 @@ export default function SessionRunner() {
               now,
               { force: true }
             );
+
+            releaseExerciseIntro(activePrescription, 900);
           }
 
           const effectiveCalibrationComplete =
@@ -779,7 +807,7 @@ export default function SessionRunner() {
                 {
                   code: "start_exercise",
                   priority: "info",
-                  message: "I’m checking your framing. Lift both arms once."
+                  message: "Lift both arms once so I can check your framing."
                 },
                 "start",
                 "ready",
@@ -787,24 +815,26 @@ export default function SessionRunner() {
                 { force: true }
               );
             }
-          } else {
-            setFramingBanner(
-              buildPassiveFramingBanner(
-                readiness.ready,
-                readiness.message,
-                normalized.personDetected
-              )
-            );
-          }
 
-          const now = Date.now();
-
-          if (!effectiveCalibrationComplete) {
             if (trackingActiveRef.current) {
               rafRef.current = window.requestAnimationFrame(loop);
             }
             return;
           }
+
+          setFramingBanner(
+            buildPassiveFramingBanner(
+              readiness.ready,
+              readiness.message,
+              normalized.personDetected
+            )
+          );
+
+          if (!calibrationRequired && !exerciseIntroReleasedRef.current) {
+            releaseExerciseIntro(activePrescription, 0);
+          }
+
+          const now = Date.now();
 
           const orchestration = buildCoachingOrchestration({
             event,
@@ -953,19 +983,24 @@ export default function SessionRunner() {
                 queueIndexRef.current = nextIndex;
                 prescriptionRef.current = nextExercise.prescription;
                 introShownForExerciseRef.current = null;
+                exerciseIntroReleasedRef.current = false;
                 resetExerciseRuntimeState();
 
-                updateDisplayedCoaching(
-                  {
-                    code: "start_exercise",
-                    priority: "info",
-                    message: getStartMessage(nextExercise.prescription)
-                  },
-                  "start",
-                  "ready",
-                  Date.now(),
-                  { force: true }
-                );
+                if (isCalibrationExercise(nextExercise.prescription)) {
+                  updateDisplayedCoaching(
+                    {
+                      code: "start_exercise",
+                      priority: "info",
+                      message: "Lift both arms once so I can check your framing."
+                    },
+                    "start",
+                    "ready",
+                    Date.now(),
+                    { force: true }
+                  );
+                } else {
+                  releaseExerciseIntro(nextExercise.prescription, 0);
+                }
               }, 2200);
             } else {
               setSessionComplete(true);
@@ -1039,13 +1074,17 @@ export default function SessionRunner() {
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
 
+    const firstPrescription = combinedQueue[0].prescription;
+    const needsCalibration = isCalibrationExercise(firstPrescription);
+
     activeQueueRef.current = combinedQueue;
     queueIndexRef.current = 0;
-    prescriptionRef.current = combinedQueue[0].prescription;
+    prescriptionRef.current = firstPrescription;
 
     resetDisplayController();
     resetExerciseRuntimeState();
     resetSessionCalibrationState();
+    clearStartIntroTimeout();
 
     setSessionStarted(true);
     sessionStartedRef.current = true;
@@ -1058,16 +1097,26 @@ export default function SessionRunner() {
     });
 
     updateDisplayedCoaching(
-      {
-        code: "start_exercise",
-        priority: "info",
-        message: getStartMessage(combinedQueue[0].prescription)
-      },
+      needsCalibration
+        ? {
+            code: "start_exercise",
+            priority: "info",
+            message: "Lift both arms once so I can check your framing."
+          }
+        : {
+            code: "start_exercise",
+            priority: "info",
+            message: getStartMessage(firstPrescription)
+          },
       "start",
       "ready",
       Date.now(),
       { force: true }
     );
+
+    if (!needsCalibration) {
+      exerciseIntroReleasedRef.current = true;
+    }
 
     try {
       await cameraRef.current?.startCamera();
@@ -1082,6 +1131,7 @@ export default function SessionRunner() {
 
   function resetSession() {
     clearAdvanceTimeout();
+    clearStartIntroTimeout();
     queueIndexRef.current = 0;
 
     if (activeQueueRef.current[0]) {
@@ -1805,24 +1855,24 @@ export default function SessionRunner() {
           <DebugPanel features={features} />
 
           <AiDebugPanel
-  runtime={{
-    phase,
-    repCount,
-    repTarget: currentPrescription?.repTarget ?? 0,
-    holdSeconds,
-    activeMetricValue,
-    engineStatus,
-    currentExercise: currentExerciseLabel,
-    overallProgress: overallProgressLabel,
-    lastEvent,
-    primaryIssue: lastPrimaryIssue,
-    detectedIssues: lastDetectedIssues,
-    failureReason: lastFailureReason,
-    aiRequestInFlight: aiRequestInFlightRef.current
-  }}
-  features={features}
-  aiDebug={lastAiDebug}
-/>
+            runtime={{
+              phase,
+              repCount,
+              repTarget: currentPrescription?.repTarget ?? 0,
+              holdSeconds,
+              activeMetricValue,
+              engineStatus,
+              currentExercise: currentExerciseLabel,
+              overallProgress: overallProgressLabel,
+              lastEvent,
+              primaryIssue: lastPrimaryIssue,
+              detectedIssues: lastDetectedIssues,
+              failureReason: lastFailureReason,
+              aiRequestInFlight: aiRequestInFlightRef.current
+            }}
+            features={features}
+            aiDebug={lastAiDebug}
+          />
         </div>
       )}
     </div>
