@@ -34,7 +34,7 @@ import { generateCoaching } from "@/lib/ai/llmCoach";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
-import type { CoachingDecision } from "@/lib/types/coaching";
+import type { CoachingDecision, CoachingCode } from "@/lib/types/coaching";
 import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
@@ -294,7 +294,6 @@ function isWeakGenericMessage(message: string): boolean {
   return (
     normalized === "tracking movement." ||
     normalized === "ready" ||
-    normalized === "begin when ready" ||
     normalized.includes("begin when ready") ||
     normalized.includes("move slowly and stay in control")
   );
@@ -361,6 +360,13 @@ function buildPassiveFramingBanner(
     tone: "good",
     message: "Framing looks good."
   };
+}
+
+function pickCode(
+  fallback: CoachingCode,
+  preferred?: CoachingDecision | null
+): CoachingCode {
+  return preferred?.code ?? fallback;
 }
 
 export default function SessionRunner() {
@@ -733,8 +739,6 @@ export default function SessionRunner() {
           });
 
           const calibrationRequired = isCalibrationExercise(activePrescription);
-          const calibrationComplete =
-            !calibrationRequired || sessionCalibrationCompleteRef.current;
 
           if (
             calibrationRequired &&
@@ -748,16 +752,16 @@ export default function SessionRunner() {
 
             const now = Date.now();
             updateDisplayedCoaching(
-  {
-    code: "good_rep",
-    priority: "encourage",
-    message: "Framing looks good. We can begin."
-  },
-  "start",
-  "ready",
-  now,
-  { force: true }
-);
+              {
+                code: "good_rep",
+                priority: "encourage",
+                message: "Framing looks good. We can begin."
+              },
+              "start",
+              "ready",
+              now,
+              { force: true }
+            );
           }
 
           const effectiveCalibrationComplete =
@@ -771,17 +775,17 @@ export default function SessionRunner() {
             if (introShownForExerciseRef.current !== activePrescription.id) {
               introShownForExerciseRef.current = activePrescription.id;
 
-            updateDisplayedCoaching(
-  {
-    code: "instruction",
-    priority: "info",
-    message: "I’m checking your framing. Lift both arms once."
-  },
-  "start",
-  "ready",
-  Date.now(),
-  { force: true }
-);
+              updateDisplayedCoaching(
+                {
+                  code: "start_exercise",
+                  priority: "info",
+                  message: "I’m checking your framing. Lift both arms once."
+                },
+                "start",
+                "ready",
+                Date.now(),
+                { force: true }
+              );
             }
           } else {
             setFramingBanner(
