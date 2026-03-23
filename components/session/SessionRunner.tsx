@@ -326,8 +326,8 @@ export default function SessionRunner() {
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [framingBanner, setFramingBanner] = useState<FramingBannerState>({
-    tone: "good",
-    message: "Framing looks good."
+    tone: "Warning",
+    message: "Camera is off."
   });
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
@@ -480,8 +480,8 @@ export default function SessionRunner() {
     setLastDetectedIssues([]);
     setLastFailureReason(null);
     setFramingBanner({
-      tone: "good",
-      message: "Framing looks good."
+      tone: "warning",
+      message: "Position Yourself in View."
     });
     resetDisplayController();
   }
@@ -510,6 +510,12 @@ export default function SessionRunner() {
     queueIndexRef.current = 0;
     prescriptionRef.current = null;
     resetExerciseState();
+
+    setFramingBanner({
+      tone: "warning",
+      message: "Camera is off."
+    });
+    
     setCoaching(createIdleCoaching());
   }
 
@@ -633,17 +639,22 @@ export default function SessionRunner() {
             averageBrightness: null
           });
 
-          if (!readiness.ready) {
-            setFramingBanner({
-              tone: "warning",
-              message: readiness.message
-            });
-          } else {
-            setFramingBanner({
-              tone: "good",
-              message: "Framing looks good."
-            });
-          }
+       if (!normalized.personDetected) {
+  setFramingBanner({
+    tone: "warning",
+    message: "Step into view so I can see you properly."
+  });
+} else if (!readiness.ready) {
+  setFramingBanner({
+    tone: "warning",
+    message: readiness.message
+  });
+} else {
+  setFramingBanner({
+    tone: "good",
+    message: "Framing looks good."
+  });
+}
 
           const now = Date.now();
           const orchestration = buildCoachingOrchestration({
