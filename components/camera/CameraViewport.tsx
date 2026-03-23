@@ -36,6 +36,17 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
     const streamRef = useRef<MediaStream | null>(null);
     const startingRef = useRef(false);
 
+    const onVideoReadyRef = useRef(onVideoReady);
+    const onCameraStopRef = useRef(onCameraStop);
+
+    useEffect(() => {
+      onVideoReadyRef.current = onVideoReady;
+    }, [onVideoReady]);
+
+    useEffect(() => {
+      onCameraStopRef.current = onCameraStop;
+    }, [onCameraStop]);
+
     const [cameraState, setCameraState] = useState<
       "idle" | "starting" | "running" | "error"
     >("idle");
@@ -62,8 +73,8 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
       startingRef.current = false;
       setCameraState("idle");
       setErrorMessage("");
-      onCameraStop?.();
-    }, [onCameraStop]);
+      onCameraStopRef.current?.();
+    }, []);
 
     const startCamera = useCallback(async () => {
       if (startingRef.current || cameraState === "running") return;
@@ -92,7 +103,9 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
 
         const video = videoRef.current;
         if (!video) {
-          for (const track of stream.getTracks()) track.stop();
+          for (const track of stream.getTracks()) {
+            track.stop();
+          }
           throw new Error("Video element is not available.");
         }
 
@@ -107,8 +120,8 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
         setCameraState("running");
         startingRef.current = false;
 
-        if (onVideoReady) {
-          await onVideoReady(video);
+        if (onVideoReadyRef.current) {
+          await onVideoReadyRef.current(video);
         }
       } catch (error) {
         startingRef.current = false;
@@ -117,7 +130,7 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
           error instanceof Error ? error.message : "Could not start the camera."
         );
       }
-    }, [cameraState, onVideoReady]);
+    }, [cameraState]);
 
     useImperativeHandle(
       ref,
@@ -131,9 +144,24 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
 
     useEffect(() => {
       return () => {
-        stopCamera();
+        if (streamRef.current) {
+          for (const track of streamRef.current.getTracks()) {
+            try {
+              track.stop();
+            } catch {}
+          }
+          streamRef.current = null;
+        }
+
+        const video = videoRef.current;
+        if (video) {
+          try {
+            video.pause();
+          } catch {}
+          video.srcObject = null;
+        }
       };
-    }, [stopCamera]);
+    }, []);
 
     const showOverlay = cameraState !== "running";
 
