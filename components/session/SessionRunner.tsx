@@ -185,7 +185,7 @@ function extractAiMessage(result: unknown): string | null {
   return null;
 }
 
-function extractAiDebug(result: unknown): any {
+function extractAiDebug(result: unknown): unknown {
   if (result && typeof result === "object" && "debug" in result) {
     return (result as { debug?: unknown }).debug ?? null;
   }
@@ -195,6 +195,47 @@ function extractAiDebug(result: unknown): any {
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, " ");
+}
+
+function isCalibrationExercise(prescription: ExercisePrescription | null): boolean {
+  if (!prescription) return false;
+
+  return (
+    prescription.id === "right-arm-raise" ||
+    prescription.id === "left-arm-raise" ||
+    prescription.id === "both-arm-raise"
+  );
+}
+
+function hasPassedArmRaiseCalibration(features: MovementFeatures): boolean {
+  const rightRaised =
+    features.rightWristAboveShoulder ||
+    (features.rightArmElevationDeg !== null && features.rightArmElevationDeg >= 55);
+
+  const leftRaised =
+    features.leftWristAboveShoulder ||
+    (features.leftArmElevationDeg !== null && features.leftArmElevationDeg >= 55);
+
+  return rightRaised && leftRaised;
+}
+
+function getStartMessage(prescription: ExercisePrescription | null): string {
+  if (!prescription) {
+    return "Stand facing the camera and get ready to begin.";
+  }
+
+  switch (prescription.id) {
+    case "right-arm-raise":
+      return "We are starting right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
+    case "left-arm-raise":
+      return "We are starting left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
+    case "both-arm-raise":
+      return "We are starting both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
+    case "sit-to-stand":
+      return "We are starting sit to stand. Stand up fully, then lower back down slowly.";
+    default:
+      return `We are starting ${prescription.name}. Move slowly and with control.`;
+  }
 }
 
 function getMessagePriority(
@@ -259,23 +300,67 @@ function isWeakGenericMessage(message: string): boolean {
   );
 }
 
-function getStartMessage(prescription: ExercisePrescription | null): string {
-  if (!prescription) {
-    return "Stand facing the camera and get ready to begin.";
+function shouldSuppressHoldCountdown(
+  currentMessage: string,
+  holdRemainingMs: number | null
+): boolean {
+  if (holdRemainingMs === null) return false;
+
+  const normalized = normalizeMessage(currentMessage).toLowerCase();
+  return !normalized.startsWith("hold ");
+}
+
+function buildPreCalibrationBanner(
+  readinessMessage: string,
+  personDetected: boolean
+): FramingBannerState {
+  if (!personDetected) {
+    return {
+      tone: "warning",
+      message: "Step into view so I can see you properly."
+    };
   }
 
-  switch (prescription.id) {
-    case "right-arm-raise":
-      return "We are starting right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
-    case "left-arm-raise":
-      return "We are starting left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
-    case "both-arm-raise":
-      return "We are starting both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
-    case "sit-to-stand":
-      return "We are starting sit to stand. Stand up fully, then lower back down slowly.";
-    default:
-      return `We are starting ${prescription.name}. Move slowly and with control.`;
+  if (
+    readinessMessage &&
+    readinessMessage !== "Framing looks good." &&
+    readinessMessage !== "You're well positioned."
+  ) {
+    return {
+      tone: "warning",
+      message: readinessMessage
+    };
   }
+
+  return {
+    tone: "warning",
+    message: "Lift both arms once so I can check your framing."
+  };
+}
+
+function buildPassiveFramingBanner(
+  readinessReady: boolean,
+  readinessMessage: string,
+  personDetected: boolean
+): FramingBannerState {
+  if (!personDetected) {
+    return {
+      tone: "warning",
+      message: "Step into view so I can see you properly."
+    };
+  }
+
+  if (!readinessReady) {
+    return {
+      tone: "warning",
+      message: readinessMessage
+    };
+  }
+
+  return {
+    tone: "good",
+    message: "Framing looks good."
+  };
 }
 
 export default function SessionRunner() {
@@ -304,7 +389,10 @@ export default function SessionRunner() {
   const displayMessagePriorityRef = useRef<number>(0);
   const lastDisplayedMessageRef = useRef<string>("");
   const lastDisplayedHoldSecondRef = useRef<number | null>(null);
+
   const sessionStartedRef = useRef(false);
+  const sessionCalibrationCompleteRef = useRef(false);
+  const introShownForExerciseRef = useRef<string | null>(null);
 
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -339,16 +427,16 @@ export default function SessionRunner() {
   const [lastPrimaryIssue, setLastPrimaryIssue] = useState("idle");
   const [lastDetectedIssues, setLastDetectedIssues] = useState<string[]>([]);
   const [lastFailureReason, setLastFailureReason] = useState<string | null>(null);
-  const [lastAiDebug, setLastAiDebug] = useState<any>(null);
+  const [lastAiDebug, setLastAiDebug] = useState<unknown>(null);
 
   useVoiceCoaching(coaching.message, {
-    enabled: voiceEnabled,
+    enabled: voiceEnabled && !realVoiceEnabled,
     cooldownMs: 3200,
     rate: 0.94
   });
 
   useRealVoiceCoaching(coaching.message, {
-    enabled: false,
+    enabled: voiceEnabled && realVoiceEnabled,
     cooldownMs: 3200,
     voice: "marin"
   });
@@ -424,7 +512,7 @@ export default function SessionRunner() {
     const message = normalizeMessage(decision.message);
     if (!message) return;
 
-    if (sessionStartedRef.current && isWeakGenericMessage(message)) {
+    if (sessionStartedRef.current && isWeakGenericMessage(message) && !options?.force) {
       return;
     }
 
@@ -464,7 +552,7 @@ export default function SessionRunner() {
     });
   }
 
-  function resetExerciseState() {
+  function resetExerciseRuntimeState() {
     repStateRef.current = createInitialRepState();
     featureHistoryRef.current.clear();
     advancePendingRef.current = false;
@@ -476,16 +564,17 @@ export default function SessionRunner() {
     setPhase("ready");
     setHoldRemainingMs(null);
     setActiveMetricValue(null);
-    setFramingCalibrated(false);
-    setFramingBanner({
-      tone: "warning",
-      message: "Position yourself in view."
-    });
     setLastEvent("idle");
     setLastPrimaryIssue("idle");
     setLastDetectedIssues([]);
     setLastFailureReason(null);
     resetDisplayController();
+  }
+
+  function resetSessionCalibrationState() {
+    sessionCalibrationCompleteRef.current = false;
+    introShownForExerciseRef.current = null;
+    setFramingCalibrated(false);
   }
 
   function stopTracking() {
@@ -500,7 +589,12 @@ export default function SessionRunner() {
     videoRef.current = null;
 
     sessionStartedRef.current = false;
+    activeQueueRef.current = [];
+    queueIndexRef.current = 0;
+    prescriptionRef.current = null;
+
     resetDisplayController();
+    resetSessionCalibrationState();
 
     setEngineStatus("idle");
     setEngineError("");
@@ -508,16 +602,13 @@ export default function SessionRunner() {
     setFeatures(createEmptyFeatures());
     setSessionStarted(false);
     setSessionComplete(false);
-    activeQueueRef.current = [];
-    queueIndexRef.current = 0;
-    prescriptionRef.current = null;
-    setFramingCalibrated(false);
     setFramingBanner({
       tone: "warning",
       message: "Camera is off."
     });
-    resetExerciseState();
     setCoaching(createIdleCoaching());
+
+    resetExerciseRuntimeState();
   }
 
   async function beginTracking(video: HTMLVideoElement) {
@@ -527,7 +618,7 @@ export default function SessionRunner() {
       videoRef.current = video;
       trackingActiveRef.current = true;
 
-      resetExerciseState();
+      resetExerciseRuntimeState();
 
       if (!detectorRef.current) {
         detectorRef.current = await createPoseDetector();
@@ -542,7 +633,12 @@ export default function SessionRunner() {
         const detector = detectorRef.current;
         const activePrescription = prescriptionRef.current;
 
-        if (!liveVideo || !detector || !activePrescription) return;
+        if (!liveVideo || !detector || !activePrescription) {
+          if (trackingActiveRef.current) {
+            rafRef.current = window.requestAnimationFrame(loop);
+          }
+          return;
+        }
 
         if (
           liveVideo.readyState < 2 ||
@@ -555,11 +651,9 @@ export default function SessionRunner() {
 
         try {
           const poses = await detector.estimatePoses(liveVideo);
-
           if (!trackingActiveRef.current) return;
 
           const pose = poses[0] ?? null;
-
           const normalized = normalizePoseFrame(
             pose,
             liveVideo.videoWidth || 1,
@@ -635,46 +729,79 @@ export default function SessionRunner() {
             frame: normalized,
             features: smoothedFeatures,
             prescription: activePrescription,
-            hasCompletedRaiseTest: framingCalibrated,
             averageBrightness: null
           });
 
-          const needsArmRaiseCalibration =
-            activePrescription.id === "right-arm-raise" ||
-            activePrescription.id === "left-arm-raise" ||
-            activePrescription.id === "both-arm-raise";
+          const calibrationRequired = isCalibrationExercise(activePrescription);
+          const calibrationComplete =
+            !calibrationRequired || sessionCalibrationCompleteRef.current;
 
           if (
-            needsArmRaiseCalibration &&
-            !framingCalibrated &&
-            readiness.ready
+            calibrationRequired &&
+            !sessionCalibrationCompleteRef.current &&
+            normalized.personDetected &&
+            readiness.checks.upperBodyVisible &&
+            hasPassedArmRaiseCalibration(smoothedFeatures)
           ) {
+            sessionCalibrationCompleteRef.current = true;
             setFramingCalibrated(true);
+
+            const now = Date.now();
+            updateDisplayedCoaching(
+              {
+                code: "framing_complete",
+                priority: "encourage",
+                message: "Framing looks good. We can begin."
+              },
+              "start",
+              "ready",
+              now,
+              { force: true }
+            );
           }
 
-          if (!normalized.personDetected) {
-            setFramingBanner({
-              tone: "warning",
-              message: "Step into view so I can see you properly."
-            });
-          } else if (!framingCalibrated && readiness.issue === "needs_raise_test") {
-            setFramingBanner({
-              tone: "warning",
-              message: "Lift both arms once so I can check your framing."
-            });
-          } else if (!readiness.ready && readiness.issue !== "needs_raise_test") {
-            setFramingBanner({
-              tone: "warning",
-              message: readiness.message
-            });
+          const effectiveCalibrationComplete =
+            !calibrationRequired || sessionCalibrationCompleteRef.current;
+
+          if (!effectiveCalibrationComplete) {
+            setFramingBanner(
+              buildPreCalibrationBanner(readiness.message, normalized.personDetected)
+            );
+
+            if (introShownForExerciseRef.current !== activePrescription.id) {
+              introShownForExerciseRef.current = activePrescription.id;
+
+              updateDisplayedCoaching(
+                {
+                  code: "framing_check",
+                  priority: "info",
+                  message: "I’m checking your framing. Lift both arms once."
+                },
+                "start",
+                "ready",
+                Date.now(),
+                { force: true }
+              );
+            }
           } else {
-            setFramingBanner({
-              tone: "good",
-              message: "Framing looks good."
-            });
+            setFramingBanner(
+              buildPassiveFramingBanner(
+                readiness.ready,
+                readiness.message,
+                normalized.personDetected
+              )
+            );
           }
 
           const now = Date.now();
+
+          if (!effectiveCalibrationComplete) {
+            if (trackingActiveRef.current) {
+              rafRef.current = window.requestAnimationFrame(loop);
+            }
+            return;
+          }
+
           const orchestration = buildCoachingOrchestration({
             event,
             output,
@@ -697,44 +824,53 @@ export default function SessionRunner() {
             detectedIssues: rehabState.detectedIssues
           });
 
-          if (guidedMessage) {
-            const effectiveGuidedMessage =
-              !framingCalibrated &&
-              needsArmRaiseCalibration &&
-              event === "start"
-                ? "Hold still while I check your framing, then we will begin."
-                : guidedMessage;
+          const holdSecond =
+            output.holdRemainingMs !== null
+              ? Math.max(1, Math.ceil(output.holdRemainingMs / 1000))
+              : null;
 
+          if (guidedMessage) {
             const guidedDecision: CoachingDecision = {
               code: orchestration.decision.code,
               priority: orchestration.decision.priority,
-              message: effectiveGuidedMessage
+              message: guidedMessage
             };
 
-            const holdSecond =
-              output.holdRemainingMs !== null
-                ? Math.max(1, Math.ceil(output.holdRemainingMs / 1000))
-                : null;
-
-            updateDisplayedCoaching(guidedDecision, event, output.repState.phase, now, {
-              force:
-                event === "rep_complete" ||
-                event === "rep_failed" ||
-                event === "start" ||
-                event === "exercise_complete",
-              holdSecond
-            });
+            if (!shouldSuppressHoldCountdown(coaching.message, output.holdRemainingMs)) {
+              updateDisplayedCoaching(guidedDecision, event, output.repState.phase, now, {
+                force:
+                  event === "rep_complete" ||
+                  event === "rep_failed" ||
+                  event === "start" ||
+                  event === "exercise_complete",
+                holdSecond
+              });
+            } else if (event !== "idle") {
+              updateDisplayedCoaching(guidedDecision, event, output.repState.phase, now, {
+                force:
+                  event === "rep_complete" ||
+                  event === "rep_failed" ||
+                  event === "start" ||
+                  event === "exercise_complete"
+              });
+            }
           } else if (orchestration.shouldUpdatePanel) {
-            updateDisplayedCoaching(
-              orchestration.decision,
-              event,
-              output.repState.phase,
-              now
-            );
+            const decisionToShow =
+              orchestration.trigger === "countdown" &&
+              shouldSuppressHoldCountdown(coaching.message, output.holdRemainingMs)
+                ? null
+                : orchestration.decision;
+
+            if (decisionToShow) {
+              updateDisplayedCoaching(decisionToShow, event, output.repState.phase, now, {
+                holdSecond:
+                  orchestration.trigger === "countdown" ? holdSecond : undefined
+              });
+            }
           }
 
           const shouldAskAi =
-            framingCalibrated &&
+            aiCoachingEnabled &&
             orchestration.trigger === "ai" &&
             orchestration.shouldSpeak &&
             !aiRequestInFlightRef.current &&
@@ -751,6 +887,7 @@ export default function SessionRunner() {
             generateCoaching(rehabState)
               .then((result) => {
                 if (!result) return;
+                if (aiEventTokenRef.current !== eventToken) return;
 
                 const aiDebug = extractAiDebug(result);
                 if (aiDebug) {
@@ -759,7 +896,6 @@ export default function SessionRunner() {
 
                 const aiMessage = extractAiMessage(result);
                 if (!aiMessage) return;
-                if (aiEventTokenRef.current !== eventToken) return;
 
                 const aiDecision: CoachingDecision = {
                   code: orchestration.decision.code,
@@ -812,8 +948,20 @@ export default function SessionRunner() {
               exerciseAdvanceTimeoutRef.current = window.setTimeout(() => {
                 queueIndexRef.current = nextIndex;
                 prescriptionRef.current = nextExercise.prescription;
-                advancePendingRef.current = false;
-                resetExerciseState();
+                introShownForExerciseRef.current = null;
+                resetExerciseRuntimeState();
+
+                updateDisplayedCoaching(
+                  {
+                    code: "start_exercise",
+                    priority: "info",
+                    message: getStartMessage(nextExercise.prescription)
+                  },
+                  "start",
+                  "ready",
+                  Date.now(),
+                  { force: true }
+                );
               }, 2200);
             } else {
               setSessionComplete(true);
@@ -839,6 +987,9 @@ export default function SessionRunner() {
             message.toLowerCase().includes("aborted") ||
             message.toLowerCase().includes("abort")
           ) {
+            if (trackingActiveRef.current) {
+              rafRef.current = window.requestAnimationFrame(loop);
+            }
             return;
           }
 
@@ -888,13 +1039,19 @@ export default function SessionRunner() {
     queueIndexRef.current = 0;
     prescriptionRef.current = combinedQueue[0].prescription;
 
+    resetDisplayController();
+    resetExerciseRuntimeState();
+    resetSessionCalibrationState();
+
     setSessionStarted(true);
     sessionStartedRef.current = true;
     setSessionComplete(false);
     setSelectorCollapsed(true);
     setStatusCollapsed(false);
-    resetDisplayController();
-    resetExerciseState();
+    setFramingBanner({
+      tone: "warning",
+      message: "Position yourself in view."
+    });
 
     updateDisplayedCoaching(
       {
@@ -910,7 +1067,9 @@ export default function SessionRunner() {
 
     try {
       await cameraRef.current?.startCamera();
-    } catch {}
+    } catch {
+      stopTracking();
+    }
   }
 
   function endSession() {
@@ -926,7 +1085,13 @@ export default function SessionRunner() {
     }
 
     setSessionComplete(false);
-    resetExerciseState();
+    resetExerciseRuntimeState();
+    resetSessionCalibrationState();
+
+    setFramingBanner({
+      tone: "warning",
+      message: sessionStarted ? "Position yourself in view." : "Camera is off."
+    });
 
     updateDisplayedCoaching(
       sessionStarted
@@ -1649,7 +1814,8 @@ export default function SessionRunner() {
               primaryIssue: lastPrimaryIssue,
               detectedIssues: lastDetectedIssues,
               failureReason: lastFailureReason,
-              aiRequestInFlight: aiRequestInFlightRef.current
+              aiRequestInFlight: aiRequestInFlightRef.current,
+              framingCalibrated
             }}
             features={features}
             aiDebug={lastAiDebug}
