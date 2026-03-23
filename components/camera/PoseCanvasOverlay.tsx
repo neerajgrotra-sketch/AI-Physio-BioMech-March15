@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import type { PoseFrame, PoseKeypoint } from "@/lib/types/pose";
+import type { PoseFrame } from "@/lib/types/pose";
 
 type Props = {
   frame: PoseFrame | null;
@@ -10,6 +10,8 @@ type Props = {
   height?: number;
   className?: string;
 };
+
+type FrameKeypoint = PoseFrame["keypoints"] extends Array<infer T> ? T : never;
 
 const CONNECTIONS: Array<[string, string]> = [
   ["left_shoulder", "right_shoulder"],
@@ -26,12 +28,12 @@ const CONNECTIONS: Array<[string, string]> = [
   ["right_knee", "right_ankle"]
 ];
 
-function getKeypoint(frame: PoseFrame | null, name: string): PoseKeypoint | null {
+function getKeypoint(frame: PoseFrame | null, name: string): FrameKeypoint | null {
   if (!frame?.keypoints) return null;
   return frame.keypoints.find((kp) => kp.name === name) ?? null;
 }
 
-function isVisible(keypoint: PoseKeypoint | null, minScore = 0.25): boolean {
+function isVisible(keypoint: FrameKeypoint | null, minScore = 0.25): boolean {
   if (!keypoint) return false;
   return (keypoint.score ?? 0) >= minScore;
 }
@@ -70,7 +72,6 @@ export default function PoseCanvasOverlay({
       return;
     }
 
-    // Mirror overlay to match mirrored camera feed
     ctx.save();
     ctx.translate(renderWidth, 0);
     ctx.scale(-1, 1);
@@ -86,8 +87,8 @@ export default function PoseCanvasOverlay({
       if (!isVisible(a) || !isVisible(b)) continue;
 
       ctx.beginPath();
-      ctx.moveTo(a!.x * renderWidth, a!.y * renderHeight);
-      ctx.lineTo(b!.x * renderWidth, b!.y * renderHeight);
+      ctx.moveTo(a.x * renderWidth, a.y * renderHeight);
+      ctx.lineTo(b.x * renderWidth, b.y * renderHeight);
       ctx.stroke();
     }
 
