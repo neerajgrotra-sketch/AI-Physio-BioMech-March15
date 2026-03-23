@@ -1805,25 +1805,24 @@ export default function SessionRunner() {
           <DebugPanel features={features} />
 
           <AiDebugPanel
-            runtime={{
-              phase,
-              repCount,
-              repTarget: currentPrescription?.repTarget ?? 0,
-              holdSeconds,
-              activeMetricValue,
-              engineStatus,
-              currentExercise: currentExerciseLabel,
-              overallProgress: overallProgressLabel,
-              lastEvent,
-              primaryIssue: lastPrimaryIssue,
-              detectedIssues: lastDetectedIssues,
-              failureReason: lastFailureReason,
-              aiRequestInFlight: aiRequestInFlightRef.current,
-              framingCalibrated
-            }}
-            features={features}
-            aiDebug={lastAiDebug}
-          />
+  runtime={{
+    phase,
+    repCount,
+    repTarget: currentPrescription?.repTarget ?? 0,
+    holdSeconds,
+    activeMetricValue,
+    engineStatus,
+    currentExercise: currentExerciseLabel,
+    overallProgress: overallProgressLabel,
+    lastEvent,
+    primaryIssue: lastPrimaryIssue,
+    detectedIssues: lastDetectedIssues,
+    failureReason: lastFailureReason,
+    aiRequestInFlight: aiRequestInFlightRef.current
+  }}
+  features={features}
+  aiDebug={lastAiDebug}
+/>
         </div>
       )}
     </div>
