@@ -261,7 +261,8 @@ function isWeakGenericMessage(message: string): boolean {
     normalized === "tracking movement." ||
     normalized === "ready" ||
     normalized === "begin when ready" ||
-    normalized.includes("begin when ready")
+    normalized.includes("begin when ready") ||
+    normalized.includes("move slowly and stay in control")
   );
 }
 
@@ -1387,16 +1388,47 @@ export default function SessionRunner() {
             </div>
           </div>
 
-          <div
-            style={{
-              marginTop: 12,
-              fontSize: 13,
-              color: "#aab6d3",
-              lineHeight: 1.5
-            }}
-          >
-            {getFramingText(currentPrescription)}
-          </div>
+          <div style={{ position: "relative", width: "100%", maxWidth: 720 }}>
+
+  {/* ✅ Framing banner */}
+  {framingWarning && (
+    <div
+      style={{
+        marginBottom: 10,
+        padding: "8px 12px",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: 600,
+        background: "rgba(255, 180, 80, 0.15)",
+        color: "#ffcc80",
+        border: "1px solid rgba(255,180,80,0.4)"
+      }}
+    >
+      {framingWarning}
+    </div>
+  )}
+
+  {!framingWarning && (
+    <div
+      style={{
+        marginBottom: 10,
+        padding: "8px 12px",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: 600,
+        background: "rgba(100, 220, 150, 0.15)",
+        color: "#9be7b0",
+        border: "1px solid rgba(100,220,150,0.4)"
+      }}
+    >
+      Framing looks good
+    </div>
+  )}
+
+  <CameraViewport ... />
+
+  <PoseCanvasOverlay ... />
+</div>
 
           {engineError && (
             <p style={{ color: "#ff8f8f", marginBottom: 0, marginTop: 12 }}>
@@ -1408,7 +1440,7 @@ export default function SessionRunner() {
         <CoachingPanel
           title="Live Coaching"
           message={coaching.message}
-          secondaryMessage={framingWarning}
+          secondaryMessage={null}
           phase={phase}
           repCount={repCount}
           repTarget={currentPrescription?.repTarget ?? 0}
