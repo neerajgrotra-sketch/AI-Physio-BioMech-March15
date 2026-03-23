@@ -226,15 +226,15 @@ function getStartMessage(prescription: ExercisePrescription | null): string {
 
   switch (prescription.id) {
     case "right-arm-raise":
-      return "We are starting right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
+      return "Right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
     case "left-arm-raise":
-      return "We are starting left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
+      return "Left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
     case "both-arm-raise":
-      return "We are starting both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
+      return "Both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
     case "sit-to-stand":
-      return "We are starting sit to stand. Stand up fully, then lower back down slowly.";
+      return "Sit to stand. Stand up fully, then lower back down slowly.";
     default:
-      return `We are starting ${prescription.name}. Move slowly and with control.`;
+      return `${prescription.name}. Move slowly and with control.`;
   }
 }
 
@@ -264,15 +264,6 @@ function getMessagePriority(
     return 60;
   }
 
-  if (
-    normalized.includes("ready") ||
-    normalized.includes("tracking") ||
-    normalized.includes("begin when ready") ||
-    normalized.includes("move slowly and stay in control")
-  ) {
-    return 10;
-  }
-
   return 40;
 }
 
@@ -282,10 +273,10 @@ function getMessageLockMs(message: string, event: RehabEvent): number {
   if (event === "exercise_complete") return 2600;
   if (event === "rep_failed") return 2400;
   if (event === "rep_complete") return 1800;
-  if (event === "start") return 2200;
+  if (event === "start") return 2600;
   if (normalized.startsWith("hold")) return 900;
 
-  return 1400;
+  return 1600;
 }
 
 function isWeakGenericMessage(message: string): boolean {
@@ -432,13 +423,13 @@ export default function SessionRunner() {
 
   useVoiceCoaching(coaching.message, {
     enabled: voiceEnabled && !realVoiceEnabled,
-    cooldownMs: 3200,
-    rate: 0.92
+    cooldownMs: 3600,
+    rate: 0.88
   });
 
   useRealVoiceCoaching(coaching.message, {
     enabled: voiceEnabled && realVoiceEnabled,
-    cooldownMs: 3200,
+    cooldownMs: 3600,
     voice: "marin"
   });
 
@@ -515,6 +506,7 @@ export default function SessionRunner() {
     options?: {
       force?: boolean;
       holdSecond?: number | null;
+      lockMsOverride?: number;
     }
   ) {
     const message = normalizeMessage(decision.message);
@@ -525,7 +517,7 @@ export default function SessionRunner() {
     }
 
     const priority = getMessagePriority(message, event, phaseValue);
-    const lockMs = getMessageLockMs(message, event);
+    const lockMs = options?.lockMsOverride ?? getMessageLockMs(message, event);
     const currentPriority = displayMessagePriorityRef.current;
     const displayLocked = now < displayMessageUntilRef.current;
     const sameMessage = message === lastDisplayedMessageRef.current;
@@ -560,7 +552,7 @@ export default function SessionRunner() {
     });
   }
 
-  function releaseExerciseIntro(prescription: ExercisePrescription | null, delayMs = 900) {
+  function releaseExerciseIntro(prescription: ExercisePrescription | null, delayMs = 1200) {
     if (!prescription) return;
     if (exerciseIntroReleasedRef.current) return;
 
@@ -577,7 +569,7 @@ export default function SessionRunner() {
         "start",
         "ready",
         Date.now(),
-        { force: true }
+        { force: true, lockMsOverride: 3200 }
       );
     }, delayMs);
   }
@@ -776,7 +768,6 @@ export default function SessionRunner() {
             sessionCalibrationCompleteRef.current = true;
             setFramingCalibrated(true);
 
-            const now = Date.now();
             updateDisplayedCoaching(
               {
                 code: "good_rep",
@@ -785,11 +776,11 @@ export default function SessionRunner() {
               },
               "start",
               "ready",
-              now,
-              { force: true }
+              Date.now(),
+              { force: true, lockMsOverride: 2200 }
             );
 
-            releaseExerciseIntro(activePrescription, 900);
+            releaseExerciseIntro(activePrescription, 1300);
           }
 
           const effectiveCalibrationComplete =
@@ -812,7 +803,7 @@ export default function SessionRunner() {
                 "start",
                 "ready",
                 Date.now(),
-                { force: true }
+                { force: true, lockMsOverride: 5000 }
               );
             }
 
@@ -832,6 +823,17 @@ export default function SessionRunner() {
 
           if (!calibrationRequired && !exerciseIntroReleasedRef.current) {
             releaseExerciseIntro(activePrescription, 0);
+          }
+
+          const introStillLocked =
+            Date.now() < displayMessageUntilRef.current &&
+            lastDisplayedMessageRef.current === normalizeMessage(getStartMessage(activePrescription));
+
+          if (introStillLocked) {
+            if (trackingActiveRef.current) {
+              rafRef.current = window.requestAnimationFrame(loop);
+            }
+            return;
           }
 
           const now = Date.now();
@@ -975,7 +977,7 @@ export default function SessionRunner() {
                 "exercise_complete",
                 output.repState.phase,
                 Date.now(),
-                { force: true }
+                { force: true, lockMsOverride: 2600 }
               );
 
               clearAdvanceTimeout();
@@ -996,7 +998,7 @@ export default function SessionRunner() {
                     "start",
                     "ready",
                     Date.now(),
-                    { force: true }
+                    { force: true, lockMsOverride: 5000 }
                   );
                 } else {
                   releaseExerciseIntro(nextExercise.prescription, 0);
@@ -1013,7 +1015,7 @@ export default function SessionRunner() {
                 "exercise_complete",
                 output.repState.phase,
                 Date.now(),
-                { force: true }
+                { force: true, lockMsOverride: 2600 }
               );
             }
           }
@@ -1111,7 +1113,7 @@ export default function SessionRunner() {
       "start",
       "ready",
       Date.now(),
-      { force: true }
+      { force: true, lockMsOverride: needsCalibration ? 5000 : 3200 }
     );
 
     if (!needsCalibration) {
@@ -1185,14 +1187,7 @@ export default function SessionRunner() {
 
   return (
     <div style={{ marginTop: 12 }}>
-      <h1
-        style={{
-          marginTop: 0,
-          marginBottom: 18,
-          fontSize: 28,
-          lineHeight: 1.2
-        }}
-      >
+      <h1 style={{ marginTop: 0, marginBottom: 18, fontSize: 28, lineHeight: 1.2 }}>
         AI Physio BioMech Session Runner
       </h1>
 
