@@ -29,7 +29,7 @@ export type CoachingOrchestratorResult = {
   stickyMs: number;
 };
 
-const SPEECH_COOLDOWN_MS = 1400;
+const SPEECH_COOLDOWN_MS = 1800;
 
 function buildCountdownDecision(holdRemainingMs: number): CoachingDecision {
   const seconds = Math.max(1, Math.ceil(holdRemainingMs / 1000));
@@ -85,16 +85,6 @@ export function buildCoachingOrchestration(
     aiEnabled
   } = input;
 
-  if (output.holdRemainingMs !== null) {
-    return {
-      shouldUpdatePanel: true,
-      shouldSpeak: false,
-      trigger: "countdown",
-      decision: buildCountdownDecision(output.holdRemainingMs),
-      stickyMs: 0
-    };
-  }
-
   const deterministic = buildCoachingDecision(output, prescription);
   const cooldownActive = shouldRespectCooldown(event, nowMs, lastSpokenAtMs);
   const usefulPhaseChange = isPhaseTransitionUseful(previousPhase, currentPhase);
@@ -108,7 +98,7 @@ export function buildCoachingOrchestration(
         ...deterministic,
         message: `${deterministic.message} Pause and reset before trying again.`
       },
-      stickyMs: 4000
+      stickyMs: 2800
     };
   }
 
@@ -131,7 +121,11 @@ export function buildCoachingOrchestration(
       shouldUpdatePanel: true,
       shouldSpeak: true,
       trigger: aiEnabled ? "ai" : "deterministic",
-      decision: deterministic,
+      decision: {
+        code: "exercise_complete",
+        priority: "encourage",
+        message: deterministic.message
+      },
       stickyMs: 2600
     };
   }
@@ -142,7 +136,17 @@ export function buildCoachingOrchestration(
       shouldSpeak: !cooldownActive,
       trigger: aiEnabled ? "ai" : "deterministic",
       decision: deterministic,
-      stickyMs: 1800
+      stickyMs: 2400
+    };
+  }
+
+  if (output.holdRemainingMs !== null && !usefulPhaseChange) {
+    return {
+      shouldUpdatePanel: true,
+      shouldSpeak: false,
+      trigger: "countdown",
+      decision: buildCountdownDecision(output.holdRemainingMs),
+      stickyMs: 0
     };
   }
 
@@ -152,14 +156,14 @@ export function buildCoachingOrchestration(
       shouldSpeak: !cooldownActive,
       trigger: "deterministic",
       decision: deterministic,
-      stickyMs: currentPhase === "holding" ? 1200 : 900
+      stickyMs: currentPhase === "holding" ? 1400 : 1200
     };
   }
 
   return {
-    shouldUpdatePanel: true,
+    shouldUpdatePanel: false,
     shouldSpeak: false,
-    trigger: "deterministic",
+    trigger: "none",
     decision: deterministic,
     stickyMs: 0
   };
