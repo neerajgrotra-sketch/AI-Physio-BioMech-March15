@@ -54,6 +54,11 @@ type SessionPreviewData = {
   totalReps: number;
 };
 
+type FramingBannerState = {
+  tone: "good" | "warning";
+  message: string;
+};
+
 function createEmptyFeatures(): MovementFeatures {
   return {
     posture: "unknown",
@@ -165,18 +170,6 @@ function buildSessionPreviewData(
   };
 }
 
-function getFramingText(prescription: ExercisePrescription | null): string {
-  if (!prescription) {
-    return "Stand or sit centered in frame with your upper body clearly visible.";
-  }
-
-  if (prescription.id === "sit-to-stand") {
-    return "Frame your full body and chair clearly, with hips and knees visible.";
-  }
-
-  return "Stand or sit centered in frame with your upper body and both arms visible.";
-}
-
 function extractAiMessage(result: unknown): string | null {
   if (typeof result === "string") return result;
 
@@ -220,11 +213,11 @@ function getMessagePriority(
   if (phase === "lowering") return 65;
 
   if (
-    normalized.includes("lift slowly") ||
-    normalized.includes("lower slowly") ||
+    normalized.includes("lift") ||
+    normalized.includes("lower") ||
     normalized.includes("reset") ||
-    normalized.includes("hold steady") ||
-    normalized.includes("stay in control") ||
+    normalized.includes("stay tall") ||
+    normalized.includes("shoulders level") ||
     normalized.includes("continue with")
   ) {
     return 60;
@@ -233,7 +226,8 @@ function getMessagePriority(
   if (
     normalized.includes("ready") ||
     normalized.includes("tracking") ||
-    normalized.includes("begin when ready")
+    normalized.includes("begin when ready") ||
+    normalized.includes("move slowly and stay in control")
   ) {
     return 10;
   }
@@ -248,7 +242,6 @@ function getMessageLockMs(message: string, event: RehabEvent): number {
   if (event === "rep_failed") return 2400;
   if (event === "rep_complete") return 1800;
   if (event === "start") return 2200;
-
   if (normalized.startsWith("hold")) return 900;
 
   return 1400;
@@ -264,6 +257,25 @@ function isWeakGenericMessage(message: string): boolean {
     normalized.includes("begin when ready") ||
     normalized.includes("move slowly and stay in control")
   );
+}
+
+function getStartMessage(prescription: ExercisePrescription | null): string {
+  if (!prescription) {
+    return "Stand facing the camera and get ready to begin.";
+  }
+
+  switch (prescription.id) {
+    case "right-arm-raise":
+      return "We are starting right arm raises. Lift your right arm slowly to shoulder height.";
+    case "left-arm-raise":
+      return "We are starting left arm raises. Lift your left arm slowly to shoulder height.";
+    case "both-arm-raise":
+      return "We are starting both arm raises. Lift both arms evenly to shoulder height.";
+    case "sit-to-stand":
+      return "We are starting sit to stand. Stand up fully, then lower back down slowly.";
+    default:
+      return `We are starting ${prescription.name}. Move slowly and with control.`;
+  }
 }
 
 export default function SessionRunner() {
@@ -313,7 +325,10 @@ export default function SessionRunner() {
   const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
-  const [framingWarning, setFramingWarning] = useState<string | null>(null);
+  const [framingBanner, setFramingBanner] = useState<FramingBannerState>({
+    tone: "good",
+    message: "Framing looks good."
+  });
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
@@ -460,11 +475,14 @@ export default function SessionRunner() {
     setPhase("ready");
     setHoldRemainingMs(null);
     setActiveMetricValue(null);
-    setFramingWarning(null);
     setLastEvent("idle");
     setLastPrimaryIssue("idle");
     setLastDetectedIssues([]);
     setLastFailureReason(null);
+    setFramingBanner({
+      tone: "good",
+      message: "Framing looks good."
+    });
     resetDisplayController();
   }
 
@@ -491,7 +509,6 @@ export default function SessionRunner() {
     activeQueueRef.current = [];
     queueIndexRef.current = 0;
     prescriptionRef.current = null;
-    setFramingWarning(null);
     resetExerciseState();
     setCoaching(createIdleCoaching());
   }
@@ -617,9 +634,15 @@ export default function SessionRunner() {
           });
 
           if (!readiness.ready) {
-            setFramingWarning(`Warning: ${readiness.message}`);
+            setFramingBanner({
+              tone: "warning",
+              message: readiness.message
+            });
           } else {
-            setFramingWarning(null);
+            setFramingBanner({
+              tone: "good",
+              message: "Framing looks good."
+            });
           }
 
           const now = Date.now();
@@ -840,7 +863,7 @@ export default function SessionRunner() {
       {
         code: "start_exercise",
         priority: "info",
-        message: "Session started. Please step into view."
+        message: getStartMessage(combinedQueue[0].prescription)
       },
       "start",
       "ready",
@@ -1365,70 +1388,47 @@ export default function SessionRunner() {
             </div>
           </div>
 
-          <div style={{ position: "relative", width: "100%", maxWidth: 720 }}>
-            <CameraViewport
-              ref={cameraRef}
-              onVideoReady={beginTracking}
-              onCameraStop={stopTracking}
-              showStartButton={false}
-            />
-
+          <div style={{ width: "100%", maxWidth: 720 }}>
             <div
               style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                width: "100%",
-                maxWidth: 640,
-                height: 420,
-                pointerEvents: "none"
+                marginBottom: 10,
+                padding: "8px 12px",
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                background:
+                  framingBanner.tone === "good"
+                    ? "rgba(100,220,150,0.15)"
+                    : "rgba(255,180,80,0.15)",
+                color: framingBanner.tone === "good" ? "#9be7b0" : "#ffcc80",
+                border:
+                  framingBanner.tone === "good"
+                    ? "1px solid rgba(100,220,150,0.4)"
+                    : "1px solid rgba(255,180,80,0.4)"
               }}
             >
-              <PoseCanvasOverlay frame={frame} width={640} height={420} />
+              {framingBanner.message}
+            </div>
+
+            <div style={{ position: "relative", width: "100%" }}>
+              <CameraViewport
+                ref={cameraRef}
+                onVideoReady={beginTracking}
+                onCameraStop={stopTracking}
+                showStartButton={false}
+              />
+
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  pointerEvents: "none"
+                }}
+              >
+                <PoseCanvasOverlay frame={frame} />
+              </div>
             </div>
           </div>
-
-          <div style={{ position: "relative", width: "100%", maxWidth: 720 }}>
-
-  {/* ✅ Framing banner */}
-  {framingWarning && (
-    <div
-      style={{
-        marginBottom: 10,
-        padding: "8px 12px",
-        borderRadius: 8,
-        fontSize: 13,
-        fontWeight: 600,
-        background: "rgba(255, 180, 80, 0.15)",
-        color: "#ffcc80",
-        border: "1px solid rgba(255,180,80,0.4)"
-      }}
-    >
-      {framingWarning}
-    </div>
-  )}
-
-  {!framingWarning && (
-    <div
-      style={{
-        marginBottom: 10,
-        padding: "8px 12px",
-        borderRadius: 8,
-        fontSize: 13,
-        fontWeight: 600,
-        background: "rgba(100, 220, 150, 0.15)",
-        color: "#9be7b0",
-        border: "1px solid rgba(100,220,150,0.4)"
-      }}
-    >
-      Framing looks good
-    </div>
-  )}
-
-  <CameraViewport ... />
-
-  <PoseCanvasOverlay ... />
-</div>
 
           {engineError && (
             <p style={{ color: "#ff8f8f", marginBottom: 0, marginTop: 12 }}>
