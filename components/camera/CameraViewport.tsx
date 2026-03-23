@@ -34,7 +34,7 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
   ) {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const startInFlightRef = useRef(false);
+    const startingRef = useRef(false);
 
     const [cameraState, setCameraState] = useState<
       "idle" | "starting" | "running" | "error"
@@ -48,29 +48,27 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
             track.stop();
           } catch {}
         }
+        streamRef.current = null;
       }
 
-      streamRef.current = null;
-
-      if (videoRef.current) {
+      const video = videoRef.current;
+      if (video) {
         try {
-          videoRef.current.pause();
+          video.pause();
         } catch {}
-        videoRef.current.srcObject = null;
+        video.srcObject = null;
       }
 
-      startInFlightRef.current = false;
+      startingRef.current = false;
       setCameraState("idle");
       setErrorMessage("");
       onCameraStop?.();
     }, [onCameraStop]);
 
     const startCamera = useCallback(async () => {
-      if (startInFlightRef.current || cameraState === "running") {
-        return;
-      }
+      if (startingRef.current || cameraState === "running") return;
 
-      startInFlightRef.current = true;
+      startingRef.current = true;
       setCameraState("starting");
       setErrorMessage("");
 
@@ -92,31 +90,32 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
           audio: false
         });
 
-        streamRef.current = stream;
-
         const video = videoRef.current;
         if (!video) {
+          for (const track of stream.getTracks()) track.stop();
           throw new Error("Video element is not available.");
         }
 
+        streamRef.current = stream;
         video.srcObject = stream;
-        video.playsInline = true;
         video.muted = true;
+        video.playsInline = true;
         video.autoplay = true;
 
         await video.play();
 
         setCameraState("running");
-        startInFlightRef.current = false;
+        startingRef.current = false;
 
-        await onVideoReady?.(video);
+        if (onVideoReady) {
+          await onVideoReady(video);
+        }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Could not start the camera.";
-
+        startingRef.current = false;
         setCameraState("error");
-        setErrorMessage(message);
-        startInFlightRef.current = false;
+        setErrorMessage(
+          error instanceof Error ? error.message : "Could not start the camera."
+        );
       }
     }, [cameraState, onVideoReady]);
 
@@ -142,13 +141,12 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
       <div
         className={className}
         style={{
+          position: "relative",
           width: "100%",
-          maxWidth: "100%",
           overflow: "hidden",
           borderRadius: 18,
-          background: "black",
+          background: "#000",
           border: "1px solid rgba(255,255,255,0.08)",
-          position: "relative",
           aspectRatio: "16 / 10"
         }}
       >
@@ -158,10 +156,10 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
           muted
           playsInline
           style={{
+            display: "block",
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            display: "block",
             transform: "scaleX(-1)"
           }}
         />
@@ -174,10 +172,7 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background:
-                cameraState === "idle"
-                  ? "rgba(0,0,0,0.42)"
-                  : "rgba(0,0,0,0.55)",
+              background: "rgba(0,0,0,0.45)",
               padding: 20
             }}
           >
@@ -210,7 +205,7 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
                     fontSize: 14,
                     lineHeight: 1.5,
                     color: "#ffb4b4",
-                    marginBottom: 16
+                    marginBottom: showStartButton ? 16 : 0
                   }}
                 >
                   {errorMessage}
@@ -218,53 +213,24 @@ const CameraViewport = forwardRef<CameraViewportHandle, CameraViewportProps>(
               )}
 
               {showStartButton && (
-                <div
+                <button
+                  type="button"
+                  onClick={() => void startCamera()}
+                  disabled={cameraState === "starting"}
                   style={{
-                    display: "flex",
-                    gap: 10,
-                    justifyContent: "center",
-                    flexWrap: "wrap"
+                    background: "#9be7b0",
+                    color: "#08111f",
+                    fontWeight: 700,
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    cursor:
+                      cameraState === "starting" ? "not-allowed" : "pointer",
+                    opacity: cameraState === "starting" ? 0.65 : 1
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void startCamera();
-                    }}
-                    disabled={cameraState === "starting"}
-                    style={{
-                      background: "#9be7b0",
-                      color: "#08111f",
-                      fontWeight: 700,
-                      border: "none",
-                      borderRadius: 10,
-                      padding: "10px 14px",
-                      cursor:
-                        cameraState === "starting" ? "not-allowed" : "pointer",
-                      opacity: cameraState === "starting" ? 0.65 : 1
-                    }}
-                  >
-                    {cameraState === "starting" ? "Starting…" : "Start Camera"}
-                  </button>
-
-                  {cameraState === "error" && (
-                    <button
-                      type="button"
-                      onClick={stopCamera}
-                      style={{
-                        background: "rgba(255,255,255,0.12)",
-                        color: "white",
-                        fontWeight: 600,
-                        border: "none",
-                        borderRadius: 10,
-                        padding: "10px 14px",
-                        cursor: "pointer"
-                      }}
-                    >
-                      Reset
-                    </button>
-                  )}
-                </div>
+                  {cameraState === "starting" ? "Starting…" : "Start Camera"}
+                </button>
               )}
             </div>
           </div>
