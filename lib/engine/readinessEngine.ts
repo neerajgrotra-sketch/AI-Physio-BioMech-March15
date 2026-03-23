@@ -40,13 +40,36 @@ type ReadinessContext = {
   averageBrightness?: number | null;
 };
 
+type OverlayKeypoint = {
+  name: string;
+  x: number;
+  y: number;
+  score?: number | null;
+};
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function getKeypoint(frame: PoseFrame | null, name: string) {
-  if (!frame?.keypoints) return null;
-  return frame.keypoints.find((kp) => kp.name === name) ?? null;
+function getFrameKeypoints(frame: PoseFrame | null): OverlayKeypoint[] {
+  if (!frame || typeof frame !== "object") return [];
+
+  const maybeKeypoints = (frame as any).keypoints;
+  if (!Array.isArray(maybeKeypoints)) return [];
+
+  return maybeKeypoints.filter((kp: any) => {
+    return (
+      kp &&
+      typeof kp.name === "string" &&
+      typeof kp.x === "number" &&
+      typeof kp.y === "number"
+    );
+  }) as OverlayKeypoint[];
+}
+
+function getKeypoint(frame: PoseFrame | null, name: string): OverlayKeypoint | null {
+  const keypoints = getFrameKeypoints(frame);
+  return keypoints.find((kp) => kp.name === name) ?? null;
 }
 
 function isVisible(
@@ -56,7 +79,7 @@ function isVisible(
 ): boolean {
   const kp = getKeypoint(frame, name);
   if (!kp) return false;
-  return (kp.score ?? 0) >= minScore;
+  return (kp.score ?? 1) >= minScore;
 }
 
 function isUpperBodyVisible(frame: PoseFrame | null): boolean {
@@ -208,7 +231,7 @@ export function evaluateReadiness({
   hasCompletedRaiseTest = false,
   averageBrightness = null
 }: ReadinessContext): ReadinessState {
-  const personDetected = Boolean(frame?.personDetected);
+  const personDetected = Boolean((frame as any)?.personDetected);
   const upperBodyVisible = isUpperBodyVisible(frame);
   const handsVisible = areHandsVisibleForExercise(frame, prescription);
   const centered = isCentered(frame);
