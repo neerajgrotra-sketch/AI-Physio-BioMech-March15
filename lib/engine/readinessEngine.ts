@@ -3,6 +3,7 @@ import type { PoseFrame } from "@/lib/types/pose";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 
 export type ReadinessIssue =
+  | "camera_off"
   | "too_dark"
   | "person_not_visible"
   | "upper_body_not_visible"
@@ -51,31 +52,23 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function getFrameKeypoints(frame: PoseFrame | null): OverlayKeypoint[] {
-  if (!frame || typeof frame !== "object") return [];
-
-  const maybeKeypoints = (frame as any).keypoints;
-  if (!Array.isArray(maybeKeypoints)) return [];
-
-  return maybeKeypoints.filter((kp: any) => {
-    return (
-      kp &&
-      typeof kp.name === "string" &&
-      typeof kp.x === "number" &&
-      typeof kp.y === "number"
-    );
-  }) as OverlayKeypoint[];
-}
-
 function getKeypoint(frame: PoseFrame | null, name: string): OverlayKeypoint | null {
-  const keypoints = getFrameKeypoints(frame);
-  return keypoints.find((kp) => kp.name === name) ?? null;
+  const landmarks = (frame as any)?.landmarks;
+  const kp = landmarks?.[name];
+  if (!kp || typeof kp.x !== "number" || typeof kp.y !== "number") return null;
+
+  return {
+    name,
+    x: kp.x,
+    y: kp.y,
+    score: kp.score ?? 1
+  };
 }
 
 function isVisible(
   frame: PoseFrame | null,
   name: string,
-  minScore = 0.35
+  minScore = 0.2
 ): boolean {
   const kp = getKeypoint(frame, name);
   if (!kp) return false;
@@ -92,18 +85,18 @@ function isUpperBodyVisible(frame: PoseFrame | null): boolean {
   ];
 
   const visibleCount = required.filter((name) =>
-  isVisible(frame, name, 0.35)
-).length;
+    isVisible(frame, name, 0.2)
+  ).length;
 
-return visibleCount >= 3; // instead of all 5
+  return visibleCount >= 4;
 }
 
 function areHandsVisibleForExercise(
   frame: PoseFrame | null,
   prescription: ExercisePrescription
 ): boolean {
-  const leftHandVisible = isVisible(frame, "left_wrist", 0.3);
-  const rightHandVisible = isVisible(frame, "right_wrist", 0.3);
+  const leftHandVisible = isVisible(frame, "left_wrist", 0.15);
+  const rightHandVisible = isVisible(frame, "right_wrist", 0.15);
 
   switch (prescription.id) {
     case "right-arm-raise":
@@ -129,7 +122,7 @@ function isCentered(frame: PoseFrame | null): boolean {
       ? nose.x
       : (leftShoulder.x + rightShoulder.x) / 2;
 
-  return centerX >= 0.28 && centerX <= 0.72;
+  return centerX >= 0.18 && centerX <= 0.82;
 }
 
 function hasReasonableScale(frame: PoseFrame | null): {
@@ -150,8 +143,8 @@ function hasReasonableScale(frame: PoseFrame | null): {
   const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
   const torsoHeight = Math.abs(shoulderY - headY);
 
-  const tooFar = shoulderWidth < 0.12 || torsoHeight < 0.08;
-  const tooClose = shoulderWidth > 0.5 || torsoHeight > 0.28;
+  const tooFar = shoulderWidth < 0.08 || torsoHeight < 0.05;
+  const tooClose = shoulderWidth > 0.65 || torsoHeight > 0.38;
 
   return {
     ok: !tooFar && !tooClose,
@@ -167,7 +160,7 @@ function isStable(frame: PoseFrame | null): boolean {
   if (!leftShoulder || !rightShoulder) return false;
 
   const shoulderTilt = Math.abs(leftShoulder.y - rightShoulder.y);
-  return shoulderTilt < 0.12;
+  return shoulderTilt < 0.18;
 }
 
 function isBrightnessOk(averageBrightness?: number | null): boolean {
@@ -193,6 +186,9 @@ function needsRaiseTest(
 
 function getIssueMessage(issue: ReadinessIssue): string {
   switch (issue) {
+    case "camera_off":
+      return "Camera is off.";
+
     case "too_dark":
       return "Turn on a light so I can see you clearly.";
 
@@ -215,13 +211,13 @@ function getIssueMessage(issue: ReadinessIssue): string {
       return "Center yourself in the frame and face the camera.";
 
     case "not_stable":
-      return "Stand still for a moment so I can check your position.";
+      return "Hold still for a moment while I check your position.";
 
     case "needs_raise_test":
-      return "Please lift both arms once so I can check your framing.";
+      return "Lift both arms once so I can check your framing.";
 
     case "ready":
-      return "Good. Stay there. You are positioned well.";
+      return "Framing looks good.";
 
     default:
       return "Adjust your position so I can see you clearly.";
@@ -236,6 +232,26 @@ export function evaluateReadiness({
   averageBrightness = null
 }: ReadinessContext): ReadinessState {
   const personDetected = Boolean((frame as any)?.personDetected);
+
+  if (!frame || !personDetected) {
+    return {
+      ready: false,
+      issue: "person_not_visible",
+      message: getIssueMessage("person_not_visible"),
+      confidence: 0,
+      checks: {
+        personDetected: false,
+        centered: false,
+        upperBodyVisible: false,
+        handsVisible: false,
+        stable: false,
+        brightnessOk: true,
+        scaleOk: false,
+        raiseTestPassed: false
+      }
+    };
+  }
+
   const upperBodyVisible = isUpperBodyVisible(frame);
   const handsVisible = areHandsVisibleForExercise(frame, prescription);
   const centered = isCentered(frame);
@@ -248,8 +264,6 @@ export function evaluateReadiness({
 
   if (!brightnessOk) {
     issue = "too_dark";
-  } else if (!personDetected) {
-    issue = "person_not_visible";
   } else if (!upperBodyVisible) {
     issue = "upper_body_not_visible";
   } else if (!handsVisible) {
