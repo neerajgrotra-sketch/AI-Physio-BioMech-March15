@@ -12,7 +12,6 @@ export type ReadinessIssue =
   | "too_far"
   | "not_centered"
   | "not_stable"
-  | "needs_raise_test"
   | "ready";
 
 export type ReadinessState = {
@@ -28,7 +27,6 @@ export type ReadinessState = {
     stable: boolean;
     brightnessOk: boolean;
     scaleOk: boolean;
-    raiseTestPassed: boolean;
   };
 };
 
@@ -37,7 +35,6 @@ type ReadinessContext = {
   features: MovementFeatures;
   prescription: ExercisePrescription;
   previousState?: ReadinessState | null;
-  hasCompletedRaiseTest?: boolean;
   averageBrightness?: number | null;
 };
 
@@ -65,11 +62,7 @@ function getKeypoint(frame: PoseFrame | null, name: string): OverlayKeypoint | n
   };
 }
 
-function isVisible(
-  frame: PoseFrame | null,
-  name: string,
-  minScore = 0.2
-): boolean {
+function isVisible(frame: PoseFrame | null, name: string, minScore = 0.2): boolean {
   const kp = getKeypoint(frame, name);
   if (!kp) return false;
   return (kp.score ?? 1) >= minScore;
@@ -84,10 +77,7 @@ function isUpperBodyVisible(frame: PoseFrame | null): boolean {
     "right_elbow"
   ];
 
-  const visibleCount = required.filter((name) =>
-    isVisible(frame, name, 0.2)
-  ).length;
-
+  const visibleCount = required.filter((name) => isVisible(frame, name, 0.2)).length;
   return visibleCount >= 4;
 }
 
@@ -171,19 +161,6 @@ function isBrightnessOk(averageBrightness?: number | null): boolean {
   return averageBrightness >= 40;
 }
 
-function needsRaiseTest(
-  prescription: ExercisePrescription,
-  hasCompletedRaiseTest?: boolean
-): boolean {
-  if (hasCompletedRaiseTest) return false;
-
-  return (
-    prescription.id === "right-arm-raise" ||
-    prescription.id === "left-arm-raise" ||
-    prescription.id === "both-arm-raise"
-  );
-}
-
 function getIssueMessage(issue: ReadinessIssue): string {
   switch (issue) {
     case "camera_off":
@@ -196,13 +173,13 @@ function getIssueMessage(issue: ReadinessIssue): string {
       return "Step into view so I can see you properly.";
 
     case "upper_body_not_visible":
-      return "Make sure your head, shoulders, and upper body are visible.";
+      return "I need to see your head and shoulders clearly.";
 
     case "hands_not_visible":
-      return "Make sure your hands stay visible in the camera frame.";
+      return "I can see your upper body. Bring your hands into the frame.";
 
     case "too_close":
-      return "Step back a little so your full upper body fits in frame.";
+      return "Step back a little so your upper body fits in frame.";
 
     case "too_far":
       return "Move a little closer so I can track your movement clearly.";
@@ -213,11 +190,8 @@ function getIssueMessage(issue: ReadinessIssue): string {
     case "not_stable":
       return "Hold still for a moment while I check your position.";
 
-    case "needs_raise_test":
-      return "Lift both arms once so I can check your framing.";
-
     case "ready":
-      return "Framing looks good.";
+      return "You're well positioned.";
 
     default:
       return "Adjust your position so I can see you clearly.";
@@ -228,7 +202,6 @@ export function evaluateReadiness({
   frame,
   features,
   prescription,
-  hasCompletedRaiseTest = false,
   averageBrightness = null
 }: ReadinessContext): ReadinessState {
   const personDetected = Boolean((frame as any)?.personDetected);
@@ -246,8 +219,7 @@ export function evaluateReadiness({
         handsVisible: false,
         stable: false,
         brightnessOk: true,
-        scaleOk: false,
-        raiseTestPassed: false
+        scaleOk: false
       }
     };
   }
@@ -258,7 +230,6 @@ export function evaluateReadiness({
   const stable = isStable(frame);
   const brightnessOk = isBrightnessOk(averageBrightness);
   const scale = hasReasonableScale(frame);
-  const raiseTestPassed = !needsRaiseTest(prescription, hasCompletedRaiseTest);
 
   let issue: ReadinessIssue = "ready";
 
@@ -276,8 +247,6 @@ export function evaluateReadiness({
     issue = "not_centered";
   } else if (!stable) {
     issue = "not_stable";
-  } else if (!raiseTestPassed) {
-    issue = "needs_raise_test";
   }
 
   const checks = {
@@ -287,8 +256,7 @@ export function evaluateReadiness({
     handsVisible,
     stable,
     brightnessOk,
-    scaleOk: scale.ok,
-    raiseTestPassed
+    scaleOk: scale.ok
   };
 
   const passingChecks = Object.values(checks).filter(Boolean).length;
