@@ -771,17 +771,17 @@ export default function SessionRunner() {
             if (introShownForExerciseRef.current !== activePrescription.id) {
               introShownForExerciseRef.current = activePrescription.id;
 
-              updateDisplayedCoaching(
-                {
-                  code: "framing_check",
-                  priority: "info",
-                  message: "I’m checking your framing. Lift both arms once."
-                },
-                "start",
-                "ready",
-                Date.now(),
-                { force: true }
-              );
+            updateDisplayedCoaching(
+  {
+    code: "instruction",
+    priority: "info",
+    message: "I’m checking your framing. Lift both arms once."
+  },
+  "start",
+  "ready",
+  Date.now(),
+  { force: true }
+);
             }
           } else {
             setFramingBanner(
