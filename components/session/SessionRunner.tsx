@@ -326,7 +326,7 @@ export default function SessionRunner() {
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
   const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [framingBanner, setFramingBanner] = useState<FramingBannerState>({
-    tone: "Warning",
+    tone: "warning",
     message: "Camera is off."
   });
   const [engineStatus, setEngineStatus] = useState<
