@@ -266,11 +266,11 @@ function getStartMessage(prescription: ExercisePrescription | null): string {
 
   switch (prescription.id) {
     case "right-arm-raise":
-      return "We are starting right arm raises. Lift your right arm slowly to shoulder height.";
+      return "We are starting right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
     case "left-arm-raise":
-      return "We are starting left arm raises. Lift your left arm slowly to shoulder height.";
+      return "We are starting left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
     case "both-arm-raise":
-      return "We are starting both arm raises. Lift both arms evenly to shoulder height.";
+      return "We are starting both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
     case "sit-to-stand":
       return "We are starting sit to stand. Stand up fully, then lower back down slowly.";
     default:
@@ -316,7 +316,7 @@ export default function SessionRunner() {
   const [sessionComplete, setSessionComplete] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [aiCoachingEnabled, setAiCoachingEnabled] = useState(true);
-  const [realVoiceEnabled, setRealVoiceEnabled] = useState(true);
+  const [realVoiceEnabled, setRealVoiceEnabled] = useState(false);
 
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
@@ -329,6 +329,7 @@ export default function SessionRunner() {
     tone: "warning",
     message: "Camera is off."
   });
+  const [framingCalibrated, setFramingCalibrated] = useState(false);
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
@@ -341,13 +342,13 @@ export default function SessionRunner() {
   const [lastAiDebug, setLastAiDebug] = useState<any>(null);
 
   useVoiceCoaching(coaching.message, {
-    enabled: voiceEnabled && !realVoiceEnabled,
+    enabled: voiceEnabled,
     cooldownMs: 3200,
     rate: 0.94
   });
 
   useRealVoiceCoaching(coaching.message, {
-    enabled: voiceEnabled && realVoiceEnabled,
+    enabled: false,
     cooldownMs: 3200,
     voice: "marin"
   });
@@ -475,14 +476,15 @@ export default function SessionRunner() {
     setPhase("ready");
     setHoldRemainingMs(null);
     setActiveMetricValue(null);
+    setFramingCalibrated(false);
+    setFramingBanner({
+      tone: "warning",
+      message: "Position yourself in view."
+    });
     setLastEvent("idle");
     setLastPrimaryIssue("idle");
     setLastDetectedIssues([]);
     setLastFailureReason(null);
-    setFramingBanner({
-      tone: "warning",
-      message: "Position Yourself in View."
-    });
     resetDisplayController();
   }
 
@@ -509,13 +511,12 @@ export default function SessionRunner() {
     activeQueueRef.current = [];
     queueIndexRef.current = 0;
     prescriptionRef.current = null;
-    resetExerciseState();
-
+    setFramingCalibrated(false);
     setFramingBanner({
       tone: "warning",
       message: "Camera is off."
     });
-    
+    resetExerciseState();
     setCoaching(createIdleCoaching());
   }
 
@@ -634,27 +635,44 @@ export default function SessionRunner() {
             frame: normalized,
             features: smoothedFeatures,
             prescription: activePrescription,
-            hasCompletedRaiseTest:
-              output.repState.repCount > 0 || output.repState.phase !== "ready",
+            hasCompletedRaiseTest: framingCalibrated,
             averageBrightness: null
           });
 
-       if (!normalized.personDetected) {
-  setFramingBanner({
-    tone: "warning",
-    message: "Step into view so I can see you properly."
-  });
-} else if (!readiness.ready) {
-  setFramingBanner({
-    tone: "warning",
-    message: readiness.message
-  });
-} else {
-  setFramingBanner({
-    tone: "good",
-    message: "Framing looks good."
-  });
-}
+          const needsArmRaiseCalibration =
+            activePrescription.id === "right-arm-raise" ||
+            activePrescription.id === "left-arm-raise" ||
+            activePrescription.id === "both-arm-raise";
+
+          if (
+            needsArmRaiseCalibration &&
+            !framingCalibrated &&
+            readiness.ready
+          ) {
+            setFramingCalibrated(true);
+          }
+
+          if (!normalized.personDetected) {
+            setFramingBanner({
+              tone: "warning",
+              message: "Step into view so I can see you properly."
+            });
+          } else if (!framingCalibrated && readiness.issue === "needs_raise_test") {
+            setFramingBanner({
+              tone: "warning",
+              message: "Lift both arms once so I can check your framing."
+            });
+          } else if (!readiness.ready && readiness.issue !== "needs_raise_test") {
+            setFramingBanner({
+              tone: "warning",
+              message: readiness.message
+            });
+          } else {
+            setFramingBanner({
+              tone: "good",
+              message: "Framing looks good."
+            });
+          }
 
           const now = Date.now();
           const orchestration = buildCoachingOrchestration({
@@ -680,10 +698,17 @@ export default function SessionRunner() {
           });
 
           if (guidedMessage) {
+            const effectiveGuidedMessage =
+              !framingCalibrated &&
+              needsArmRaiseCalibration &&
+              event === "start"
+                ? "Hold still while I check your framing, then we will begin."
+                : guidedMessage;
+
             const guidedDecision: CoachingDecision = {
               code: orchestration.decision.code,
               priority: orchestration.decision.priority,
-              message: guidedMessage
+              message: effectiveGuidedMessage
             };
 
             const holdSecond =
@@ -709,6 +734,7 @@ export default function SessionRunner() {
           }
 
           const shouldAskAi =
+            framingCalibrated &&
             orchestration.trigger === "ai" &&
             orchestration.shouldSpeak &&
             !aiRequestInFlightRef.current &&
@@ -1538,9 +1564,9 @@ export default function SessionRunner() {
               </div>
 
               <div>
-                AI coaching:
+                Real voice:
                 <div style={{ fontWeight: 700, marginTop: 4 }}>
-                  {aiCoachingEnabled ? "On" : "Off"}
+                  {realVoiceEnabled ? "On" : "Off"}
                 </div>
               </div>
             </div>
