@@ -664,14 +664,25 @@ export default function SessionRunner() {
           setLastPrimaryIssue(output.primaryIssue);
 
           // Only release intro once the intro is actually on screen.
-          if (
-            introActiveRef.current &&
-            !introPendingRef.current &&
-            output.repState.phase !== "ready"
-          ) {
-            clearIntroTimeout();
-            setIntroActive(false, Date.now());
-          }
+         if (
+  introActiveRef.current &&
+  !introPendingRef.current &&
+  output.repState.phase !== "ready"
+) {
+  clearIntroTimeout();
+  setIntroActive(false, Date.now());
+
+  // Force the intro to give up control as soon as the user starts moving.
+  coachingEngineRef.current.interruptSpeech(Date.now());
+  coachingEngineRef.current.flushVoiceQueue();
+
+  // Clear the visible intro immediately so live coaching can take over.
+  setCoaching({
+    code: "idle",
+    priority: "info",
+    message: ""
+  });
+}
 
           const rehabState = buildRehabState(
             smoothedFeatures,
