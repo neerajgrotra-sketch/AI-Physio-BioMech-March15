@@ -7,9 +7,6 @@ import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
 import PoseCanvasOverlay from "@/components/camera/PoseCanvasOverlay";
-import CoachingPanel from "@/components/coaching/CoachingPanel";
-import DebugPanel from "@/components/debug/DebugPanel";
-import AiDebugPanel from "@/components/debug/AiDebugPanel";
 import OpenAiConnectivityPanel from "@/components/status/OpenAiConnectivityPanel";
 import { useSessionLibrary } from "@/components/providers/SessionLibraryProvider";
 
@@ -22,16 +19,12 @@ import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 import { evaluateReadiness } from "@/lib/engine/readinessEngine";
-import { buildRehabState, type RehabEvent } from "@/lib/engine/rehabStateBuilder";
-import { PhysioCoachingEngine } from "@/lib/coaching/PhysioCoachingEngine";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
-import type { CoachingDecision } from "@/lib/types/coaching";
 import type { RuntimeRepState } from "@/lib/engine/runtimeTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { TherapySession } from "@/lib/sessions/sessionTypes";
-import type { VoiceIntent } from "@/lib/coaching/types";
 
 type PreviewExerciseItem = {
   id: string;
@@ -53,7 +46,10 @@ type FramingBannerState = {
   message: string;
 };
 
-const INTRO_LOCK_MS = 2600;
+type LiveObservation = {
+  visibilityLines: string[];
+  movementLines: string[];
+};
 
 function createEmptyFeatures(): MovementFeatures {
   return {
@@ -79,23 +75,6 @@ function createEmptyFeatures(): MovementFeatures {
   };
 }
 
-function createIdleCoaching(): CoachingDecision {
-  return {
-    code: "idle",
-    priority: "info",
-    message: "Select one or more sessions, then press Begin Session."
-  };
-}
-
-function formatPhase(phase: string): string {
-  if (phase === "lifting") return "Lift";
-  if (phase === "holding") return "Hold";
-  if (phase === "lowering") return "Lower";
-  if (phase === "ready") return "Ready";
-  if (phase === "complete") return "Complete";
-  return "Tracking";
-}
-
 function estimateExerciseSeconds(prescription: ExercisePrescription): number {
   const holdSec = prescription.hold.required
     ? prescription.hold.durationMs / 1000
@@ -107,16 +86,26 @@ function estimateExerciseSeconds(prescription: ExercisePrescription): number {
 function formatDurationRange(totalSeconds: number): string {
   const minMinutes = Math.max(1, Math.floor(totalSeconds / 60));
   const maxMinutes = Math.max(minMinutes, Math.ceil(totalSeconds / 60) + 1);
-  return minMinutes === maxMinutes ? `About ${minMinutes} min` : `About ${minMinutes}-${maxMinutes} min`;
+
+  if (minMinutes === maxMinutes) {
+    return `About ${minMinutes} min`;
+  }
+
+  return `About ${minMinutes}-${maxMinutes} min`;
 }
 
 function inferSessionGoal(exerciseIds: string[]): string {
   const set = new Set(exerciseIds);
 
-  if (set.has("right-arm-raise") || set.has("left-arm-raise") || set.has("both-arm-raise")) {
+  if (
+    set.has("right-arm-raise") ||
+    set.has("left-arm-raise") ||
+    set.has("both-arm-raise")
+  ) {
     if (set.has("sit-to-stand")) {
       return "Improve upper-body mobility, posture control, and functional movement.";
     }
+
     return "Improve shoulder mobility, arm control, and upright posture.";
   }
 
@@ -133,7 +122,9 @@ function buildSessionPreviewData(
 ): SessionPreviewData {
   const items = session.exercises
     .map((item) => {
-      const prescription = prescriptions.find((p) => p.id === item.prescriptionId) ?? null;
+      const prescription =
+        prescriptions.find((p) => p.id === item.prescriptionId) ?? null;
+
       if (!prescription) return null;
 
       return {
@@ -154,12 +145,9 @@ function buildSessionPreviewData(
   };
 }
 
-function normalizeMessage(message: string): string {
-  return message.trim().replace(/\s+/g, " ");
-}
-
 function isCalibrationExercise(prescription: ExercisePrescription | null): boolean {
   if (!prescription) return false;
+
   return (
     prescription.id === "right-arm-raise" ||
     prescription.id === "left-arm-raise" ||
@@ -179,62 +167,212 @@ function hasPassedArmRaiseCalibration(features: MovementFeatures): boolean {
   return rightRaised && leftRaised;
 }
 
-function getStartMessage(prescription: ExercisePrescription | null): string {
-  if (!prescription) {
-    return "Stand facing the camera and get ready to begin.";
-  }
+function getExerciseRequirement(prescription: ExercisePrescription | null): string {
+  if (!prescription) return "No exercise selected.";
 
   switch (prescription.id) {
     case "right-arm-raise":
-      return "Right arm raises. Lift your right arm to shoulder height, hold, then lower slowly.";
+      return "Lift your right arm to shoulder height, hold, then lower slowly.";
     case "left-arm-raise":
-      return "Left arm raises. Lift your left arm to shoulder height, hold, then lower slowly.";
+      return "Lift your left arm to shoulder height, hold, then lower slowly.";
     case "both-arm-raise":
-      return "Both arm raises. Lift both arms evenly to shoulder height, hold, then lower slowly.";
+      return "Lift both arms evenly to shoulder height, hold, then lower slowly.";
     case "sit-to-stand":
-      return "Sit to stand. Stand up fully, then lower back down slowly.";
+      return "Stand up fully, hold briefly, then lower back to the seat slowly.";
     default:
-      return `${prescription.name}. Move slowly and with control.`;
+      return `Perform ${prescription.name} with slow, controlled movement.`;
   }
 }
 
-function buildPreCalibrationBanner(
+function getPositionRequirement(prescription: ExercisePrescription | null): string {
+  if (!prescription) return "Not specified";
+
+  switch (prescription.id) {
+    case "sit-to-stand":
+      return "Start seated, then stand fully and return to seated.";
+    case "right-arm-raise":
+    case "left-arm-raise":
+    case "both-arm-raise":
+      return "Remain upright. Seated upright or standing is acceptable.";
+    default:
+      return "Remain upright and centered in view.";
+  }
+}
+
+function getExerciseDisplayName(item: PreviewExerciseItem | null): string {
+  return item?.displayName ?? "No active exercise";
+}
+
+function getVisibleLandmarkNames(frame: PoseFrame | null): Set<string> {
+  const names = new Set<string>();
+  const landmarks = (frame as any)?.landmarks ?? null;
+
+  if (!landmarks || typeof landmarks !== "object") {
+    return names;
+  }
+
+  for (const [key, value] of Object.entries(landmarks)) {
+    const point = value as { x?: number; y?: number; score?: number | null };
+    if (
+      typeof point?.x === "number" &&
+      typeof point?.y === "number" &&
+      (point.score ?? 1) >= 0.15
+    ) {
+      names.add(key);
+    }
+  }
+
+  return names;
+}
+
+function buildVisibilityLines(
+  frame: PoseFrame | null,
   readinessMessage: string,
-  personDetected: boolean
-): FramingBannerState {
+  readinessReady: boolean
+): string[] {
+  const lines: string[] = [];
+  const names = getVisibleLandmarkNames(frame);
+  const personDetected = Boolean((frame as any)?.personDetected);
+
   if (!personDetected) {
-    return {
-      tone: "warning",
-      message: "Step into view so I can see you properly."
-    };
+    return ["No person detected in frame."];
   }
 
-  if (
-    readinessMessage &&
-    readinessMessage !== "Framing looks good." &&
-    readinessMessage !== "You're well positioned."
-  ) {
-    return {
-      tone: "warning",
-      message: readinessMessage
-    };
-  }
+  lines.push("Person detected.");
 
-  return {
-    tone: "warning",
-    message: "Lift both arms once so I can check your framing."
-  };
+  const headVisible = names.has("nose");
+  const shouldersVisible = names.has("left_shoulder") && names.has("right_shoulder");
+  const elbowsVisible = names.has("left_elbow") || names.has("right_elbow");
+  const wristsVisible = names.has("left_wrist") || names.has("right_wrist");
+  const hipsVisible = names.has("left_hip") && names.has("right_hip");
+  const kneesVisible = names.has("left_knee") || names.has("right_knee");
+
+  lines.push(headVisible ? "Head visible." : "Head not clearly visible.");
+  lines.push(shouldersVisible ? "Shoulders visible." : "Shoulders not clearly visible.");
+  lines.push(elbowsVisible ? "At least one elbow visible." : "Elbows not clearly visible.");
+  lines.push(wristsVisible ? "At least one wrist visible." : "Wrists not clearly visible.");
+  lines.push(hipsVisible ? "Torso and hips visible." : "Hips not clearly visible.");
+  lines.push(kneesVisible ? "Lower body partially visible." : "Lower body mostly out of frame.");
+
+  lines.push(readinessReady ? "Framing is acceptable." : readinessMessage);
+
+  return lines;
 }
 
-function buildPassiveFramingBanner(
+function buildMovementLines(
+  prescription: ExercisePrescription | null,
+  phase: string,
+  features: MovementFeatures,
+  repCount: number,
+  holdRemainingMs: number | null,
+  primaryIssue: string,
+  activeMetricValue: number | null
+): string[] {
+  const lines: string[] = [];
+
+  if (features.isStanding) {
+    lines.push("User appears to be standing.");
+  } else if (features.isSeated) {
+    lines.push("User appears to be seated.");
+  } else {
+    lines.push("Posture state is not fully clear yet.");
+  }
+
+  switch (phase) {
+    case "ready":
+      lines.push("Movement status: ready to begin.");
+      break;
+    case "lifting":
+      lines.push("Movement status: lifting phase.");
+      break;
+    case "holding":
+      lines.push("Movement status: hold in progress.");
+      break;
+    case "lowering":
+      lines.push("Movement status: lowering phase.");
+      break;
+    case "complete":
+      lines.push("Movement status: exercise complete.");
+      break;
+    default:
+      lines.push("Movement status: tracking.");
+      break;
+  }
+
+  if (prescription?.id === "right-arm-raise") {
+    const angle = features.rightArmElevationDeg;
+    if (angle !== null) {
+      if (angle < 35) lines.push("Right arm is still below target height.");
+      else if (angle < 75) lines.push("Right arm is approaching shoulder height.");
+      else lines.push("Right arm is near or above target height.");
+    }
+  } else if (prescription?.id === "left-arm-raise") {
+    const angle = features.leftArmElevationDeg;
+    if (angle !== null) {
+      if (angle < 35) lines.push("Left arm is still below target height.");
+      else if (angle < 75) lines.push("Left arm is approaching shoulder height.");
+      else lines.push("Left arm is near or above target height.");
+    }
+  } else if (prescription?.id === "both-arm-raise") {
+    const angle = features.bilateralArmElevationDeg;
+    if (angle !== null) {
+      if (angle < 35) lines.push("Both arms are still below target height.");
+      else if (angle < 75) lines.push("Both arms are approaching shoulder height.");
+      else lines.push("Both arms are near or above target height.");
+    }
+  } else if (prescription?.id === "sit-to-stand") {
+    lines.push(features.isStanding ? "User is near the standing position." : "User is near the seated position.");
+  }
+
+  if (holdRemainingMs !== null && phase === "holding") {
+    lines.push(`Hold time remaining: ${Math.max(1, Math.ceil(holdRemainingMs / 1000))} second(s).`);
+  }
+
+  lines.push(`Rep count: ${repCount} completed.`);
+
+  if (activeMetricValue !== null) {
+    lines.push(`Active metric value: ${activeMetricValue.toFixed(1)}.`);
+  }
+
+  if (primaryIssue && primaryIssue !== "idle") {
+    lines.push(`Primary quality note: ${primaryIssue.replaceAll("_", " ")}.`);
+  }
+
+  return lines;
+}
+
+function buildFramingBanner(
+  prescription: ExercisePrescription | null,
+  readinessMessage: string,
   readinessReady: boolean,
-  readinessMessage: string,
-  personDetected: boolean
+  personDetected: boolean,
+  features: MovementFeatures,
+  calibrationComplete: boolean
 ): FramingBannerState {
   if (!personDetected) {
     return {
       tone: "warning",
       message: "Step into view so I can see you properly."
+    };
+  }
+
+  if (isCalibrationExercise(prescription) && !calibrationComplete) {
+    if (
+      readinessMessage &&
+      readinessMessage !== "Framing looks good." &&
+      readinessMessage !== "You're well positioned."
+    ) {
+      return {
+        tone: "warning",
+        message: readinessMessage
+      };
+    }
+
+    return {
+      tone: "warning",
+      message: hasPassedArmRaiseCalibration(features)
+        ? "Framing confirmed."
+        : "Lift both arms once so I can verify framing."
     };
   }
 
@@ -251,34 +389,25 @@ function buildPassiveFramingBanner(
   };
 }
 
-function mapVoiceIntentToDecision(intent: VoiceIntent): CoachingDecision {
-  switch (intent.kind) {
-    case "encouragement":
-      return { code: "good_rep", priority: "encourage", message: intent.text };
-    case "recovery":
-      return { code: "rep_failed_hold", priority: "correct", message: intent.text };
-    case "hold_cue": {
-      const lower = intent.text.toLowerCase();
-      if (lower.includes("bring it down")) {
-        return { code: "lower_slowly", priority: "info", message: intent.text };
-      }
-      if (lower.includes("hold")) {
-        return { code: "hold_position", priority: "info", message: intent.text };
-      }
-      return { code: "keep_holding", priority: "info", message: intent.text };
-    }
-    case "correction": {
-      const lower = intent.text.toLowerCase();
-      if (lower.includes("higher")) {
-        return { code: "lift_higher", priority: "correct", message: intent.text };
-      }
-      return { code: "keep_balanced", priority: "correct", message: intent.text };
-    }
-    case "exercise_transition":
-      return { code: "exercise_complete", priority: "encourage", message: intent.text };
-    default:
-      return { code: "start_exercise", priority: "info", message: intent.text };
+function getInstructionTitle(item: PreviewExerciseItem | null): string {
+  return item?.displayName ?? "Session Instructions";
+}
+
+function getInstructionBody(
+  prescription: ExercisePrescription | null,
+  totalReps: number
+): string {
+  if (!prescription) {
+    return "Choose a session and begin when ready.";
   }
+
+  const holdSec = prescription.hold.required
+    ? Math.round(prescription.hold.durationMs / 1000)
+    : 0;
+
+  const requirement = getExerciseRequirement(prescription);
+  const holdLine = holdSec > 0 ? ` Hold each rep for ${holdSec} second(s).` : "";
+  return `${requirement} Target: ${totalReps} rep(s).${holdLine}`;
 }
 
 export default function SessionRunner() {
@@ -290,43 +419,29 @@ export default function SessionRunner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const advanceTimeoutRef = useRef<number | null>(null);
-  const introTimeoutRef = useRef<number | null>(null);
 
   const trackingActiveRef = useRef(false);
-  const sessionStartedRef = useRef(false);
   const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
   const featureHistoryRef = useRef(new FeatureHistory(5));
   const prescriptionRef = useRef<ExercisePrescription | null>(null);
   const activeQueueRef = useRef<PreviewExerciseItem[]>([]);
   const queueIndexRef = useRef(0);
-  const advancePendingRef = useRef(false);
-
-  const coachingEngineRef = useRef(new PhysioCoachingEngine());
-  const introActiveRef = useRef(false);
-  const introPendingRef = useRef(false);
-  const introReleaseAtRef = useRef<number | null>(null);
   const calibrationCompleteRef = useRef(false);
-  const speakingIntentIdRef = useRef<string | null>(null);
+  const advancePendingRef = useRef(false);
 
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
   const [statusCollapsed, setStatusCollapsed] = useState(false);
-  const [showDebug, setShowDebug] = useState(true);
 
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [aiCoachingEnabled, setAiCoachingEnabled] = useState(false);
-  const [realVoiceEnabled, setRealVoiceEnabled] = useState(false);
-
   const [frame, setFrame] = useState<PoseFrame | null>(null);
   const [features, setFeatures] = useState<MovementFeatures>(createEmptyFeatures());
-  const [repCount, setRepCount] = useState(0);
   const [phase, setPhase] = useState("ready");
+  const [repCount, setRepCount] = useState(0);
   const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
   const [activeMetricValue, setActiveMetricValue] = useState<number | null>(null);
-  const [coaching, setCoaching] = useState<CoachingDecision>(createIdleCoaching());
   const [framingBanner, setFramingBanner] = useState<FramingBannerState>({
     tone: "warning",
     message: "Camera is off."
@@ -334,12 +449,11 @@ export default function SessionRunner() {
   const [framingCalibrated, setFramingCalibrated] = useState(false);
   const [engineStatus, setEngineStatus] = useState<"idle" | "loading" | "running" | "error">("idle");
   const [engineError, setEngineError] = useState("");
-
-  const [lastEvent, setLastEvent] = useState<RehabEvent>("idle");
+  const [liveObservation, setLiveObservation] = useState<LiveObservation>({
+    visibilityLines: ["Camera is off."],
+    movementLines: ["No movement is being tracked yet."]
+  });
   const [lastPrimaryIssue, setLastPrimaryIssue] = useState("idle");
-  const [lastDetectedIssues, setLastDetectedIssues] = useState<string[]>([]);
-  const [lastFailureReason, setLastFailureReason] = useState<string | null>(null);
-  const [coachingDebug, setCoachingDebug] = useState<unknown>(null);
 
   const selectedSessions = useMemo(() => {
     return sessions.filter((session) => selectedSessionIds.includes(session.id));
@@ -392,135 +506,22 @@ export default function SessionRunner() {
     }
   }
 
-  function clearIntroTimeout() {
-    if (introTimeoutRef.current !== null) {
-      window.clearTimeout(introTimeoutRef.current);
-      introTimeoutRef.current = null;
-    }
-  }
-
-  function cancelBrowserSpeech() {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-  }
-
-  function speakIntent(intent: VoiceIntent) {
-    if (!voiceEnabled) return;
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-
-    cancelBrowserSpeech();
-
-    const utterance = new SpeechSynthesisUtterance(intent.text);
-    utterance.rate = realVoiceEnabled ? 0.92 : 0.88;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-
-    speakingIntentIdRef.current = intent.id;
-    coachingEngineRef.current.markSpeechStarted(intent.id, Date.now());
-
-    utterance.onend = () => {
-      coachingEngineRef.current.markSpeechCompleted(intent.id, Date.now());
-      if (speakingIntentIdRef.current === intent.id) {
-        speakingIntentIdRef.current = null;
-      }
-    };
-
-    utterance.onerror = () => {
-      coachingEngineRef.current.markSpeechCompleted(intent.id, Date.now());
-      if (speakingIntentIdRef.current === intent.id) {
-        speakingIntentIdRef.current = null;
-      }
-    };
-
-    window.speechSynthesis.speak(utterance);
-  }
-
-  function applyIntent(intent: VoiceIntent) {
-    const decision = mapVoiceIntentToDecision(intent);
-    setCoaching({
-      ...decision,
-      message: normalizeMessage(decision.message)
-    });
-    speakIntent(intent);
-  }
-
-  function setIntroActive(active: boolean, nowMs?: number) {
-    introActiveRef.current = active;
-    coachingEngineRef.current.setExerciseIntroActive(active, nowMs ?? Date.now());
-
-    if (!active) {
-      introReleaseAtRef.current = null;
-      introPendingRef.current = false;
-    }
-  }
-
-  function triggerExerciseIntro(prescription: ExercisePrescription | null, delayMs = 1200) {
-    if (!prescription) return;
-
-    clearIntroTimeout();
-    introPendingRef.current = true;
-
-    introTimeoutRef.current = window.setTimeout(() => {
-      introPendingRef.current = false;
-      setIntroActive(true, Date.now());
-
-      const intent: VoiceIntent = {
-        id: `exercise-intro-${prescription.id}-${Date.now()}`,
-        kind: "exercise_intro",
-        text: getStartMessage(prescription),
-        priority: 4,
-        speakDuringPhases: ["ready"],
-        validWhile: () => true,
-        expiresAfterMs: 6000,
-        cancelIfPhaseChanges: true,
-        createdAt: Date.now(),
-        exerciseId: prescription.id,
-        timing: {
-          mandatorySilenceAfterMs: INTRO_LOCK_MS
-        },
-        interruption: {
-          canInterruptCurrentSpeech: false,
-          flushLowerPriorityQueue: false
-        }
-      };
-
-      introReleaseAtRef.current = Date.now() + INTRO_LOCK_MS;
-      applyIntent(intent);
-
-      introTimeoutRef.current = window.setTimeout(() => {
-        setIntroActive(false, Date.now());
-      }, INTRO_LOCK_MS);
-    }, delayMs);
-  }
-
-  function resetExerciseRuntime() {
+  function resetTrackingState() {
     repStateRef.current = createInitialRepState();
     featureHistoryRef.current.clear();
-    advancePendingRef.current = false;
     calibrationCompleteRef.current = false;
-    setFramingCalibrated(false);
+    advancePendingRef.current = false;
 
-    setRepCount(0);
+    setFramingCalibrated(false);
     setPhase("ready");
+    setRepCount(0);
     setHoldRemainingMs(null);
     setActiveMetricValue(null);
-    setLastEvent("idle");
     setLastPrimaryIssue("idle");
-    setLastDetectedIssues([]);
-    setLastFailureReason(null);
-
-    introPendingRef.current = false;
-    setIntroActive(false, Date.now());
-  }
-
-  function resetSessionRuntime() {
-    coachingEngineRef.current.resetSession(`session-${Date.now()}`);
-    clearAdvanceTimeout();
-    clearIntroTimeout();
-    cancelBrowserSpeech();
-    speakingIntentIdRef.current = null;
-    introPendingRef.current = false;
-    setIntroActive(false, Date.now());
+    setLiveObservation({
+      visibilityLines: ["Waiting for camera input."],
+      movementLines: ["No movement is being tracked yet."]
+    });
   }
 
   function stopTracking() {
@@ -532,31 +533,23 @@ export default function SessionRunner() {
     }
 
     clearAdvanceTimeout();
-    clearIntroTimeout();
-    cancelBrowserSpeech();
-
     videoRef.current = null;
-    sessionStartedRef.current = false;
     activeQueueRef.current = [];
     queueIndexRef.current = 0;
     prescriptionRef.current = null;
 
-    resetSessionRuntime();
-
     setEngineStatus("idle");
     setEngineError("");
-    setFrame(null);
-    setFeatures(createEmptyFeatures());
     setSessionStarted(false);
     setSessionComplete(false);
+    setFrame(null);
+    setFeatures(createEmptyFeatures());
     setFramingBanner({
       tone: "warning",
       message: "Camera is off."
     });
-    setCoaching(createIdleCoaching());
-    setCoachingDebug(null);
 
-    resetExerciseRuntime();
+    resetTrackingState();
   }
 
   async function beginTracking(video: HTMLVideoElement) {
@@ -566,7 +559,7 @@ export default function SessionRunner() {
       videoRef.current = video;
       trackingActiveRef.current = true;
 
-      resetExerciseRuntime();
+      resetTrackingState();
 
       if (!detectorRef.current) {
         detectorRef.current = await createPoseDetector();
@@ -626,8 +619,6 @@ export default function SessionRunner() {
 
           setFeatures(smoothedFeatures);
 
-          const previousPhase = repStateRef.current.phase;
-
           const output = interpretMovement(
             repStateRef.current,
             smoothedFeatures,
@@ -640,79 +631,13 @@ export default function SessionRunner() {
             }
           );
 
-          let event: RehabEvent = "idle";
-
-          if (output.isComplete && previousPhase !== "complete") {
-            event = "exercise_complete";
-          } else if (output.repState.justCompletedRep) {
-            event = "rep_complete";
-          } else if (output.repState.justFailedRep) {
-            event = "rep_failed";
-          } else if (previousPhase === "ready" && output.repState.phase === "lifting") {
-            event = "start";
-          } else if (previousPhase !== output.repState.phase) {
-            event = "phase_change";
-          }
-
           repStateRef.current = output.repState;
 
-          setRepCount(output.repState.repCount);
           setPhase(output.repState.phase);
+          setRepCount(output.repState.repCount);
           setHoldRemainingMs(output.holdRemainingMs);
           setActiveMetricValue(output.activeMetricValue);
-          setLastEvent(event);
           setLastPrimaryIssue(output.primaryIssue);
-
-          // Only release intro once the intro is actually on screen.
-      if (
-  introActiveRef.current &&
-  !introPendingRef.current &&
-  output.repState.phase !== "ready"
-) {
-  clearIntroTimeout();
-  setIntroActive(false, Date.now());
-
-  // Force the intro to give up control as soon as the user starts moving. Hope
-  coachingEngineRef.current.interruptSpeech(Date.now());
-  coachingEngineRef.current.flushVoiceQueue();
-
-  // Do not leave the panel blank while waiting for the next queued cue.
-  if (output.repState.phase === "lifting") {
-    setCoaching({
-      code: "start_exercise",
-      priority: "info",
-      message: "Lift to shoulder height."
-    });
-  } else if (output.repState.phase === "holding") {
-    setCoaching({
-      code: "hold_position",
-      priority: "info",
-      message: "Hold it there."
-    });
-  } else if (output.repState.phase === "lowering") {
-    setCoaching({
-      code: "lower_slowly",
-      priority: "info",
-      message: "Lower slowly."
-    });
-  } else {
-    setCoaching({
-      code: "start_exercise",
-      priority: "info",
-      message: "Begin when ready."
-    });
-  }
-}
-
-          const rehabState = buildRehabState(
-            smoothedFeatures,
-            output.repState,
-            activePrescription,
-            event
-          );
-
-          setLastDetectedIssues(rehabState.detectedIssues);
-          setLastFailureReason(rehabState.failureReason);
 
           const readiness = evaluateReadiness({
             frame: normalized,
@@ -721,134 +646,49 @@ export default function SessionRunner() {
             averageBrightness: null
           });
 
-          const calibrationRequired = isCalibrationExercise(activePrescription);
+          const personDetected = Boolean((normalized as any)?.personDetected);
 
           if (
-            calibrationRequired &&
+            isCalibrationExercise(activePrescription) &&
             !calibrationCompleteRef.current &&
-            normalized.personDetected &&
+            personDetected &&
             readiness.checks.upperBodyVisible &&
             hasPassedArmRaiseCalibration(smoothedFeatures)
           ) {
             calibrationCompleteRef.current = true;
             setFramingCalibrated(true);
-
-            const confirmIntent: VoiceIntent = {
-              id: `framing-confirmed-${Date.now()}`,
-              kind: "framing",
-              text: "Framing confirmed. We can begin.",
-              priority: 5,
-              speakDuringPhases: ["ready"],
-              validWhile: () => true,
-              expiresAfterMs: 4000,
-              cancelIfPhaseChanges: true,
-              createdAt: Date.now(),
-              exerciseId: activePrescription.id,
-              timing: {
-                mandatorySilenceAfterMs: 1800
-              },
-              interruption: {
-                canInterruptCurrentSpeech: true,
-                flushLowerPriorityQueue: true
-              }
-            };
-
-            applyIntent(confirmIntent);
-            triggerExerciseIntro(activePrescription, 900);
           }
 
-          const calibrationActive = calibrationRequired && !calibrationCompleteRef.current;
-
-          if (calibrationActive) {
-            setFramingBanner(
-              buildPreCalibrationBanner(readiness.message, normalized.personDetected)
-            );
-
-            coachingEngineRef.current.setCalibrationActive(true);
-
-            if (
-              normalizeMessage(coaching.message) !==
-              normalizeMessage("Lift both arms once so I can check your framing.")
-            ) {
-              const framingIntent: VoiceIntent = {
-                id: `framing-check-${activePrescription.id}-${Date.now()}`,
-                kind: "framing",
-                text: "Lift both arms once so I can check your framing.",
-                priority: 5,
-                speakDuringPhases: ["ready"],
-                validWhile: () => true,
-                expiresAfterMs: 7000,
-                cancelIfPhaseChanges: true,
-                createdAt: Date.now(),
-                exerciseId: activePrescription.id,
-                timing: {
-                  mandatorySilenceAfterMs: 4500
-                },
-                interruption: {
-                  canInterruptCurrentSpeech: true,
-                  flushLowerPriorityQueue: true
-                }
-              };
-
-              applyIntent(framingIntent);
-            }
-
-            if (trackingActiveRef.current) {
-              rafRef.current = window.requestAnimationFrame(loop);
-            }
-            return;
-          }
-
-          coachingEngineRef.current.setCalibrationActive(false);
+          const calibrationComplete =
+            !isCalibrationExercise(activePrescription) || calibrationCompleteRef.current;
 
           setFramingBanner(
-            buildPassiveFramingBanner(
-              readiness.ready,
+            buildFramingBanner(
+              activePrescription,
               readiness.message,
-              normalized.personDetected
+              readiness.ready,
+              personDetected,
+              smoothedFeatures,
+              calibrationComplete
             )
           );
 
-          if (!calibrationRequired && !introActiveRef.current && !introPendingRef.current) {
-            triggerExerciseIntro(activePrescription, 0);
-          }
-
-          const holdRequiredMs = activePrescription.hold.durationMs;
-          const holdElapsedMs =
-            output.holdRemainingMs !== null
-              ? Math.max(0, holdRequiredMs - output.holdRemainingMs)
-              : null;
-
-          const coachingTick = coachingEngineRef.current.tick({
-            timestampMs: Date.now(),
-            sessionId: "active-session",
-            exerciseId: activePrescription.id,
-            phase: output.repState.phase as any,
-            repCount: output.repState.repCount,
-            holdElapsedMs,
-            holdRequiredMs,
-            detectedIssues: rehabState.detectedIssues,
-            primaryIssue: output.primaryIssue,
-            armElevation:
-              activePrescription.side === "right"
-                ? smoothedFeatures.rightArmElevationDeg
-                : activePrescription.side === "left"
-                  ? smoothedFeatures.leftArmElevationDeg
-                  : smoothedFeatures.bilateralArmElevationDeg,
-            calibrationActive: false,
-            exerciseIntroActive: introActiveRef.current || introPendingRef.current
+          setLiveObservation({
+            visibilityLines: buildVisibilityLines(
+              normalized,
+              readiness.message,
+              readiness.ready
+            ),
+            movementLines: buildMovementLines(
+              activePrescription,
+              output.repState.phase,
+              smoothedFeatures,
+              output.repState.repCount,
+              output.holdRemainingMs,
+              output.primaryIssue,
+              output.activeMetricValue
+            )
           });
-
-          setCoachingDebug({
-            observations: coachingTick.observations,
-            queue: coachingTick.queueSnapshot,
-            behaviour: coachingTick.behaviourState,
-            aiEnabled: aiCoachingEnabled
-          });
-
-          if (coachingTick.nextSpeakableIntent) {
-            applyIntent(coachingTick.nextSpeakableIntent);
-          }
 
           if (output.isComplete && !advancePendingRef.current) {
             advancePendingRef.current = true;
@@ -857,88 +697,14 @@ export default function SessionRunner() {
             const nextExercise = activeQueueRef.current[nextIndex] ?? null;
 
             if (nextExercise) {
-              const transitionIntent: VoiceIntent = {
-                id: `exercise-complete-${Date.now()}`,
-                kind: "exercise_transition",
-                text: `Exercise complete. Next: ${nextExercise.displayName}.`,
-                priority: 5,
-                speakDuringPhases: ["ready", "complete", "lowering"],
-                validWhile: () => true,
-                expiresAfterMs: 5000,
-                cancelIfPhaseChanges: false,
-                createdAt: Date.now(),
-                exerciseId: activePrescription.id,
-                timing: {
-                  mandatorySilenceAfterMs: 2200
-                },
-                interruption: {
-                  canInterruptCurrentSpeech: true,
-                  flushLowerPriorityQueue: true
-                }
-              };
-
-              applyIntent(transitionIntent);
-
               clearAdvanceTimeout();
               advanceTimeoutRef.current = window.setTimeout(() => {
                 queueIndexRef.current = nextIndex;
                 prescriptionRef.current = nextExercise.prescription;
-
-                resetExerciseRuntime();
-                coachingEngineRef.current.resetExercise(nextExercise.prescription.id);
-
-                if (isCalibrationExercise(nextExercise.prescription)) {
-                  const framingIntent: VoiceIntent = {
-                    id: `framing-check-${nextExercise.prescription.id}-${Date.now()}`,
-                    kind: "framing",
-                    text: "Lift both arms once so I can check your framing.",
-                    priority: 5,
-                    speakDuringPhases: ["ready"],
-                    validWhile: () => true,
-                    expiresAfterMs: 7000,
-                    cancelIfPhaseChanges: true,
-                    createdAt: Date.now(),
-                    exerciseId: nextExercise.prescription.id,
-                    timing: {
-                      mandatorySilenceAfterMs: 4500
-                    },
-                    interruption: {
-                      canInterruptCurrentSpeech: true,
-                      flushLowerPriorityQueue: true
-                    }
-                  };
-
-                  applyIntent(framingIntent);
-                } else {
-                  calibrationCompleteRef.current = true;
-                  setFramingCalibrated(true);
-                  triggerExerciseIntro(nextExercise.prescription, 0);
-                }
-              }, 2200);
+                resetTrackingState();
+              }, 1200);
             } else {
               setSessionComplete(true);
-
-              const doneIntent: VoiceIntent = {
-                id: `session-complete-${Date.now()}`,
-                kind: "exercise_transition",
-                text: "Session complete. Well done.",
-                priority: 5,
-                speakDuringPhases: ["ready", "complete", "lowering"],
-                validWhile: () => true,
-                expiresAfterMs: 5000,
-                cancelIfPhaseChanges: false,
-                createdAt: Date.now(),
-                exerciseId: activePrescription.id,
-                timing: {
-                  mandatorySilenceAfterMs: 2600
-                },
-                interruption: {
-                  canInterruptCurrentSpeech: true,
-                  flushLowerPriorityQueue: true
-                }
-              };
-
-              applyIntent(doneIntent);
             }
           }
         } catch (error) {
@@ -946,7 +712,10 @@ export default function SessionRunner() {
 
           const message = error instanceof Error ? error.message : String(error);
 
-          if (message.toLowerCase().includes("aborted") || message.toLowerCase().includes("abort")) {
+          if (
+            message.toLowerCase().includes("aborted") ||
+            message.toLowerCase().includes("abort")
+          ) {
             if (trackingActiveRef.current) {
               rafRef.current = window.requestAnimationFrame(loop);
             }
@@ -987,6 +756,7 @@ export default function SessionRunner() {
         const next = current.filter((id) => id !== sessionId);
         return next.length > 0 ? next : current;
       }
+
       return [...current, sessionId];
     });
   }
@@ -994,18 +764,11 @@ export default function SessionRunner() {
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
 
-    const firstPrescription = combinedQueue[0].prescription;
-    const needsCalibration = isCalibrationExercise(firstPrescription);
-
     activeQueueRef.current = combinedQueue;
     queueIndexRef.current = 0;
-    prescriptionRef.current = firstPrescription;
-
-    resetSessionRuntime();
-    resetExerciseRuntime();
+    prescriptionRef.current = combinedQueue[0].prescription;
 
     setSessionStarted(true);
-    sessionStartedRef.current = true;
     setSessionComplete(false);
     setSelectorCollapsed(true);
     setStatusCollapsed(false);
@@ -1014,36 +777,7 @@ export default function SessionRunner() {
       message: "Position yourself in view."
     });
 
-    if (needsCalibration) {
-      coachingEngineRef.current.setCalibrationActive(true);
-
-      const framingIntent: VoiceIntent = {
-        id: `framing-start-${Date.now()}`,
-        kind: "framing",
-        text: "Lift both arms once so I can check your framing.",
-        priority: 5,
-        speakDuringPhases: ["ready"],
-        validWhile: () => true,
-        expiresAfterMs: 7000,
-        cancelIfPhaseChanges: true,
-        createdAt: Date.now(),
-        exerciseId: firstPrescription.id,
-        timing: {
-          mandatorySilenceAfterMs: 4500
-        },
-        interruption: {
-          canInterruptCurrentSpeech: true,
-          flushLowerPriorityQueue: true
-        }
-      };
-
-      applyIntent(framingIntent);
-    } else {
-      calibrationCompleteRef.current = true;
-      setFramingCalibrated(true);
-      coachingEngineRef.current.setCalibrationActive(false);
-      triggerExerciseIntro(firstPrescription, 0);
-    }
+    resetTrackingState();
 
     try {
       await cameraRef.current?.startCamera();
@@ -1058,31 +792,19 @@ export default function SessionRunner() {
 
   function resetSession() {
     clearAdvanceTimeout();
-    clearIntroTimeout();
-    queueIndexRef.current = 0;
 
-    if (activeQueueRef.current[0]) {
+    if (sessionStarted && activeQueueRef.current[0]) {
+      queueIndexRef.current = 0;
       prescriptionRef.current = activeQueueRef.current[0].prescription;
     }
 
     setSessionComplete(false);
-    resetSessionRuntime();
-    resetExerciseRuntime();
+    resetTrackingState();
 
     setFramingBanner({
       tone: "warning",
       message: sessionStarted ? "Position yourself in view." : "Camera is off."
     });
-
-    setCoaching(
-      sessionStarted
-        ? {
-            code: "start_exercise",
-            priority: "info",
-            message: "Session reset. Press Begin Session to start again."
-          }
-        : createIdleCoaching()
-    );
   }
 
   useEffect(() => {
@@ -1096,18 +818,23 @@ export default function SessionRunner() {
     engineStatus !== "running" &&
     engineStatus !== "loading";
 
-  const currentExerciseLabel = currentQueueItem?.displayName ?? "No active exercise";
-  const currentQueueIndex = queueIndexRef.current;
+  const currentExerciseLabel = getExerciseDisplayName(currentQueueItem);
   const overallProgressLabel =
     activeQueueRef.current.length > 0
-      ? `Exercise ${Math.min(currentQueueIndex + 1, activeQueueRef.current.length)} of ${activeQueueRef.current.length}`
+      ? `Exercise ${Math.min(queueIndexRef.current + 1, activeQueueRef.current.length)} of ${activeQueueRef.current.length}`
       : "No session selected";
 
-  const holdSeconds =
-    holdRemainingMs !== null ? Math.max(1, Math.ceil(holdRemainingMs / 1000)) : null;
+  const instructionBody = getInstructionBody(
+    currentPrescription,
+    currentPrescription?.repTarget ?? 0
+  );
 
   return (
     <div style={{ marginTop: 12 }}>
+      <div style={{ color: "#d8e2ff", marginBottom: 6, fontSize: 14 }}>
+        Movement Intelligence platform for physiotherapy.
+      </div>
+
       <h1 style={{ marginTop: 0, marginBottom: 18, fontSize: 28, lineHeight: 1.2 }}>
         AI Physio BioMech Session Runner
       </h1>
@@ -1206,20 +933,6 @@ export default function SessionRunner() {
             >
               {selectorCollapsed ? "Expand Selector" : "Collapse Selector"}
             </button>
-
-            <button
-              onClick={() => setShowDebug((v) => !v)}
-              style={{
-                background: "rgba(255,255,255,0.12)",
-                color: "white",
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "none",
-                cursor: "pointer"
-              }}
-            >
-              {showDebug ? "Hide Debug" : "Show Debug"}
-            </button>
           </div>
         </div>
 
@@ -1312,46 +1025,6 @@ export default function SessionRunner() {
                 >
                   Session Preview
                 </div>
-
-                {sessionPreviews.length > 1 && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      onClick={() =>
-                        setPreviewIndex((current) =>
-                          current === 0 ? sessionPreviews.length - 1 : current - 1
-                        )
-                      }
-                      style={{
-                        background: "rgba(255,255,255,0.08)",
-                        color: "white",
-                        border: "none",
-                        padding: "8px 12px",
-                        borderRadius: 8,
-                        cursor: "pointer"
-                      }}
-                    >
-                      Previous
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        setPreviewIndex((current) =>
-                          current === sessionPreviews.length - 1 ? 0 : current + 1
-                        )
-                      }
-                      style={{
-                        background: "rgba(255,255,255,0.08)",
-                        color: "white",
-                        border: "none",
-                        padding: "8px 12px",
-                        borderRadius: 8,
-                        cursor: "pointer"
-                      }}
-                    >
-                      Next
-                    </button>
-                  </div>
-                )}
               </div>
 
               {sessionPreviews.length > 0 ? (
@@ -1433,34 +1106,6 @@ export default function SessionRunner() {
                           ? inferSessionGoal(activePreview.items.map((item) => item.id))
                           : "Select a session to preview it."}
                       </div>
-
-                      {activePreview && (
-                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                          <span
-                            style={{
-                              padding: "5px 10px",
-                              borderRadius: 999,
-                              background: "rgba(124,198,255,0.12)",
-                              color: "#7cc6ff",
-                              fontSize: 12
-                            }}
-                          >
-                            {formatDurationRange(activePreview.durationSeconds)}
-                          </span>
-
-                          <span
-                            style={{
-                              padding: "5px 10px",
-                              borderRadius: 999,
-                              background: "rgba(255,255,255,0.08)",
-                              color: "white",
-                              fontSize: 12
-                            }}
-                          >
-                            {activePreview.totalReps} reps
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -1483,9 +1128,6 @@ export default function SessionRunner() {
                             {item.prescription.repTarget} reps
                             {item.prescription.hold.required
                               ? ` • ${item.prescription.hold.durationMs / 1000}s hold`
-                              : ""}
-                            {item.prescription.tempo?.label
-                              ? ` • ${item.prescription.tempo.label}`
                               : ""}
                           </div>
                         </div>
@@ -1519,7 +1161,7 @@ export default function SessionRunner() {
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: 20,
-          alignItems: "stretch"
+          alignItems: "start"
         }}
       >
         <section
@@ -1528,9 +1170,7 @@ export default function SessionRunner() {
             padding: 20,
             borderRadius: 14,
             minHeight: 540,
-            border: "1px solid rgba(255,255,255,0.08)",
-            display: "flex",
-            flexDirection: "column"
+            border: "1px solid rgba(255,255,255,0.08)"
           }}
         >
           <div
@@ -1555,7 +1195,7 @@ export default function SessionRunner() {
                 fontWeight: 700
               }}
             >
-              {sessionComplete ? "Complete" : formatPhase(phase)}
+              {formatPhase(phase)}
             </div>
           </div>
 
@@ -1608,18 +1248,154 @@ export default function SessionRunner() {
           )}
         </section>
 
-        <CoachingPanel
-          title="Live Coaching"
-          message={coaching.message}
-          secondaryMessage={null}
-          phase={phase}
-          repCount={repCount}
-          repTarget={currentPrescription?.repTarget ?? 0}
-          exerciseName={currentExerciseLabel}
-          progressLabel={overallProgressLabel}
-          holdSeconds={holdSeconds}
-          minHeight={540}
-        />
+        <section
+          style={{
+            display: "grid",
+            gap: 16
+          }}
+        >
+          <div
+            style={{
+              background: "#1a2040",
+              padding: 20,
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.08)"
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 12,
+                flexWrap: "wrap"
+              }}
+            >
+              <h2 style={{ margin: 0 }}>Live Coaching</h2>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: "rgba(124,198,255,0.12)",
+                    color: "#7cc6ff",
+                    fontSize: 12,
+                    fontWeight: 700
+                  }}
+                >
+                  {formatPhase(phase)}
+                </span>
+
+                <span
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    color: "white",
+                    fontSize: 12,
+                    fontWeight: 700
+                  }}
+                >
+                  {currentPrescription?.repTarget ? `Rep ${repCount}/${currentPrescription.repTarget}` : "Rep 0/0"}
+                </span>
+
+                {holdRemainingMs !== null && phase === "holding" && (
+                  <span
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: "rgba(100,220,150,0.15)",
+                      color: "#9be7b0",
+                      fontSize: 12,
+                      fontWeight: 700
+                    }}
+                  >
+                    Hold {Math.max(1, Math.ceil(holdRemainingMs / 1000))}s
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: "#101833",
+                borderRadius: 12,
+                padding: 20,
+                minHeight: 180,
+                border: "1px solid rgba(255,255,255,0.06)"
+              }}
+            >
+              <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1.15, marginBottom: 16 }}>
+                {getInstructionTitle(currentQueueItem)}
+              </div>
+
+              <div style={{ fontSize: 18, lineHeight: 1.5, color: "#e6ecff", marginBottom: 14 }}>
+                {instructionBody}
+              </div>
+
+              <div style={{ display: "grid", gap: 8, color: "#c7d3f5", fontSize: 15 }}>
+                <div>
+                  <strong>Required position:</strong> {getPositionRequirement(currentPrescription)}
+                </div>
+                <div>
+                  <strong>Progress:</strong> {overallProgressLabel}
+                </div>
+                <div>
+                  <strong>Session state:</strong> {sessionComplete ? "Session complete." : "In progress"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              background: "#1a2040",
+              padding: 20,
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.08)"
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>What the camera sees</h3>
+            <div
+              style={{
+                background: "#101833",
+                borderRadius: 12,
+                padding: 16,
+                border: "1px solid rgba(255,255,255,0.06)",
+                marginBottom: 14
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 10 }}>Visibility</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {liveObservation.visibilityLines.map((line, index) => (
+                  <div key={`vis-${index}`} style={{ color: "#d8e2ff", lineHeight: 1.45 }}>
+                    • {line}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: "#101833",
+                borderRadius: 12,
+                padding: 16,
+                border: "1px solid rgba(255,255,255,0.06)"
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 10 }}>Natural-language movement status</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {liveObservation.movementLines.map((line, index) => (
+                  <div key={`move-${index}`} style={{ color: "#d8e2ff", lineHeight: 1.45 }}>
+                    • {line}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       <section
@@ -1645,7 +1421,7 @@ export default function SessionRunner() {
             <h3 style={{ margin: 0 }}>Session Status</h3>
             {!statusCollapsed && (
               <div style={{ color: "#aab6d3", marginTop: 4, fontSize: 13 }}>
-                Current session progress and coaching settings.
+                Current session progress and technical status.
               </div>
             )}
           </div>
@@ -1691,71 +1467,18 @@ export default function SessionRunner() {
               </div>
 
               <div>
-                Voice coaching:
+                Framing:
                 <div style={{ fontWeight: 700, marginTop: 4 }}>
-                  {voiceEnabled ? "On" : "Off"}
+                  {framingCalibrated ? "Confirmed" : "Pending / not required"}
                 </div>
               </div>
 
               <div>
-                Real voice:
+                Primary issue:
                 <div style={{ fontWeight: 700, marginTop: 4 }}>
-                  {realVoiceEnabled ? "On" : "Off"}
+                  {lastPrimaryIssue.replaceAll("_", " ")}
                 </div>
               </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14 }}>
-              <label
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: "white"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(e) => setVoiceEnabled(e.target.checked)}
-                />
-                Voice coaching
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: "white"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={aiCoachingEnabled}
-                  onChange={(e) => setAiCoachingEnabled(e.target.checked)}
-                />
-                AI coaching variation
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: "white"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={realVoiceEnabled}
-                  onChange={(e) => setRealVoiceEnabled(e.target.checked)}
-                />
-                Real voice
-              </label>
             </div>
 
             <div style={{ marginTop: 14 }}>
@@ -1764,32 +1487,6 @@ export default function SessionRunner() {
           </>
         )}
       </section>
-
-      {showDebug && (
-        <div style={{ display: "grid", gap: 20, marginTop: 20 }}>
-          <DebugPanel features={features} />
-
-          <AiDebugPanel
-            runtime={{
-              phase,
-              repCount,
-              repTarget: currentPrescription?.repTarget ?? 0,
-              holdSeconds,
-              activeMetricValue,
-              engineStatus,
-              currentExercise: currentExerciseLabel,
-              overallProgress: overallProgressLabel,
-              lastEvent,
-              primaryIssue: lastPrimaryIssue,
-              detectedIssues: lastDetectedIssues,
-              failureReason: lastFailureReason,
-              aiRequestInFlight: false
-            }}
-            features={features}
-            aiDebug={coachingDebug}
-          />
-        </div>
-      )}
     </div>
   );
 }
