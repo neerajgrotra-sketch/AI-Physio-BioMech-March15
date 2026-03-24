@@ -672,7 +672,7 @@ export default function SessionRunner() {
   clearIntroTimeout();
   setIntroActive(false, Date.now());
 
-  // Force the intro to give up control as soon as the user starts moving.
+  // Force the intro to give up control as soon as the user starts moving. Hope
   coachingEngineRef.current.interruptSpeech(Date.now());
   coachingEngineRef.current.flushVoiceQueue();
 
