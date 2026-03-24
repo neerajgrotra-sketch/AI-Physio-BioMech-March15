@@ -824,22 +824,22 @@ export default function SessionRunner() {
 
           if (!introStillVisible) {
             const coachingTick = coachingEngineRef.current.tick({
-              timestampMs: Date.now(),
-              sessionId: "active-session",
-              exerciseId: activePrescription.id,
-              phase: output.repState.phase as any,
-              repCount: output.repState.repCount,
-              holdElapsedMs: output.repState.holdElapsedMs ?? output.holdElapsedMs ?? null,
-              holdRequiredMs: output.repState.holdRequiredMs ?? activePrescription.hold.durationMs,
-              detectedIssues: rehabState.detectedIssues,
-              primaryIssue: output.primaryIssue,
-              armElevation:
-                activePrescription.side === "right"
-                  ? smoothedFeatures.rightArmElevationDeg
-                  : activePrescription.side === "left"
-                    ? smoothedFeatures.leftArmElevationDeg
-                    : smoothedFeatures.bilateralArmElevationDeg
-            });
+  timestampMs: Date.now(),
+  sessionId: "active-session",
+  exerciseId: activePrescription.id,
+  phase: output.repState.phase as any,
+  repCount: output.repState.repCount,
+  holdElapsedMs: output.holdElapsedMs ?? null,
+  holdRequiredMs: activePrescription.hold.durationMs,
+  detectedIssues: rehabState.detectedIssues,
+  primaryIssue: output.primaryIssue,
+  armElevation:
+    activePrescription.side === "right"
+      ? smoothedFeatures.rightArmElevationDeg
+      : activePrescription.side === "left"
+        ? smoothedFeatures.leftArmElevationDeg
+        : smoothedFeatures.bilateralArmElevationDeg
+});
 
             setCoachingDebug({
               observations: coachingTick.observations,
