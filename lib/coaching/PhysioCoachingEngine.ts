@@ -20,6 +20,18 @@ export type PhysioCoachingInterpreterFrame = {
   detectedIssues: string[];
   primaryIssue: string;
   armElevation?: number | null;
+
+  /**
+   * While true, the coaching engine is muted and will not produce
+   * hold cues, corrections, or encouragement.
+   */
+  calibrationActive?: boolean;
+
+  /**
+   * While true, the engine suppresses observations and voice generation
+   * so the user has time to read/hear the intro.
+   */
+  exerciseIntroActive?: boolean;
 };
 
 export type PhysioCoachingTickResult = {
@@ -33,7 +45,12 @@ export type PhysioCoachingTickResult = {
 export type PhysioCoachingEngineSnapshot = {
   behaviourState: PhysioBehaviourState | null;
   queueSnapshot: VoiceQueueSnapshot;
+  calibrationActive: boolean;
+  exerciseIntroActive: boolean;
+  suppressObservationsUntilMs: number | null;
 };
+
+const INTRO_SUPPRESSION_MS = 2200;
 
 export class PhysioCoachingEngine {
   private observationBuffer: ObservationBuffer;
@@ -43,6 +60,11 @@ export class PhysioCoachingEngine {
   private behaviourState: PhysioBehaviourState | null = null;
   private currentSessionId: string | null = null;
   private currentExerciseId: string | null = null;
+
+  private calibrationActive = false;
+  private exerciseIntroActive = false;
+  private suppressObservationsUntilMs: number | null = null;
+  private lastRepCount = 0;
 
   constructor() {
     this.observationBuffer = new ObservationBuffer();
@@ -57,12 +79,19 @@ export class PhysioCoachingEngine {
     this.behaviourState = null;
     this.currentSessionId = sessionId ?? null;
     this.currentExerciseId = null;
+    this.calibrationActive = false;
+    this.exerciseIntroActive = false;
+    this.suppressObservationsUntilMs = null;
+    this.lastRepCount = 0;
   }
 
   resetExercise(exerciseId?: string): void {
     this.observationBuffer = new ObservationBuffer();
     this.voiceQueue.flush();
     this.currentExerciseId = exerciseId ?? null;
+    this.exerciseIntroActive = false;
+    this.suppressObservationsUntilMs = null;
+    this.lastRepCount = 0;
 
     if (this.behaviourState) {
       this.behaviourState = {
@@ -96,6 +125,32 @@ export class PhysioCoachingEngine {
     }
   }
 
+  setCalibrationActive(active: boolean): void {
+    this.calibrationActive = active;
+    if (active) {
+      this.voiceQueue.flush();
+      this.suppressObservationsUntilMs = null;
+    }
+  }
+
+  setExerciseIntroActive(active: boolean, nowMs?: number): void {
+    this.exerciseIntroActive = active;
+
+    if (active) {
+      this.voiceQueue.flush();
+      this.suppressObservationsUntilMs =
+        (nowMs ?? Date.now()) + INTRO_SUPPRESSION_MS;
+      return;
+    }
+
+    if (this.suppressObservationsUntilMs !== null) {
+      this.suppressObservationsUntilMs = Math.max(
+        this.suppressObservationsUntilMs,
+        (nowMs ?? Date.now()) + 600
+      );
+    }
+  }
+
   tick(frame: PhysioCoachingInterpreterFrame): PhysioCoachingTickResult {
     if (!this.currentSessionId || this.currentSessionId !== frame.sessionId) {
       this.resetSession(frame.sessionId);
@@ -107,6 +162,51 @@ export class PhysioCoachingEngine {
 
     this.currentSessionId = frame.sessionId;
     this.currentExerciseId = frame.exerciseId;
+
+    if (typeof frame.calibrationActive === "boolean") {
+      this.setCalibrationActive(frame.calibrationActive);
+    }
+
+    if (typeof frame.exerciseIntroActive === "boolean") {
+      this.setExerciseIntroActive(frame.exerciseIntroActive, frame.timestampMs);
+    }
+
+    const emptyResult = (): PhysioCoachingTickResult => ({
+      observations: [],
+      intentsGenerated: [],
+      nextSpeakableIntent: null,
+      behaviourState:
+        this.behaviourState ??
+        this.behaviourModel.update(null, {
+          sessionId: frame.sessionId,
+          exerciseId: frame.exerciseId,
+          phase: frame.phase,
+          repCount: frame.repCount,
+          holdElapsedMs: frame.holdElapsedMs,
+          holdRequiredMs: frame.holdRequiredMs,
+          observations: [],
+          nowMs: frame.timestampMs
+        }).nextState,
+      queueSnapshot: this.voiceQueue.getSnapshot()
+    });
+
+    // Hard mute during framing calibration.
+    if (this.calibrationActive) {
+      this.voiceQueue.flush();
+      this.lastRepCount = frame.repCount;
+      return emptyResult();
+    }
+
+    // Let the intro breathe before any behaviour model output.
+    if (
+      this.exerciseIntroActive ||
+      (this.suppressObservationsUntilMs !== null &&
+        frame.timestampMs < this.suppressObservationsUntilMs)
+    ) {
+      this.voiceQueue.flush();
+      this.lastRepCount = frame.repCount;
+      return emptyResult();
+    }
 
     const observations = this.observationBuffer.add({
       timestampMs: frame.timestampMs,
@@ -145,7 +245,9 @@ export class PhysioCoachingEngine {
       });
     }
 
-    if (frame.phase === "complete") {
+    // Clear stale lowering/hold text once a rep completes.
+    const repJustCompleted = frame.repCount > this.lastRepCount;
+    if (repJustCompleted || frame.phase === "complete") {
       this.voiceQueue.onRepComplete({
         nowMs: frame.timestampMs,
         phase: frame.phase
@@ -161,6 +263,8 @@ export class PhysioCoachingEngine {
       nowMs: frame.timestampMs,
       phase: frame.phase
     });
+
+    this.lastRepCount = frame.repCount;
 
     return {
       observations,
@@ -190,7 +294,10 @@ export class PhysioCoachingEngine {
   getSnapshot(): PhysioCoachingEngineSnapshot {
     return {
       behaviourState: this.behaviourState,
-      queueSnapshot: this.voiceQueue.getSnapshot()
+      queueSnapshot: this.voiceQueue.getSnapshot(),
+      calibrationActive: this.calibrationActive,
+      exerciseIntroActive: this.exerciseIntroActive,
+      suppressObservationsUntilMs: this.suppressObservationsUntilMs
     };
   }
 }
