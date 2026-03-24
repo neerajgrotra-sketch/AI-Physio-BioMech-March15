@@ -482,9 +482,10 @@ export default function SessionRunner() {
       introReleaseAtRef.current = Date.now() + INTRO_LOCK_MS;
       applyIntent(intent);
 
-      window.setTimeout(() => {
-        setIntroActive(false, Date.now());
-      }, INTRO_LOCK_MS);
+    introTimeoutRef.current = window.setTimeout(() => {
+  setIntroActive(false, Date.now());
+}, INTRO_LOCK_MS);
+      
     }, delayMs);
   }
 
@@ -655,6 +656,12 @@ export default function SessionRunner() {
           setActiveMetricValue(output.activeMetricValue);
           setLastEvent(event);
           setLastPrimaryIssue(output.primaryIssue);
+
+          // Release the protected intro window as soon as the user actually starts moving.
+if (introActiveRef.current && output.repState.phase !== "ready") {
+  clearIntroTimeout();
+  setIntroActive(false, Date.now());
+}
 
           const rehabState = buildRehabState(
             smoothedFeatures,
