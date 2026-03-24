@@ -303,6 +303,7 @@ export default function SessionRunner() {
 
   const coachingEngineRef = useRef(new PhysioCoachingEngine());
   const introActiveRef = useRef(false);
+  const introPendingRef = useRef(false);
   const introReleaseAtRef = useRef<number | null>(null);
   const calibrationCompleteRef = useRef(false);
   const speakingIntentIdRef = useRef<string | null>(null);
@@ -449,6 +450,7 @@ export default function SessionRunner() {
 
     if (!active) {
       introReleaseAtRef.current = null;
+      introPendingRef.current = false;
     }
   }
 
@@ -456,9 +458,12 @@ export default function SessionRunner() {
     if (!prescription) return;
 
     clearIntroTimeout();
-    setIntroActive(true, Date.now());
+    introPendingRef.current = true;
 
     introTimeoutRef.current = window.setTimeout(() => {
+      introPendingRef.current = false;
+      setIntroActive(true, Date.now());
+
       const intent: VoiceIntent = {
         id: `exercise-intro-${prescription.id}-${Date.now()}`,
         kind: "exercise_intro",
@@ -482,10 +487,9 @@ export default function SessionRunner() {
       introReleaseAtRef.current = Date.now() + INTRO_LOCK_MS;
       applyIntent(intent);
 
-    introTimeoutRef.current = window.setTimeout(() => {
-  setIntroActive(false, Date.now());
-}, INTRO_LOCK_MS);
-      
+      introTimeoutRef.current = window.setTimeout(() => {
+        setIntroActive(false, Date.now());
+      }, INTRO_LOCK_MS);
     }, delayMs);
   }
 
@@ -505,6 +509,7 @@ export default function SessionRunner() {
     setLastDetectedIssues([]);
     setLastFailureReason(null);
 
+    introPendingRef.current = false;
     setIntroActive(false, Date.now());
   }
 
@@ -514,6 +519,7 @@ export default function SessionRunner() {
     clearIntroTimeout();
     cancelBrowserSpeech();
     speakingIntentIdRef.current = null;
+    introPendingRef.current = false;
     setIntroActive(false, Date.now());
   }
 
@@ -657,11 +663,15 @@ export default function SessionRunner() {
           setLastEvent(event);
           setLastPrimaryIssue(output.primaryIssue);
 
-          // Release the protected intro window as soon as the user actually starts moving.
-if (introActiveRef.current && output.repState.phase !== "ready") {
-  clearIntroTimeout();
-  setIntroActive(false, Date.now());
-}
+          // Only release intro once the intro is actually on screen.
+          if (
+            introActiveRef.current &&
+            !introPendingRef.current &&
+            output.repState.phase !== "ready"
+          ) {
+            clearIntroTimeout();
+            setIntroActive(false, Date.now());
+          }
 
           const rehabState = buildRehabState(
             smoothedFeatures,
@@ -725,7 +735,10 @@ if (introActiveRef.current && output.repState.phase !== "ready") {
 
             coachingEngineRef.current.setCalibrationActive(true);
 
-            if (normalizeMessage(coaching.message) !== normalizeMessage("Lift both arms once so I can check your framing.")) {
+            if (
+              normalizeMessage(coaching.message) !==
+              normalizeMessage("Lift both arms once so I can check your framing.")
+            ) {
               const framingIntent: VoiceIntent = {
                 id: `framing-check-${activePrescription.id}-${Date.now()}`,
                 kind: "framing",
@@ -765,7 +778,7 @@ if (introActiveRef.current && output.repState.phase !== "ready") {
             )
           );
 
-          if (!calibrationRequired && !introActiveRef.current && introReleaseAtRef.current === null) {
+          if (!calibrationRequired && !introActiveRef.current && !introPendingRef.current) {
             triggerExerciseIntro(activePrescription, 0);
           }
 
@@ -792,7 +805,7 @@ if (introActiveRef.current && output.repState.phase !== "ready") {
                   ? smoothedFeatures.leftArmElevationDeg
                   : smoothedFeatures.bilateralArmElevationDeg,
             calibrationActive: false,
-            exerciseIntroActive: introActiveRef.current
+            exerciseIntroActive: introActiveRef.current || introPendingRef.current
           });
 
           setCoachingDebug({
