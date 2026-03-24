@@ -823,14 +823,20 @@ export default function SessionRunner() {
             event === "idle";
 
           if (!introStillVisible) {
-            const coachingTick = coachingEngineRef.current.tick({
+   const holdRequiredMs = activePrescription.hold.durationMs;
+const holdElapsedMs =
+  output.holdRemainingMs !== null
+    ? Math.max(0, holdRequiredMs - output.holdRemainingMs)
+    : null;
+
+const coachingTick = coachingEngineRef.current.tick({
   timestampMs: Date.now(),
   sessionId: "active-session",
   exerciseId: activePrescription.id,
   phase: output.repState.phase as any,
   repCount: output.repState.repCount,
-  holdElapsedMs: output.holdElapsedMs ?? null,
-  holdRequiredMs: activePrescription.hold.durationMs,
+  holdElapsedMs,
+  holdRequiredMs,
   detectedIssues: rehabState.detectedIssues,
   primaryIssue: output.primaryIssue,
   armElevation:
