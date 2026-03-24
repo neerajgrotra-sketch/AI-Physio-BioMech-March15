@@ -664,7 +664,7 @@ export default function SessionRunner() {
           setLastPrimaryIssue(output.primaryIssue);
 
           // Only release intro once the intro is actually on screen.
-         if (
+      if (
   introActiveRef.current &&
   !introPendingRef.current &&
   output.repState.phase !== "ready"
@@ -676,12 +676,32 @@ export default function SessionRunner() {
   coachingEngineRef.current.interruptSpeech(Date.now());
   coachingEngineRef.current.flushVoiceQueue();
 
-  // Clear the visible intro immediately so live coaching can take over.
-  setCoaching({
-    code: "idle",
-    priority: "info",
-    message: ""
-  });
+  // Do not leave the panel blank while waiting for the next queued cue.
+  if (output.repState.phase === "lifting") {
+    setCoaching({
+      code: "start_exercise",
+      priority: "info",
+      message: "Lift to shoulder height."
+    });
+  } else if (output.repState.phase === "holding") {
+    setCoaching({
+      code: "hold_position",
+      priority: "info",
+      message: "Hold it there."
+    });
+  } else if (output.repState.phase === "lowering") {
+    setCoaching({
+      code: "lower_slowly",
+      priority: "info",
+      message: "Lower slowly."
+    });
+  } else {
+    setCoaching({
+      code: "start_exercise",
+      priority: "info",
+      message: "Begin when ready."
+    });
+  }
 }
 
           const rehabState = buildRehabState(
