@@ -28,33 +28,7 @@ import type {
   FramingEvaluationResult,
   LandmarkConfidenceReport
 } from "@/lib/framing/framingTypes";
-
-// ============================================================
-// PATIENT PROFILE
-// ============================================================
-// Passed to the AI so it can adapt its language appropriately.
-// Populated by SessionRunner from session configuration.
-// ============================================================
-
-export type PatientProfile = {
-  // Primary patient type — drives tone and language complexity
-  type: "senior" | "post_surgery" | "chronic_pain" | "general_fitness";
-
-  // How familiar is this patient with this exercise?
-  exerciseFamiliarity: "first_time" | "some_experience" | "practiced";
-
-  // Which session number is this?
-  // AI uses this to calibrate how detailed instructions are
-  sessionNumber: number;
-};
-
-export function createDefaultPatientProfile(): PatientProfile {
-  return {
-    type: "general_fitness",
-    exerciseFamiliarity: "some_experience",
-    sessionNumber: 1
-  };
-}
+import type { PatientProfile } from "@/lib/patient/patientTypes";
 
 // ============================================================
 // PROMPT BUILDER
@@ -95,17 +69,18 @@ function buildFramingPrompt(
     general_fitness: "General fitness user — clear and direct language is appropriate"
   };
 
-  const familiarityLabel: Record<PatientProfile["exerciseFamiliarity"], string> = {
-    first_time: "First time doing this exercise — may need more explanation",
-    some_experience: "Has done this exercise before — brief instruction is fine",
-    practiced: "Practiced with this exercise — one-word cues are sufficient"
-  };
+  const familiarityLabel =
+    patientProfile.sessionNumber === 1
+      ? "First time doing this exercise — may need more explanation"
+      : patientProfile.sessionNumber <= 3
+      ? "Has done this exercise before — brief instruction is fine"
+      : "Practiced with this exercise — one-word cues are sufficient";
 
   return `You are a physiotherapy assistant evaluating whether the camera framing is adequate before or during an exercise session.
 
 PATIENT PROFILE:
 - Type: ${patientTypeLabel[patientProfile.type]}
-- Exercise familiarity: ${familiarityLabel[patientProfile.exerciseFamiliarity]}
+- Exercise familiarity: ${familiarityLabel}
 - Session number: ${patientProfile.sessionNumber}
 
 EXERCISE:
