@@ -331,7 +331,7 @@ export default function SessionRunner() {
     onRepCompleted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      writeDebugLog("info", "COACHING", "Rep completed event fired", `prescription=${prescription?.id ?? "null"} ctx=${exerciseCtx ? "ok" : "null"} repCount=${exerciseCtx?.repCount ?? "?"}`);
+      writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + (exerciseCtx?.repCount ?? "?"));
       if (!prescription || !exerciseCtx) { writeDebugLog("error", "COACHING", "onRepCompleted BLOCKED — null ctx or prescription"); return; }
       patientContext.recordRepOutcome("success", null, null);
       writeDebugLog("info", "COACHING", "Calling coachingBrain.onRepCompleted");
