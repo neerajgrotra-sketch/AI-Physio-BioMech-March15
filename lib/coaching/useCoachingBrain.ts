@@ -242,22 +242,42 @@ export function useCoachingBrain() {
         return;
       }
 
-      // Expire response if phase has changed since trigger
-      // Exception: exercise_started and rep_failed are always relevant
+      // Expire response if it arrived too late to be contextually relevant.
+      // Different triggers have different expiry rules.
       const currentPhase = lastPhaseFedRef.current;
-      const phaseChanged = currentPhase !== phaseAtTrigger;
       const isPhaseIndependent =
         trigger === "exercise_started" ||
         trigger === "exercise_completing" ||
         trigger === "rep_failed";
 
-      if (phaseChanged && !isPhaseIndependent) {
-        // Response arrived too late — phase has moved on
-        // Record it as expired in timeline for debugging
+      // Active movement phases — patient is mid-rep
+      const activeMovementPhases = ["lifting", "top", "holding"];
+
+      let isExpired = false;
+
+      if (!isPhaseIndependent) {
+        if (trigger === "rep_completed") {
+          // rep_completed: expire only if a new rep has started
+          // (patient is lifting, at top, or holding again)
+          // READY is fine — patient is between reps, message is still relevant
+          isExpired = activeMovementPhases.includes(currentPhase);
+        } else if (trigger === "hold_started") {
+          // hold_started: expire if no longer holding
+          isExpired = currentPhase !== "holding";
+        } else if (trigger === "hesitation_detected") {
+          // hesitation: expire if patient has started moving
+          isExpired = currentPhase !== "ready";
+        } else {
+          // Default: expire if phase changed at all
+          isExpired = currentPhase !== phaseAtTrigger;
+        }
+      }
+
+      if (isExpired) {
         recordMessage({
           source: "ai",
           trigger: trigger + "_EXPIRED",
-          text: parsed.text + " [expired — phase changed]",
+          text: parsed.text + " [expired]",
           tone: "neutral",
           nowMs: Date.now()
         });
