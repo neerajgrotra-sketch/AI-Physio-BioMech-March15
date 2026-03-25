@@ -318,9 +318,10 @@ export default function SessionRunner() {
     onRepCompleted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      writeDebugLog("info", "COACHING", "Rep completed event fired", `prescription=${prescription?.id ?? "null"} ctx=${exerciseCtx ? "ok" : "null"}`);
-      if (!prescription || !exerciseCtx) { writeDebugLog("warning", "COACHING", "onRepCompleted skipped — null ctx"); return; }
+      writeDebugLog("info", "COACHING", "Rep completed event fired", `prescription=${prescription?.id ?? "null"} ctx=${exerciseCtx ? "ok" : "null"} repCount=${exerciseCtx?.repCount ?? "?"}`);
+      if (!prescription || !exerciseCtx) { writeDebugLog("error", "COACHING", "onRepCompleted BLOCKED — null ctx or prescription"); return; }
       patientContext.recordRepOutcome("success", null, null);
+      writeDebugLog("info", "COACHING", "Calling coachingBrain.onRepCompleted");
       coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
     },
     onRepFailed: (failureReason: string, nowMs: number) => {
@@ -341,8 +342,21 @@ export default function SessionRunner() {
     onExerciseStarted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      writeDebugLog("info", "COACHING", `Exercise started: ${prescription?.name ?? "unknown"}`, `ctx=${exerciseCtx ? "ok" : "null"}`);
-      if (!prescription || !exerciseCtx) { writeDebugLog("warning", "COACHING", "onExerciseStarted skipped — null ctx"); return; }
+      writeDebugLog("info", "COACHING", `Exercise started: ${prescription?.name ?? "unknown"}`, `ctx=${exerciseCtx ? "ok" : "null"} prescription=${prescription?.id ?? "null"}`);
+      if (!prescription) { writeDebugLog("error", "COACHING", "onExerciseStarted — prescription is null"); return; }
+      if (!exerciseCtx) {
+        writeDebugLog("warning", "COACHING", "onExerciseStarted — ctx null, retrying in 300ms");
+        // Retry once after a short delay to allow React state to settle
+        window.setTimeout(() => {
+          const retryCtx = patientContext.getCurrentExerciseContext();
+          const retryPrescription = sessionQueue.getActivePrescription();
+          writeDebugLog("info", "COACHING", `onExerciseStarted retry: ctx=${retryCtx ? "ok" : "still null"}`);
+          if (retryCtx && retryPrescription) {
+            coachingBrain.onExerciseStarted({ prescription: retryPrescription, patientProfile, exerciseContext: retryCtx, nowMs: Date.now() });
+          }
+        }, 300);
+        return;
+      }
       coachingBrain.onExerciseStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
     },
     feedFrame: (params: { phase: string; repCount: number; holdElapsedMs: number | null; holdRequiredMs: number | null; primaryIssue: string; armElevation?: number | null; nowMs: number; }) => {
