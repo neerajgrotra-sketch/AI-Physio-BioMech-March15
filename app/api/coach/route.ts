@@ -1,202 +1,103 @@
+// ============================================================
+// app/api/coach/route.ts
+// ============================================================
+// Backend proxy for all AI calls.
+//
+// All Claude API requests from the browser route through here.
+// This keeps the API key server-side and handles CORS.
+//
+// Accepts POST with body:
+// {
+//   prompt: string        — the full prompt to send
+//   system?: string       — optional system prompt override
+//   maxTokens?: number    — optional token limit (default 1000)
+// }
+//
+// Returns:
+// {
+//   text: string          — Claude's response text
+// }
+// ============================================================
+
 import { NextRequest, NextResponse } from "next/server";
 
-type CoachState = {
-  exerciseName: string;
-  template: string;
-  side: string;
-  phase: string;
-  event: string;
-  repCount: number;
-  repTarget: number;
-  posture: string;
-  isStanding: boolean;
-  isSeated: boolean;
-  detectedIssues: string[];
-  failureReason: string | null;
-  evaluation?: {
-    reachedTarget?: boolean;
-    holdSatisfied?: boolean;
-  };
-  intent?: string;
-  history?: {
-    repeatedIssue?: string;
-    repeatedIssueCount?: number;
-    dominantIssue?: string;
-    trend?: string;
-    consecutiveSuccesses?: number;
-    consecutiveFailures?: number;
-    recentEvents?: string[];
-  };
-};
-
-function buildPrompt(state: CoachState): string {
-  const issues =
-    state.detectedIssues.length > 0 ? state.detectedIssues.join(", ") : "none";
-
-  const repeatedLabel =
-    state.history?.repeatedIssue && state.history.repeatedIssueCount
-      ? `${state.history.repeatedIssue} (${state.history.repeatedIssueCount} times)`
-      : "none";
-
-  return `
-You are a real physiotherapist guiding a live rehab exercise.
-
-Your job is not only to correct mistakes.
-Your job is to guide the patient through the movement.
-
-SESSION CONTEXT
-Exercise: ${state.exerciseName}
-Template: ${state.template}
-Side: ${state.side}
-Phase: ${state.phase}
-Event: ${state.event}
-Reps: ${state.repCount}/${state.repTarget}
-
-PATIENT STATE
-Posture: ${state.posture}
-Standing: ${state.isStanding}
-Seated: ${state.isSeated}
-
-MOVEMENT QUALITY
-Detected issues: ${issues}
-Failure reason: ${state.failureReason ?? "none"}
-Reached target: ${state.evaluation?.reachedTarget ?? false}
-Hold satisfied: ${state.evaluation?.holdSatisfied ?? false}
-
-MEMORY
-Repeated issue: ${repeatedLabel}
-Dominant issue: ${state.history?.dominantIssue ?? "none"}
-Trend: ${state.history?.trend ?? "stable"}
-Consecutive successes: ${state.history?.consecutiveSuccesses ?? 0}
-Consecutive failures: ${state.history?.consecutiveFailures ?? 0}
-
-COACHING GOAL
-Intent: ${state.intent ?? "stabilize"}
-
-INSTRUCTIONS
-Respond with exactly ONE short coaching sentence.
-Maximum 14 words.
-
-Behavior:
-- If event is start, guide the first movement clearly.
-- If event is rep_complete, briefly acknowledge success and guide the next rep.
-- If event is rep_failed, clearly correct the most important issue.
-- If a repeated issue exists, prioritize that issue.
-- If phase is holding, encourage stability.
-- If phase is lowering, guide controlled descent.
-
-Tone:
-- calm
-- confident
-- human
-- slightly encouraging
-- never robotic
-
-Avoid:
-- "begin when ready"
-- generic praise alone
-- mentioning metrics, data, or analysis
-- sounding like a chatbot
-
-Examples:
-- "Lift your right arm slowly to shoulder height."
-- "Good. Now repeat that with the same control."
-- "Lift a little higher on this next rep."
-- "Hold steady. Stay tall through your torso."
-- "Lower slowly and keep control."
-- "Reset your arm, then try again."
-- "Good. Keep both arms even this time."
-
-Return ONLY the sentence.
-`.trim();
-}
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_MAX_TOKENS = 1000;
 
 export async function POST(req: NextRequest) {
-  const model = "gpt-4o-mini";
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "ANTHROPIC_API_KEY is not configured." },
+      { status: 500 }
+    );
+  }
+
+  let body: {
+    prompt: string;
+    system?: string;
+    maxTokens?: number;
+  };
 
   try {
-    const state = (await req.json()) as CoachState;
-    const prompt = buildPrompt(state);
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid request body." },
+      { status: 400 }
+    );
+  }
 
-    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+  if (!body.prompt || typeof body.prompt !== "string") {
+    return NextResponse.json(
+      { error: "prompt is required." },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model,
-        temperature: 0.45,
-        max_tokens: 50,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a physiotherapist giving short live exercise guidance."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ]
+        model: DEFAULT_MODEL,
+        max_tokens: body.maxTokens ?? DEFAULT_MAX_TOKENS,
+        system:
+          body.system ??
+          "You are a physiotherapy coaching assistant. Always respond with valid JSON only.",
+        messages: [{ role: "user", content: body.prompt }]
       })
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-
-      let parsedError: any = null;
-      try {
-        parsedError = JSON.parse(errorText);
-      } catch {
-        parsedError = null;
-      }
-
-      const fallback = "Move slowly and stay in control.";
-
-      return NextResponse.json({
-        message: fallback,
-        debug: {
-          openAiStatus: aiResponse.status,
-          usedFallback: true,
-          promptPreview: prompt.slice(0, 1200),
-          model,
-          openAiError:
-            parsedError?.error?.message ??
-            parsedError?.message ??
-            errorText
-        }
-      });
+    if (!response.ok) {
+      const errorText = await response.text();
+      return NextResponse.json(
+        { error: `Anthropic API error: ${response.status}`, detail: errorText },
+        { status: response.status }
+      );
     }
 
-    const json = await aiResponse.json();
+    const data = await response.json();
+    const text = data.content
+      ?.map((item: { type: string; text?: string }) =>
+        item.type === "text" ? item.text ?? "" : ""
+      )
+      .join("") ?? "";
 
-    const message =
-      json.choices?.[0]?.message?.content?.trim() ||
-      "Move slowly and stay in control.";
-
-    return NextResponse.json({
-      message,
-      debug: {
-        openAiStatus: aiResponse.status,
-        usedFallback: false,
-        promptPreview: prompt.slice(0, 1200),
-        model,
-        openAiError: null
-      }
-    });
+    return NextResponse.json({ text });
   } catch (error) {
-    const fallback = "Move slowly and stay in control.";
-
-    return NextResponse.json({
-      message: fallback,
-      debug: {
-        openAiStatus: null,
-        usedFallback: true,
-        promptPreview: null,
-        model,
-        openAiError: error instanceof Error ? error.message : "Unknown route error."
-      }
-    });
+    return NextResponse.json(
+      {
+        error: "Failed to reach Anthropic API.",
+        detail: error instanceof Error ? error.message : String(error)
+      },
+      { status: 500 }
+    );
   }
 }
