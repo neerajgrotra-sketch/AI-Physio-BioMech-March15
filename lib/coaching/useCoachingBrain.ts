@@ -54,6 +54,7 @@ import {
 import type { PatientProfile, ExerciseSessionContext } from "@/lib/patient/patientTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { Observation } from "@/lib/coaching/types";
+import { recordMessage } from "@/lib/debug/movementTimeline";
 
 // ============================================================
 // CONSTANTS
@@ -193,13 +194,9 @@ export function useCoachingBrain() {
       timeoutHandleRef.current = null;
 
       if (fallbackText) {
-        setPanelState({
-          message: fallbackText,
-          tone: "neutral",
-          isThinking: false,
-          source: "fallback",
-          setAtMs: Date.now()
-        });
+        const fbMs = Date.now();
+        recordMessage({ source: "fallback", trigger, text: fallbackText, tone: "neutral", nowMs: fbMs });
+        setPanelState({ message: fallbackText, tone: "neutral", isThinking: false, source: "fallback", setAtMs: fbMs });
       } else {
         setPanelState(prev => ({ ...prev, isThinking: false }));
       }
@@ -247,12 +244,20 @@ export function useCoachingBrain() {
         nowMs
       );
 
+      const setAtMs = Date.now();
+      recordMessage({
+        source: "ai",
+        trigger,
+        text: parsed.text,
+        tone: parsed.tone,
+        nowMs: setAtMs
+      });
       setPanelState({
         message: parsed.text,
         tone: parsed.tone,
         isThinking: false,
         source: "ai",
-        setAtMs: Date.now()
+        setAtMs
       });
     } catch {
       if (timeoutHandleRef.current !== null) {
@@ -531,12 +536,14 @@ export function useCoachingBrain() {
     // Only show if not currently showing a more important message
     setPanelState(prev => {
       if (prev.source === "ai" && prev.tone === "corrective") return prev;
+      const holdMs = Date.now();
+      recordMessage({ source: "deterministic", trigger: "hold_started", text: message, tone: "neutral", nowMs: holdMs });
       return {
         message,
         tone: "neutral",
         isThinking: false,
         source: "deterministic",
-        setAtMs: Date.now()
+        setAtMs: holdMs
       };
     });
   }, []);
