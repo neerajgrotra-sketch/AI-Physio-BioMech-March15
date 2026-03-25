@@ -1,54 +1,101 @@
+// ============================================================
+// app/api/coach/route.ts
+// ============================================================
+// Backend proxy for all AI calls.
+//
+// All Claude API requests from the browser route through here.
+// This keeps the API key server-side and handles CORS.
+//
+// Accepts POST with body:
+// {
+//   prompt: string        — the full prompt to send
+//   system?: string       — optional system prompt override
+//   maxTokens?: number    — optional token limit (default 1000)
+// }
+//
+// Returns:
+// {
+//   text: string          — Claude's response text
+// }
+// ============================================================
+
 import { NextRequest, NextResponse } from "next/server";
 
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_MAX_TOKENS = 1000;
+
 export async function POST(req: NextRequest) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "ANTHROPIC_API_KEY is not configured." },
+      { status: 500 }
+    );
+  }
+
+  let body: {
+    prompt: string;
+    system?: string;
+    maxTokens?: number;
+  };
+
   try {
-    const { text, voice = "marin" } = (await req.json()) as {
-      text?: string;
-      voice?: string;
-    };
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid request body." },
+      { status: 400 }
+    );
+  }
 
-    if (!text || !text.trim()) {
-      return NextResponse.json(
-        { error: "Missing text" },
-        { status: 400 }
-      );
-    }
+  if (!body.prompt || typeof body.prompt !== "string") {
+    return NextResponse.json(
+      { error: "prompt is required." },
+      { status: 400 }
+    );
+  }
 
-    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+  try {
+    const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini-tts",
-        voice,
-        input: text.trim()
+        model: DEFAULT_MODEL,
+        max_tokens: body.maxTokens ?? DEFAULT_MAX_TOKENS,
+        system:
+          body.system ??
+          "You are a physiotherapy coaching assistant. Always respond with valid JSON only.",
+        messages: [{ role: "user", content: body.prompt }]
       })
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       return NextResponse.json(
-        { error: errorText || "TTS request failed" },
+        { error: `Anthropic API error: ${response.status}`, detail: errorText },
         { status: response.status }
       );
     }
 
-    const audioBuffer = await response.arrayBuffer();
+    const data = await response.json();
+    const text = data.content
+      ?.map((item: { type: string; text?: string }) =>
+        item.type === "text" ? item.text ?? "" : ""
+      )
+      .join("") ?? "";
 
-    return new NextResponse(audioBuffer, {
-      status: 200,
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Cache-Control": "no-store"
-      }
-    });
+    return NextResponse.json({ text });
   } catch (error) {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Unknown TTS route error"
+        error: "Failed to reach Anthropic API.",
+        detail: error instanceof Error ? error.message : String(error)
       },
       { status: 500 }
     );
