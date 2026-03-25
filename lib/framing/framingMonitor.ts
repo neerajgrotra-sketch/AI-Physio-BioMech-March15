@@ -143,7 +143,7 @@ function evaluateLandmarkTiers(
   criticalLandmarksLost: string[];
   supportingLandmarksWeak: string[];
 } {
-  const { landmarks: framing } = prescription;
+  const { landmarks: framing } = prescription.framing;
   const { confidenceThresholds } = prescription.framing;
   const { landmarks: confidence } = report;
 
