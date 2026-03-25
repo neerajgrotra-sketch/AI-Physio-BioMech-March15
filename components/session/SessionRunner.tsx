@@ -492,8 +492,11 @@ export default function SessionRunner() {
   const { framingPanelState } = framingIntelligence;
   const { panelState: coachingPanelState } = coachingBrain;
 
+    const holdLine = currentPrescription?.hold.required
+    ? " Hold each rep for " + Math.round((currentPrescription.hold.durationMs ?? 0) / 1000) + "s."
+    : "";
   const instructionBody = currentPrescription
-    ? `${getExerciseRequirement(currentPrescription.id)} Target: ${currentPrescription.repTarget} rep(s).${currentPrescription.hold.required ? ` Hold each rep for ${Math.round(currentPrescription.hold.durationMs / 1000)}s.` : ""}`
+    ? getExerciseRequirement(currentPrescription.id) + " Target: " + currentPrescription.repTarget + " rep(s)." + holdLine
     : "Choose a session and begin when ready.";
 
   // ============================================================
