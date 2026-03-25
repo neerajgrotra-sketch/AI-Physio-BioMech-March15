@@ -3,19 +3,9 @@
 // ============================================================
 // components/session/SessionRunner.tsx
 // ============================================================
-// Thin UI compositor.
-//
-// SessionRunner no longer contains logic. It:
-// 1. Reads from hooks
-// 2. Passes events to hooks
-// 3. Renders the three panels
-//
-// All logic lives in:
-// - useSessionQueue    → exercise queue and progression
-// - useInferenceLoop  → camera loop and movement interpretation
-// - useFramingIntelligence → framing monitor and AI framing
-// - useCoachingBrain  → observation buffer and AI coaching
-// - usePatientContext → session memory and rep tracking
+// SessionRunner with integrated API debug panel.
+// Shows API connectivity, every prompt sent, every response
+// received, and all coaching/framing decisions in real time.
 // ============================================================
 
 import React, {
@@ -55,6 +45,122 @@ import { usePatientContext } from "@/lib/patient/usePatientContext";
 import { createDefaultPatientProfile } from "@/lib/patient/patientTypes";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
+
+// ============================================================
+// DEBUG LOG TYPES
+// ============================================================
+
+type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in";
+
+type DebugLogEntry = {
+  id: string;
+  timestamp: string;
+  level: LogLevel;
+  category: string;
+  message: string;
+  detail?: string;
+};
+
+// ============================================================
+// GLOBAL DEBUG LOG
+// We use a module-level array + setter so the inference loop
+// can write to it without React closure issues.
+// ============================================================
+
+let globalDebugLog: DebugLogEntry[] = [];
+let globalSetDebugLog: React.Dispatch<React.SetStateAction<DebugLogEntry[]>> | null = null;
+
+function writeDebugLog(
+  level: LogLevel,
+  category: string,
+  message: string,
+  detail?: string
+) {
+  const entry: DebugLogEntry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: new Date().toLocaleTimeString("en-CA", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      fractionalSecondDigits: 2
+    }),
+    level,
+    category,
+    message,
+    detail
+  };
+
+  globalDebugLog = [entry, ...globalDebugLog].slice(0, 50);
+
+  if (globalSetDebugLog) {
+    globalSetDebugLog([...globalDebugLog]);
+  }
+}
+
+// Patch fetch to intercept /api/coach calls
+let fetchPatched = false;
+
+function patchFetch() {
+  if (fetchPatched || typeof window === "undefined") return;
+  fetchPatched = true;
+
+  const originalFetch = window.fetch.bind(window);
+
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    if (url.includes("/api/coach")) {
+      let promptSnippet = "";
+
+      try {
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        promptSnippet = (body.prompt ?? "").slice(0, 200);
+      } catch {
+        promptSnippet = "(could not parse body)";
+      }
+
+      writeDebugLog(
+        "api_out",
+        "API",
+        "POST /api/coach →",
+        promptSnippet + (promptSnippet.length >= 200 ? "…" : "")
+      );
+
+      try {
+        const response = await originalFetch(input, init);
+        const cloned = response.clone();
+
+        cloned.json().then((data) => {
+          if (data.error) {
+            writeDebugLog("error", "API", `Error response: ${data.error}`, data.detail ?? "");
+          } else {
+            const text = (data.text ?? "").slice(0, 300);
+            writeDebugLog(
+              "api_in",
+              "API",
+              "← Response received",
+              text + (text.length >= 300 ? "…" : "")
+            );
+          }
+        }).catch(() => {
+          writeDebugLog("error", "API", "Could not parse response body");
+        });
+
+        return response;
+      } catch (error) {
+        writeDebugLog(
+          "error",
+          "API",
+          "Fetch failed",
+          error instanceof Error ? error.message : String(error)
+        );
+        throw error;
+      }
+    }
+
+    return originalFetch(input, init);
+  };
+}
 
 // ============================================================
 // HELPERS
@@ -99,6 +205,15 @@ function getPositionRequirement(id: string | undefined): string {
   }
 }
 
+const LOG_COLORS: Record<LogLevel, { bg: string; color: string; label: string }> = {
+  info:    { bg: "rgba(124,198,255,0.08)", color: "#7cc6ff",  label: "INFO" },
+  success: { bg: "rgba(100,220,150,0.08)", color: "#9be7b0",  label: "OK" },
+  warning: { bg: "rgba(255,200,80,0.08)",  color: "#ffcc80",  label: "WARN" },
+  error:   { bg: "rgba(255,100,100,0.08)", color: "#ff8f8f",  label: "ERR" },
+  api_out: { bg: "rgba(180,130,255,0.08)", color: "#c4a0ff",  label: "OUT" },
+  api_in:  { bg: "rgba(100,220,200,0.08)", color: "#6ee7d4",  label: "IN" }
+};
+
 // ============================================================
 // SESSION RUNNER
 // ============================================================
@@ -109,33 +224,83 @@ export default function SessionRunner() {
 
   const cameraRef = useRef<CameraViewportHandle | null>(null);
 
-  // ---- Patient profile state (UI-controlled) ----
+  // Patch fetch once on mount
+  useEffect(() => { patchFetch(); }, []);
+
+  // Debug log state
+  const [debugLog, setDebugLog] = useState<DebugLogEntry[]>([]);
+  const [debugOpen, setDebugOpen] = useState(true);
+  const [apiStatus, setApiStatus] = useState<"untested" | "ok" | "error">("untested");
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  // Wire global setter
+  useEffect(() => {
+    globalSetDebugLog = setDebugLog;
+    return () => { globalSetDebugLog = null; };
+  }, []);
+
+  // Patient profile
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(
     createDefaultPatientProfile()
   );
 
-  // ---- Session selection UI state ----
+  // UI state
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
-  const [statusCollapsed, setStatusCollapsed] = useState(false);
 
-  // ---- Hooks ----
+  // Hooks
   const sessionQueue = useSessionQueue();
-
   const inferenceLoop = useInferenceLoop();
-
   const framingIntelligence = useFramingIntelligence(patientProfile);
-
   const coachingBrain = useCoachingBrain();
-
   const patientContext = usePatientContext(patientProfile);
 
-  // ---- Auto-select first session ----
+  // Auto-select first session
   useEffect(() => {
     if (selectedSessionIds.length === 0 && sessions[0]) {
       setSelectedSessionIds([sessions[0].id]);
     }
   }, [sessions, selectedSessionIds.length]);
+
+  // ============================================================
+  // API CONNECTIVITY TEST
+  // ============================================================
+
+  async function testApiConnection() {
+    writeDebugLog("info", "API", "Testing connectivity to /api/coach…");
+    setApiStatus("untested");
+
+    try {
+      const response = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: "Reply with this exact JSON and nothing else: {\"status\": \"ok\", \"message\": \"API connection successful\"}",
+          system: "You are a test endpoint. Always respond with valid JSON only."
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        writeDebugLog("error", "API", `Connection failed: HTTP ${response.status}`, data.error ?? "");
+        setApiStatus("error");
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.text) {
+        writeDebugLog("success", "API", "Connection successful ✓", `Response: ${data.text.slice(0, 100)}`);
+        setApiStatus("ok");
+      } else {
+        writeDebugLog("error", "API", "Response missing text field", JSON.stringify(data).slice(0, 200));
+        setApiStatus("error");
+      }
+    } catch (error) {
+      writeDebugLog("error", "API", "Connection failed", error instanceof Error ? error.message : String(error));
+      setApiStatus("error");
+    }
+  }
 
   // ============================================================
   // COMBINED QUEUE PREVIEW
@@ -151,102 +316,95 @@ export default function SessionRunner() {
     [selectedSessions, exercises]
   );
 
-  const combinedDurationSeconds = useMemo(
-    () => combinedQueue.reduce((sum, item) => sum + item.seconds, 0),
-    [combinedQueue]
-  );
-
-  const combinedTotalReps = useMemo(
-    () =>
-      combinedQueue.reduce(
-        (sum, item) => sum + item.prescription.repTarget,
-        0
-      ),
-    [combinedQueue]
-  );
-
   const combinedGoal = useMemo(
     () => inferSessionGoal(combinedQueue.map((item) => item.id)),
     [combinedQueue]
   );
 
+  const combinedTotalReps = useMemo(
+    () => combinedQueue.reduce((sum, item) => sum + item.prescription.repTarget, 0),
+    [combinedQueue]
+  );
+
+  const combinedDurationSeconds = useMemo(
+    () => combinedQueue.reduce((sum, item) => sum + item.seconds, 0),
+    [combinedQueue]
+  );
+
   // ============================================================
-  // READINESS EVALUATOR (passed to inference loop)
+  // READINESS EVALUATOR
   // ============================================================
 
   const readinessEvaluator = useCallback(
     (frame: any, features: any, prescription: any) => {
-      const result = evaluateReadiness({ frame, features, prescription, averageBrightness: null });
+      const result = evaluateReadiness({
+        frame,
+        features,
+        prescription,
+        averageBrightness: null
+      });
       return { ready: result.ready, message: result.message };
     },
     []
   );
 
   // ============================================================
-  // COACHING CALLBACKS (passed to inference loop)
+  // COACHING CALLBACKS
   // ============================================================
 
   const coachingCallbacks = useMemo(() => ({
     onRepCompleted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
-      const profile = patientProfile;
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      if (!prescription || !exerciseCtx) return;
+
+      writeDebugLog("info", "COACHING", "Rep completed event fired", `prescription=${prescription?.id ?? "null"} ctx=${exerciseCtx ? "ok" : "null"}`);
+
+      if (!prescription || !exerciseCtx) {
+        writeDebugLog("warning", "COACHING", "onRepCompleted skipped — missing prescription or context");
+        return;
+      }
 
       patientContext.recordRepOutcome("success", null, null);
-
-      coachingBrain.onRepCompleted({
-        prescription,
-        patientProfile: profile,
-        exerciseContext: exerciseCtx,
-        nowMs
-      });
+      coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
     },
 
     onRepFailed: (failureReason: string, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
-      const profile = patientProfile;
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      if (!prescription || !exerciseCtx) return;
+
+      writeDebugLog("warning", "COACHING", `Rep failed: ${failureReason}`, `prescription=${prescription?.id ?? "null"} ctx=${exerciseCtx ? "ok" : "null"}`);
+
+      if (!prescription || !exerciseCtx) {
+        writeDebugLog("warning", "COACHING", "onRepFailed skipped — missing prescription or context");
+        return;
+      }
 
       patientContext.recordRepOutcome("failed", failureReason, null);
-
-      coachingBrain.onRepFailed({
-        prescription,
-        patientProfile: profile,
-        exerciseContext: exerciseCtx,
-        failureReason,
-        nowMs
-      });
+      coachingBrain.onRepFailed({ prescription, patientProfile, exerciseContext: exerciseCtx, failureReason, nowMs });
     },
 
     onHoldStarted: (holdRequiredMs: number, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
-      const profile = patientProfile;
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      if (!prescription || !exerciseCtx) return;
 
-      coachingBrain.onHoldStarted({
-        prescription,
-        patientProfile: profile,
-        exerciseContext: exerciseCtx,
-        holdRequiredMs,
-        nowMs
-      });
+      writeDebugLog("info", "COACHING", `Hold started (${holdRequiredMs}ms required)`, `prescription=${prescription?.id ?? "null"}`);
+
+      if (!prescription || !exerciseCtx) return;
+      coachingBrain.onHoldStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, holdRequiredMs, nowMs });
     },
 
     onExerciseStarted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
-      const profile = patientProfile;
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      if (!prescription || !exerciseCtx) return;
 
-      coachingBrain.onExerciseStarted({
-        prescription,
-        patientProfile: profile,
-        exerciseContext: exerciseCtx,
-        nowMs
-      });
+      writeDebugLog("info", "COACHING", `Exercise started: ${prescription?.name ?? "unknown"}`, `ctx=${exerciseCtx ? "ok" : "null"}`);
+
+      if (!prescription || !exerciseCtx) {
+        writeDebugLog("warning", "COACHING", "onExerciseStarted skipped — missing prescription or context");
+        return;
+      }
+
+      coachingBrain.onExerciseStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
     },
 
     feedFrame: (params: {
@@ -259,35 +417,26 @@ export default function SessionRunner() {
       nowMs: number;
     }) => {
       const prescription = sessionQueue.getActivePrescription();
-      const profile = patientProfile;
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       if (!prescription || !exerciseCtx) return;
 
-      coachingBrain.feedFrame({
-        ...params,
-        prescription,
-        patientProfile: profile,
-        exerciseContext: exerciseCtx
-      });
+      coachingBrain.feedFrame({ ...params, prescription, patientProfile, exerciseContext: exerciseCtx });
     }
-  }), [
-    sessionQueue,
-    patientProfile,
-    patientContext,
-    coachingBrain
-  ]);
+  }), [sessionQueue, patientProfile, patientContext, coachingBrain]);
 
   const framingCallbacks = useMemo(() => ({
     evaluateFraming: framingIntelligence.evaluateFraming
   }), [framingIntelligence.evaluateFraming]);
 
   // ============================================================
-  // EXERCISE COMPLETE HANDLER
+  // EXERCISE COMPLETE
   // ============================================================
 
   const handleExerciseComplete = useCallback(() => {
     const prescription = sessionQueue.getActivePrescription();
     const exerciseCtx = patientContext.getCurrentExerciseContext();
+
+    writeDebugLog("success", "SESSION", `Exercise complete: ${prescription?.name ?? "unknown"}`);
 
     if (prescription && exerciseCtx) {
       coachingBrain.onExerciseCompleting({
@@ -302,35 +451,17 @@ export default function SessionRunner() {
 
     sessionQueue.advanceQueue(
       (nextItem: QueueItem, nextIndex: number) => {
-        // New exercise started
+        writeDebugLog("info", "SESSION", `Advancing to: ${nextItem.displayName}`);
         inferenceLoop.resetTrackingState();
         framingIntelligence.reset("Position yourself for the next exercise.");
-
-        patientContext.beginExercise(
-          nextItem.prescription,
-          nextIndex,
-          sessionQueue.getActiveQueue().length
-        );
-
-        framingIntelligence.forcePreExerciseCheck(
-          null,
-          createEmptyFeatures(),
-          nextItem.prescription,
-          Date.now()
-        );
+        patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
+        framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
       },
       () => {
-        // Session complete
+        writeDebugLog("success", "SESSION", "All exercises complete — session done");
       }
     );
-  }, [
-    sessionQueue,
-    patientContext,
-    coachingBrain,
-    patientProfile,
-    inferenceLoop,
-    framingIntelligence
-  ]);
+  }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence]);
 
   // ============================================================
   // SESSION LIFECYCLE
@@ -339,53 +470,40 @@ export default function SessionRunner() {
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
 
+    writeDebugLog("info", "SESSION", `Beginning session with ${combinedQueue.length} exercise(s)`);
+
     const started = sessionQueue.beginSession(combinedQueue);
-    if (!started) return;
+    if (!started) {
+      writeDebugLog("error", "SESSION", "beginSession returned false");
+      return;
+    }
 
     setSelectorCollapsed(true);
-    setStatusCollapsed(false);
-
     patientContext.beginSession();
-    patientContext.beginExercise(
-      combinedQueue[0].prescription,
-      0,
-      combinedQueue.length
-    );
 
+    writeDebugLog("info", "SESSION", `beginExercise: ${combinedQueue[0].prescription.name}`);
+
+    patientContext.beginExercise(combinedQueue[0].prescription, 0, combinedQueue.length);
     framingIntelligence.reset("Position yourself in view.");
 
     try {
       await cameraRef.current?.startCamera();
-    } catch {
+    } catch (error) {
+      writeDebugLog("error", "SESSION", "Camera failed to start", String(error));
       sessionQueue.endSession();
     }
   }
 
-  function endSession() {
-    cameraRef.current?.stopCamera();
-  }
-
-  function resetSession() {
-    sessionQueue.resetSession();
-    inferenceLoop.resetTrackingState();
-    coachingBrain.reset();
-    framingIntelligence.reset(
-      sessionQueue.sessionStarted
-        ? "Position yourself in view."
-        : "Camera is off."
-    );
-  }
-
   function handleCameraReady(video: HTMLVideoElement) {
     const prescription = sessionQueue.getActivePrescription();
-    if (!prescription) return;
+    writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
 
-    framingIntelligence.forcePreExerciseCheck(
-      null,
-      createEmptyFeatures(),
-      prescription,
-      Date.now()
-    );
+    if (!prescription) {
+      writeDebugLog("error", "CAMERA", "No active prescription when camera became ready");
+      return;
+    }
+
+    framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
 
     inferenceLoop.startLoop(
       video,
@@ -398,20 +516,29 @@ export default function SessionRunner() {
   }
 
   function handleCameraStop() {
+    writeDebugLog("info", "CAMERA", "Camera stopped");
     inferenceLoop.stopLoop();
     sessionQueue.endSession();
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
   }
 
-  function toggleSessionSelection(sessionId: string) {
-    if (
-      sessionQueue.sessionStarted ||
-      inferenceLoop.engineStatus === "loading" ||
-      inferenceLoop.engineStatus === "running"
-    )
-      return;
+  function endSession() {
+    cameraRef.current?.stopCamera();
+  }
 
+  function resetSession() {
+    sessionQueue.resetSession();
+    inferenceLoop.resetTrackingState();
+    coachingBrain.reset();
+    framingIntelligence.reset(
+      sessionQueue.sessionStarted ? "Position yourself in view." : "Camera is off."
+    );
+    writeDebugLog("info", "SESSION", "Session reset");
+  }
+
+  function toggleSessionSelection(sessionId: string) {
+    if (sessionQueue.sessionStarted || inferenceLoop.engineStatus === "loading" || inferenceLoop.engineStatus === "running") return;
     setSelectedSessionIds((current) => {
       if (current.includes(sessionId)) {
         const next = current.filter((id) => id !== sessionId);
@@ -422,7 +549,7 @@ export default function SessionRunner() {
   }
 
   // ============================================================
-  // DERIVED UI VALUES
+  // DERIVED VALUES
   // ============================================================
 
   const canBegin =
@@ -432,798 +559,397 @@ export default function SessionRunner() {
 
   const currentPrescription = sessionQueue.currentPrescription;
   const currentQueueItem = sessionQueue.currentQueueItem;
+  const { framingPanelState } = framingIntelligence;
+  const { panelState: coachingPanelState } = coachingBrain;
 
   const instructionBody = currentPrescription
     ? `${getExerciseRequirement(currentPrescription.id)} Target: ${currentPrescription.repTarget} rep(s).${
         currentPrescription.hold.required
-          ? ` Hold each rep for ${Math.round(currentPrescription.hold.durationMs / 1000)} second(s).`
+          ? ` Hold each rep for ${Math.round(currentPrescription.hold.durationMs / 1000)}s.`
           : ""
       }`
     : "Choose a session and begin when ready.";
-
-  const { framingPanelState } = framingIntelligence;
-  const { panelState: coachingPanelState } = coachingBrain;
 
   // ============================================================
   // RENDER
   // ============================================================
 
   return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ color: "#d8e2ff", marginBottom: 6, fontSize: 14 }}>
-        Movement Intelligence platform for physiotherapy.
+    <div style={{ marginTop: 12, fontFamily: "system-ui, sans-serif" }}>
+
+      <h1 style={{ marginTop: 0, marginBottom: 4, fontSize: 24, lineHeight: 1.2 }}>
+        AI Physio BioMech
+      </h1>
+      <div style={{ color: "#7cc6ff", marginBottom: 20, fontSize: 13 }}>
+        Session Runner — Debug Build
       </div>
 
-      <h1 style={{ marginTop: 0, marginBottom: 18, fontSize: 28, lineHeight: 1.2 }}>
-        AI Physio BioMech Session Runner
-      </h1>
+      {/* ====================================================
+          API STATUS BAR
+      ==================================================== */}
+      <div style={{
+        background: "#0d1526",
+        border: `1px solid ${apiStatus === "ok" ? "rgba(100,220,150,0.4)" : apiStatus === "error" ? "rgba(255,100,100,0.4)" : "rgba(255,255,255,0.1)"}`,
+        borderRadius: 10,
+        padding: "10px 16px",
+        marginBottom: 16,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        flexWrap: "wrap"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{
+            width: 10, height: 10, borderRadius: "50%",
+            background: apiStatus === "ok" ? "#9be7b0" : apiStatus === "error" ? "#ff8f8f" : "#7a88a8",
+            boxShadow: apiStatus === "ok" ? "0 0 6px #9be7b0" : "none"
+          }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: "white" }}>
+            API Status:
+          </span>
+          <span style={{
+            fontSize: 13,
+            color: apiStatus === "ok" ? "#9be7b0" : apiStatus === "error" ? "#ff8f8f" : "#7a88a8"
+          }}>
+            {apiStatus === "ok" ? "Connected ✓" : apiStatus === "error" ? "Error — check log" : "Not tested"}
+          </span>
+        </div>
 
-      {/* ======================================================
-          SESSION SELECTOR
-      ====================================================== */}
-      <section
-        style={{
-          background: "#1a2040",
-          padding: 18,
-          borderRadius: 14,
-          marginBottom: 20,
-          border: "1px solid rgba(255,255,255,0.08)"
-        }}
-      >
-        <div
+        <button
+          onClick={testApiConnection}
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            alignItems: "center",
-            marginBottom: selectorCollapsed ? 0 : 16,
-            flexWrap: "wrap"
+            background: "rgba(124,198,255,0.15)",
+            color: "#7cc6ff",
+            border: "1px solid rgba(124,198,255,0.3)",
+            borderRadius: 8,
+            padding: "6px 14px",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer"
           }}
         >
-          <div>
-            <h2 style={{ margin: 0 }}>Session Selector</h2>
-            {!selectorCollapsed && (
-              <div style={{ color: "#aab6d3", marginTop: 6, fontSize: 14 }}>
-                Select sessions, set patient profile, then begin.
-              </div>
-            )}
+          Test Connection
+        </button>
+
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "#7a88a8" }}>
+          Engine: <strong style={{ color: "white" }}>{inferenceLoop.engineStatus}</strong>
+          {" · "}
+          Phase: <strong style={{ color: "#7cc6ff" }}>{formatPhase(inferenceLoop.phase)}</strong>
+          {" · "}
+          Reps: <strong style={{ color: "white" }}>{inferenceLoop.repCount}</strong>
+          {currentPrescription && <> / {currentPrescription.repTarget}</>}
+        </div>
+      </div>
+
+      {/* ====================================================
+          MAIN GRID — CAMERA LEFT, PANELS RIGHT
+      ==================================================== */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start", marginBottom: 16 }}>
+
+        {/* CAMERA */}
+        <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+
+          {/* Framing banner */}
+          <div style={{
+            marginBottom: 10,
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            fontWeight: 600,
+            background: framingPanelState.tone === "good" ? "rgba(100,220,150,0.12)" : framingPanelState.tone === "critical" ? "rgba(255,100,100,0.12)" : "rgba(255,180,80,0.12)",
+            color: framingPanelState.tone === "good" ? "#9be7b0" : framingPanelState.tone === "critical" ? "#ff8f8f" : "#ffcc80",
+            border: `1px solid ${framingPanelState.tone === "good" ? "rgba(100,220,150,0.3)" : framingPanelState.tone === "critical" ? "rgba(255,100,100,0.3)" : "rgba(255,180,80,0.3)"}`,
+            display: "flex", alignItems: "center", gap: 8
+          }}>
+            {framingPanelState.evaluating && <span style={{ fontSize: 10, opacity: 0.7 }}>●</span>}
+            {framingPanelState.message}
+            <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.5 }}>
+              [{framingPanelState.severity}]
+            </span>
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              onClick={beginCombinedSession}
-              disabled={!canBegin}
-              style={{
-                background: "#9be7b0",
-                color: "#08111f",
-                fontWeight: 700,
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "none",
-                cursor: canBegin ? "pointer" : "not-allowed",
-                opacity: canBegin ? 1 : 0.5
-              }}
-            >
+          <div style={{ position: "relative" }}>
+            <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
+            <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+              <PoseCanvasOverlay frame={inferenceLoop.frame} />
+            </div>
+          </div>
+
+          {inferenceLoop.engineError && (
+            <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
+              {inferenceLoop.engineError}
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT COLUMN */}
+        <div style={{ display: "grid", gap: 12 }}>
+
+          {/* COACHING PANEL */}
+          <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ margin: 0, fontSize: 14, textTransform: "uppercase", letterSpacing: 0.8, color: "#7cc6ff" }}>Live Coaching</h3>
+              <div style={{ display: "flex", gap: 6 }}>
+                <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(124,198,255,0.12)", color: "#7cc6ff", fontSize: 11, fontWeight: 700 }}>
+                  {formatPhase(inferenceLoop.phase)}
+                </span>
+                {inferenceLoop.holdRemainingMs !== null && inferenceLoop.phase === "holding" && (
+                  <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(100,220,150,0.12)", color: "#9be7b0", fontSize: 11, fontWeight: 700 }}>
+                    Hold {Math.max(1, Math.ceil(inferenceLoop.holdRemainingMs / 1000))}s
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Exercise title */}
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, lineHeight: 1.2 }}>
+              {currentQueueItem?.displayName ?? "No active exercise"}
+            </div>
+
+            <div style={{ fontSize: 14, color: "#aab6d3", marginBottom: 12, lineHeight: 1.5 }}>
+              {instructionBody}
+            </div>
+
+            {/* AI coaching message */}
+            <div style={{
+              background: "#0d1526",
+              borderRadius: 10,
+              padding: 14,
+              minHeight: 52,
+              border: `1px solid ${
+                coachingPanelState.tone === "corrective" ? "rgba(255,200,80,0.25)" :
+                coachingPanelState.tone === "urgent" ? "rgba(255,100,100,0.25)" :
+                coachingPanelState.tone === "encouraging" ? "rgba(100,220,150,0.25)" :
+                "rgba(255,255,255,0.06)"
+              }`,
+              display: "flex", alignItems: "center", gap: 10
+            }}>
+              {coachingPanelState.isThinking ? (
+                <div style={{ color: "#7a88a8", fontSize: 13, fontStyle: "italic" }}>Thinking…</div>
+              ) : coachingPanelState.message ? (
+                <>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                    background: coachingPanelState.tone === "corrective" ? "#ffcc80" : coachingPanelState.tone === "urgent" ? "#ff8f8f" : coachingPanelState.tone === "encouraging" ? "#9be7b0" : "#7cc6ff"
+                  }} />
+                  <div style={{ fontSize: 15, color: "white", fontWeight: 500, lineHeight: 1.4 }}>
+                    {coachingPanelState.message}
+                  </div>
+                  <div style={{ marginLeft: "auto", fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>
+                    {coachingPanelState.source}
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: "#7a88a8", fontSize: 13 }}>
+                  {sessionQueue.sessionStarted ? "Watching your movement…" : "Start a session to begin coaching."}
+                </div>
+              )}
+            </div>
+
+            {/* Progress */}
+            <div style={{ marginTop: 10, display: "flex", gap: 12, fontSize: 12, color: "#7a88a8" }}>
+              <span>{sessionQueue.overallProgressLabel}</span>
+              <span>·</span>
+              <span>Patient: <strong style={{ color: "white" }}>{patientProfile.type.replace("_", " ")}</strong></span>
+              <span>·</span>
+              <span>Session #{patientProfile.sessionNumber}</span>
+            </div>
+          </div>
+
+          {/* LIVE OBSERVATION */}
+          <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+            <h3 style={{ margin: "0 0 10px", fontSize: 14, textTransform: "uppercase", letterSpacing: 0.8, color: "#7cc6ff" }}>Camera Sees</h3>
+            <div style={{ display: "grid", gap: 4 }}>
+              {inferenceLoop.liveObservation.visibilityLines.slice(0, 4).map((line, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#aab6d3" }}>• {line}</div>
+              ))}
+              {inferenceLoop.liveObservation.movementLines.slice(0, 4).map((line, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#d8e2ff" }}>• {line}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ====================================================
+          SESSION SELECTOR
+      ==================================================== */}
+      <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: selectorCollapsed ? 0 : 14, flexWrap: "wrap", gap: 10 }}>
+          <h3 style={{ margin: 0 }}>Session Selector</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={beginCombinedSession} disabled={!canBegin}
+              style={{ background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.3)", color: "#08111f", fontWeight: 700, padding: "8px 14px", borderRadius: 8, border: "none", cursor: canBegin ? "pointer" : "not-allowed" }}>
               Begin Session
             </button>
-
-            <button
-              onClick={endSession}
-              disabled={
-                inferenceLoop.engineStatus !== "running" &&
-                inferenceLoop.engineStatus !== "error"
-              }
-              style={{
-                background: "#7cc6ff",
-                color: "#08111f",
-                fontWeight: 700,
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "none",
-                cursor:
-                  inferenceLoop.engineStatus === "running" ||
-                  inferenceLoop.engineStatus === "error"
-                    ? "pointer"
-                    : "not-allowed",
-                opacity:
-                  inferenceLoop.engineStatus === "running" ||
-                  inferenceLoop.engineStatus === "error"
-                    ? 1
-                    : 0.5
-              }}
-            >
-              End Session
+            <button onClick={endSession} disabled={inferenceLoop.engineStatus !== "running"}
+              style={{ background: "rgba(124,198,255,0.15)", color: "#7cc6ff", padding: "8px 14px", borderRadius: 8, border: "1px solid rgba(124,198,255,0.3)", cursor: "pointer" }}>
+              End
             </button>
-
-            <button
-              onClick={resetSession}
-              style={{
-                background: "rgba(255,255,255,0.12)",
-                color: "white",
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "none",
-                cursor: "pointer"
-              }}
-            >
+            <button onClick={resetSession}
+              style={{ background: "rgba(255,255,255,0.08)", color: "white", padding: "8px 14px", borderRadius: 8, border: "none", cursor: "pointer" }}>
               Reset
             </button>
-
-            <button
-              onClick={() => setSelectorCollapsed((v) => !v)}
-              style={{
-                background: "rgba(255,255,255,0.12)",
-                color: "white",
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "none",
-                cursor: "pointer"
-              }}
-            >
+            <button onClick={() => setSelectorCollapsed(v => !v)}
+              style={{ background: "rgba(255,255,255,0.08)", color: "#aab6d3", padding: "8px 14px", borderRadius: 8, border: "none", cursor: "pointer" }}>
               {selectorCollapsed ? "Expand" : "Collapse"}
             </button>
           </div>
         </div>
 
         {!selectorCollapsed && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "340px 1fr",
-              gap: 18,
-              alignItems: "start"
-            }}
-          >
-            {/* Session list */}
-            <div style={{ display: "grid", gap: 12 }}>
-              <div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "#7cc6ff",
-                    marginBottom: 10,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.6
-                  }}
-                >
-                  Available Sessions
-                </div>
+          <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 16 }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.6 }}>Sessions</div>
+              {sessions.map((session) => {
+                const checked = selectedSessionIds.includes(session.id);
+                return (
+                  <label key={session.id} style={{
+                    display: "flex", gap: 8, alignItems: "flex-start",
+                    padding: "10px 12px", borderRadius: 10,
+                    background: checked ? "rgba(124,198,255,0.08)" : "#121933",
+                    border: `1px solid ${checked ? "rgba(124,198,255,0.3)" : "rgba(255,255,255,0.06)"}`,
+                    cursor: "pointer"
+                  }}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleSessionSelection(session.id)} style={{ marginTop: 2 }} />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{session.name}</div>
+                      <div style={{ fontSize: 11, color: "#7a88a8", marginTop: 2 }}>{session.exercises.length} exercises</div>
+                    </div>
+                  </label>
+                );
+              })}
 
-                <div style={{ display: "grid", gap: 10 }}>
-                  {sessions.map((session) => {
-                    const checked = selectedSessionIds.includes(session.id);
-                    return (
-                      <label
-                        key={session.id}
-                        style={{
-                          display: "flex",
-                          gap: 10,
-                          alignItems: "flex-start",
-                          padding: "12px 14px",
-                          borderRadius: 12,
-                          background: checked
-                            ? "rgba(124,198,255,0.12)"
-                            : "#121933",
-                          border: checked
-                            ? "1px solid rgba(124,198,255,0.35)"
-                            : "1px solid rgba(255,255,255,0.08)",
-                          cursor: "pointer"
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleSessionSelection(session.id)}
-                          style={{ marginTop: 2 }}
-                        />
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{session.name}</div>
-                          <div
-                            style={{
-                              fontSize: 13,
-                              color: "#aab6d3",
-                              marginTop: 4
-                            }}
-                          >
-                            {session.exercises.length} exercise
-                            {session.exercises.length === 1 ? "" : "s"}
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Patient profile selector */}
               <PatientProfileSelector
                 profile={patientProfile}
-                onChange={(updates) =>
-                  setPatientProfile((prev) => ({ ...prev, ...updates }))
-                }
+                onChange={(updates) => setPatientProfile(prev => ({ ...prev, ...updates }))}
                 disabled={sessionQueue.sessionStarted}
               />
             </div>
 
-            {/* Session preview */}
-            <div
-              style={{
-                background: "#121933",
-                borderRadius: 12,
-                padding: 16,
-                minHeight: 200
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "#7cc6ff",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.6,
-                  marginBottom: 14
-                }}
-              >
-                Combined Plan Preview
-              </div>
-
+            <div style={{ background: "#121933", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 12 }}>Plan Preview</div>
               {combinedQueue.length > 0 ? (
                 <>
-                  <div style={{ marginBottom: 16 }}>
-                    <div
-                      style={{
-                        color: "#d8e2ff",
-                        marginBottom: 10,
-                        lineHeight: 1.5
-                      }}
-                    >
-                      {combinedGoal}
-                    </div>
-
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      {[
-                        formatDurationRange(combinedDurationSeconds),
-                        `${combinedQueue.length} exercise${combinedQueue.length === 1 ? "" : "s"}`,
-                        `${combinedTotalReps} total reps`
-                      ].map((label) => (
-                        <span
-                          key={label}
-                          style={{
-                            padding: "5px 10px",
-                            borderRadius: 999,
-                            background: "rgba(255,255,255,0.08)",
-                            color: "white",
-                            fontSize: 12
-                          }}
-                        >
-                          {label}
-                        </span>
-                      ))}
-                    </div>
+                  <div style={{ color: "#d8e2ff", fontSize: 13, marginBottom: 10 }}>{combinedGoal}</div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+                    {[formatDurationRange(combinedDurationSeconds), `${combinedQueue.length} exercises`, `${combinedTotalReps} reps`].map(label => (
+                      <span key={label} style={{ padding: "3px 10px", borderRadius: 999, background: "rgba(255,255,255,0.07)", color: "#aab6d3", fontSize: 11 }}>{label}</span>
+                    ))}
                   </div>
-
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {combinedQueue.map((item, index) => (
-                      <div
-                        key={`${item.id}-${index}`}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr auto",
-                          gap: 10,
-                          padding: "10px 12px",
-                          borderRadius: 10,
-                          background: "rgba(255,255,255,0.04)"
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 600 }}>
-                            {item.displayName}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 13,
-                              color: "#aab6d3",
-                              marginTop: 2
-                            }}
-                          >
-                            {item.prescription.repTarget} reps
-                            {item.prescription.hold.required
-                              ? ` · ${item.prescription.hold.durationMs / 1000}s hold`
-                              : ""}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            alignSelf: "center",
-                            fontSize: 12,
-                            color: "#aab6d3"
-                          }}
-                        >
-                          {formatDurationRange(item.seconds)}
-                        </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {combinedQueue.map((item, i) => (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 10px", borderRadius: 8, background: "rgba(255,255,255,0.03)", fontSize: 13 }}>
+                        <span style={{ fontWeight: 600 }}>{item.displayName}</span>
+                        <span style={{ color: "#7a88a8" }}>{item.prescription.repTarget} reps{item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}</span>
                       </div>
                     ))}
                   </div>
                 </>
               ) : (
-                <div style={{ color: "#aab6d3" }}>
-                  Select one or more sessions to preview the combined plan.
-                </div>
+                <div style={{ color: "#7a88a8", fontSize: 13 }}>Select sessions above to preview.</div>
               )}
             </div>
           </div>
         )}
-      </section>
-
-      {/* ======================================================
-          MAIN CONTENT — CAMERA + PANELS
-      ====================================================== */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 20,
-          alignItems: "start"
-        }}
-      >
-        {/* CAMERA PANEL */}
-        <section
-          style={{
-            background: "#1a2040",
-            padding: 20,
-            borderRadius: 14,
-            minHeight: 540,
-            border: "1px solid rgba(255,255,255,0.08)"
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-              alignItems: "center",
-              marginBottom: 14,
-              flexWrap: "wrap"
-            }}
-          >
-            <h2 style={{ margin: 0 }}>Therapy View</h2>
-            <div
-              style={{
-                padding: "6px 12px",
-                borderRadius: 999,
-                background: "rgba(124,198,255,0.12)",
-                color: "#7cc6ff",
-                fontSize: 12,
-                fontWeight: 700
-              }}
-            >
-              {formatPhase(inferenceLoop.phase)}
-            </div>
-          </div>
-
-          <div style={{ width: "100%", maxWidth: 720 }}>
-            {/* Framing banner — now driven by framing intelligence */}
-            <div
-              style={{
-                marginBottom: 10,
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: 13,
-                fontWeight: 600,
-                background:
-                  framingPanelState.tone === "good"
-                    ? "rgba(100,220,150,0.15)"
-                    : framingPanelState.tone === "critical"
-                    ? "rgba(255,100,100,0.15)"
-                    : "rgba(255,180,80,0.15)",
-                color:
-                  framingPanelState.tone === "good"
-                    ? "#9be7b0"
-                    : framingPanelState.tone === "critical"
-                    ? "#ff8f8f"
-                    : "#ffcc80",
-                border:
-                  framingPanelState.tone === "good"
-                    ? "1px solid rgba(100,220,150,0.4)"
-                    : framingPanelState.tone === "critical"
-                    ? "1px solid rgba(255,100,100,0.4)"
-                    : "1px solid rgba(255,180,80,0.4)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8
-              }}
-            >
-              {framingPanelState.evaluating && (
-                <span style={{ opacity: 0.6, fontSize: 11 }}>●</span>
-              )}
-              {framingPanelState.exercisePaused && (
-                <span style={{ fontSize: 11 }}>⏸</span>
-              )}
-              {framingPanelState.message}
-            </div>
-
-            <div style={{ position: "relative", width: "100%" }}>
-              <CameraViewport
-                ref={cameraRef}
-                onVideoReady={handleCameraReady}
-                onCameraStop={handleCameraStop}
-                showStartButton={false}
-              />
-              <div
-                style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-              >
-                <PoseCanvasOverlay frame={inferenceLoop.frame} />
-              </div>
-            </div>
-          </div>
-
-          {inferenceLoop.engineError && (
-            <p style={{ color: "#ff8f8f", marginBottom: 0, marginTop: 12 }}>
-              {inferenceLoop.engineError}
-            </p>
-          )}
-        </section>
-
-        {/* RIGHT COLUMN — INSTRUCTION + COACHING + OBSERVATION */}
-        <section style={{ display: "grid", gap: 16 }}>
-
-          {/* LIVE COACHING PANEL */}
-          <div
-            style={{
-              background: "#1a2040",
-              padding: 20,
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.08)"
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                marginBottom: 12,
-                flexWrap: "wrap"
-              }}
-            >
-              <h2 style={{ margin: 0 }}>Live Coaching</h2>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <span
-                  style={{
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    background: "rgba(124,198,255,0.12)",
-                    color: "#7cc6ff",
-                    fontSize: 12,
-                    fontWeight: 700
-                  }}
-                >
-                  {formatPhase(inferenceLoop.phase)}
-                </span>
-                <span
-                  style={{
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.08)",
-                    color: "white",
-                    fontSize: 12,
-                    fontWeight: 700
-                  }}
-                >
-                  {currentPrescription?.repTarget
-                    ? `Rep ${inferenceLoop.repCount}/${currentPrescription.repTarget}`
-                    : "Rep 0/0"}
-                </span>
-                {inferenceLoop.holdRemainingMs !== null &&
-                  inferenceLoop.phase === "holding" && (
-                    <span
-                      style={{
-                        padding: "4px 8px",
-                        borderRadius: 999,
-                        background: "rgba(100,220,150,0.15)",
-                        color: "#9be7b0",
-                        fontSize: 12,
-                        fontWeight: 700
-                      }}
-                    >
-                      Hold{" "}
-                      {Math.max(
-                        1,
-                        Math.ceil(inferenceLoop.holdRemainingMs / 1000)
-                      )}
-                      s
-                    </span>
-                  )}
-              </div>
-            </div>
-
-            {/* Static instruction block */}
-            <div
-              style={{
-                background: "#101833",
-                borderRadius: 12,
-                padding: 20,
-                minHeight: 120,
-                border: "1px solid rgba(255,255,255,0.06)",
-                marginBottom: 12
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 28,
-                  fontWeight: 800,
-                  lineHeight: 1.15,
-                  marginBottom: 12
-                }}
-              >
-                {currentQueueItem?.displayName ?? "No active exercise"}
-              </div>
-
-              <div
-                style={{
-                  fontSize: 16,
-                  lineHeight: 1.5,
-                  color: "#e6ecff",
-                  marginBottom: 12
-                }}
-              >
-                {instructionBody}
-              </div>
-
-              <div
-                style={{
-                  display: "grid",
-                  gap: 6,
-                  color: "#c7d3f5",
-                  fontSize: 14
-                }}
-              >
-                <div>
-                  <strong>Position:</strong>{" "}
-                  {getPositionRequirement(currentPrescription?.id)}
-                </div>
-                <div>
-                  <strong>Progress:</strong> {sessionQueue.overallProgressLabel}
-                </div>
-                <div>
-                  <strong>Session:</strong>{" "}
-                  {sessionQueue.sessionComplete
-                    ? "Complete"
-                    : sessionQueue.sessionStarted
-                    ? "In progress"
-                    : "Not started"}
-                </div>
-              </div>
-            </div>
-
-            {/* AI Coaching message block */}
-            <div
-              style={{
-                background: "#101833",
-                borderRadius: 12,
-                padding: 16,
-                minHeight: 60,
-                border: `1px solid ${
-                  coachingPanelState.tone === "corrective"
-                    ? "rgba(255,180,80,0.3)"
-                    : coachingPanelState.tone === "urgent"
-                    ? "rgba(255,100,100,0.3)"
-                    : coachingPanelState.tone === "encouraging"
-                    ? "rgba(100,220,150,0.3)"
-                    : "rgba(255,255,255,0.06)"
-                }`,
-                display: "flex",
-                alignItems: "center",
-                gap: 10
-              }}
-            >
-              {coachingPanelState.isThinking ? (
-                <div style={{ color: "#7a88a8", fontSize: 14, fontStyle: "italic" }}>
-                  …
-                </div>
-              ) : coachingPanelState.message ? (
-                <>
-                  <div
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      flexShrink: 0,
-                      background:
-                        coachingPanelState.tone === "corrective"
-                          ? "#ffcc80"
-                          : coachingPanelState.tone === "urgent"
-                          ? "#ff8f8f"
-                          : coachingPanelState.tone === "encouraging"
-                          ? "#9be7b0"
-                          : "#7cc6ff"
-                    }}
-                  />
-                  <div
-                    style={{
-                      fontSize: 16,
-                      lineHeight: 1.5,
-                      color:
-                        coachingPanelState.tone === "corrective"
-                          ? "#ffcc80"
-                          : coachingPanelState.tone === "urgent"
-                          ? "#ff8f8f"
-                          : coachingPanelState.tone === "encouraging"
-                          ? "#9be7b0"
-                          : "#e6ecff",
-                      fontWeight: 500
-                    }}
-                  >
-                    {coachingPanelState.message}
-                  </div>
-                  {coachingPanelState.source === "fallback" && (
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "#7a88a8",
-                        marginLeft: "auto",
-                        flexShrink: 0
-                      }}
-                    >
-                      fallback
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div style={{ color: "#7a88a8", fontSize: 14 }}>
-                  {sessionQueue.sessionStarted
-                    ? "Watching your movement…"
-                    : "Coaching will appear here during the session."}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* CAMERA UNDERSTANDING PANEL */}
-          <div
-            style={{
-              background: "#1a2040",
-              padding: 20,
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.08)"
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: 12 }}>
-              What the camera sees
-            </h3>
-
-            <div
-              style={{
-                background: "#101833",
-                borderRadius: 12,
-                padding: 16,
-                border: "1px solid rgba(255,255,255,0.06)",
-                marginBottom: 14
-              }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>
-                Visibility
-              </div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {inferenceLoop.liveObservation.visibilityLines.map(
-                  (line, index) => (
-                    <div
-                      key={`vis-${index}`}
-                      style={{ color: "#d8e2ff", lineHeight: 1.45, fontSize: 13 }}
-                    >
-                      • {line}
-                    </div>
-                  )
-                )}
-              </div>
-            </div>
-
-            <div
-              style={{
-                background: "#101833",
-                borderRadius: 12,
-                padding: 16,
-                border: "1px solid rgba(255,255,255,0.06)"
-              }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>
-                Movement status
-              </div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {inferenceLoop.liveObservation.movementLines.map(
-                  (line, index) => (
-                    <div
-                      key={`move-${index}`}
-                      style={{ color: "#d8e2ff", lineHeight: 1.45, fontSize: 13 }}
-                    >
-                      • {line}
-                    </div>
-                  )
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
       </div>
 
-      {/* ======================================================
-          SESSION STATUS BAR
-      ====================================================== */}
-      <section
-        style={{
-          background: "#1a2040",
-          padding: 16,
-          borderRadius: 14,
-          marginTop: 20,
-          border: "1px solid rgba(255,255,255,0.08)"
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginBottom: statusCollapsed ? 0 : 12
-          }}
-        >
-          <h3 style={{ margin: 0 }}>Session Status</h3>
-          <button
-            onClick={() => setStatusCollapsed((v) => !v)}
-            style={{
-              background: "rgba(255,255,255,0.12)",
-              color: "white",
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "none",
-              cursor: "pointer"
-            }}
-          >
-            {statusCollapsed ? "Expand" : "Collapse"}
-          </button>
+      {/* ====================================================
+          DEBUG LOG PANEL
+      ==================================================== */}
+      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(124,198,255,0.2)", overflow: "hidden" }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "10px 16px",
+          background: "rgba(124,198,255,0.06)",
+          borderBottom: "1px solid rgba(124,198,255,0.15)",
+          cursor: "pointer"
+        }} onClick={() => setDebugOpen(v => !v)}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8 }}>
+              Debug Log
+            </span>
+            <span style={{ fontSize: 11, color: "#7a88a8" }}>
+              {debugLog.length} entries
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); globalDebugLog = []; setDebugLog([]); }}
+              style={{ background: "rgba(255,255,255,0.06)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+              Clear
+            </button>
+            <span style={{ color: "#7a88a8", fontSize: 12 }}>{debugOpen ? "▲" : "▼"}</span>
+          </div>
         </div>
 
-        {!statusCollapsed && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-              gap: 14,
-              fontSize: 14
-            }}
-          >
-            {[
-              {
-                label: "Current exercise",
-                value: currentQueueItem?.displayName ?? "None"
-              },
-              {
-                label: "Progress",
-                value: sessionQueue.overallProgressLabel
-              },
-              {
-                label: "Camera",
-                value: inferenceLoop.engineStatus
-              },
-              {
-                label: "Framing",
-                value: framingPanelState.severity
-              },
-              {
-                label: "Patient type",
-                value: patientProfile.type.replace("_", " ")
-              }
-            ].map(({ label, value }) => (
-              <div key={label}>
-                {label}:
-                <div style={{ fontWeight: 700, marginTop: 4 }}>{value}</div>
+        {debugOpen && (
+          <div style={{ maxHeight: 400, overflowY: "auto", padding: 12, display: "grid", gap: 4 }}>
+            {debugLog.length === 0 ? (
+              <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>
+                No log entries yet. Click "Test Connection" to verify API, then begin a session.
               </div>
-            ))}
+            ) : (
+              debugLog.map((entry) => {
+                const style = LOG_COLORS[entry.level];
+                const isExpanded = expandedLogId === entry.id;
+
+                return (
+                  <div
+                    key={entry.id}
+                    onClick={() => setExpandedLogId(isExpanded ? null : (entry.detail ? entry.id : null))}
+                    style={{
+                      background: style.bg,
+                      borderRadius: 6,
+                      padding: "6px 10px",
+                      cursor: entry.detail ? "pointer" : "default",
+                      border: "1px solid transparent",
+                      borderColor: isExpanded ? `${style.color}33` : "transparent"
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>
+                        {entry.timestamp}
+                      </span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: "1px 6px",
+                        borderRadius: 4, background: `${style.color}22`,
+                        color: style.color, flexShrink: 0
+                      }}>
+                        {style.label}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>
+                        {entry.category}
+                      </span>
+                      <span style={{ fontSize: 12, color: "white", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isExpanded ? "normal" : "nowrap" }}>
+                        {entry.message}
+                      </span>
+                      {entry.detail && (
+                        <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>
+                          {isExpanded ? "▲" : "▼"}
+                        </span>
+                      )}
+                    </div>
+
+                    {isExpanded && entry.detail && (
+                      <div style={{
+                        marginTop: 6, padding: "8px 10px",
+                        background: "rgba(0,0,0,0.3)", borderRadius: 6,
+                        fontSize: 11, color: "#aab6d3",
+                        fontFamily: "monospace", lineHeight: 1.6,
+                        whiteSpace: "pre-wrap", wordBreak: "break-word"
+                      }}>
+                        {entry.detail}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
-      </section>
+      </div>
 
-      
     </div>
   );
 }
