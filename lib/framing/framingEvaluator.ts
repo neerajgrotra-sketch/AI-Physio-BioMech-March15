@@ -216,19 +216,17 @@ export class FramingEvaluator {
         patientProfile
       );
 
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system:
-            "You are a physiotherapy assistant. You evaluate camera framing for exercise sessions. Always respond with valid JSON only.",
-          messages: [{ role: "user", content: prompt }]
-        })
-      });
+   const response = await fetch("/api/coach", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    prompt,
+    system:
+      "You are a physiotherapy assistant. You evaluate camera framing for exercise sessions. Always respond with valid JSON only."
+  })
+});
 
       // Clear timeout — we got a response in time
       window.clearTimeout(timeoutHandle);
@@ -237,12 +235,8 @@ export class FramingEvaluator {
         throw new Error(`API error: ${response.status}`);
       }
 
-      const data = await response.json();
-      const rawText = data.content
-        ?.map((item: { type: string; text?: string }) =>
-          item.type === "text" ? item.text ?? "" : ""
-        )
-        .join("");
+     const data = await response.json();
+    const rawText = data.text ?? "";
 
       const isStillRelevant = this.pendingEvaluationId === evaluationId;
 
