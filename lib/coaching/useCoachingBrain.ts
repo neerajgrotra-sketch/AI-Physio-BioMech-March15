@@ -1,30 +1,38 @@
 // ============================================================
 // lib/coaching/useCoachingBrain.ts
 // ============================================================
-// The AI coaching brain hook.
+// AI coaching brain — clean rewrite.
 //
-// This is what SessionRunner calls to get coaching decisions.
-// It wires together:
-// - ObservationBuffer (pattern detection)
-// - ClinicalContextAssembler (builds AI prompt context)
-// - CoachingPromptBuilder (builds the exact prompt)
-// - Claude API (generates the coaching response)
-// - Silence gate (prevents over-coaching)
-// - Deterministic fallbacks (fires if Claude times out)
+// Key design decisions:
 //
-// SessionRunner reads:
-// - coachingMessage: string | null  → display in coaching panel
-// - coachingTone: string            → for visual styling
-// - isThinking: boolean             → show subtle indicator
+// 1. ONE API CALL AT A TIME
+//    A single pendingCallRef tracks the active call.
+//    New triggers cancel lower-priority pending calls.
+//    Higher-priority triggers (rep_failed) always fire.
 //
-// SessionRunner calls:
-// - onRepCompleted()   → after every successful rep
-// - onRepFailed()      → after every failed rep
-// - onHoldStarted()    → when hold phase begins
-// - onHesitation()     → when patient stops between reps
-// - onExerciseStarted() → before each exercise
-// - onExerciseCompleting() → after final rep
-// - feedFrame()        → every frame for observation buffer
+// 2. HOLD CUES ARE DETERMINISTIC
+//    Hold phase cues come from prescription.coaching strings,
+//    not from Claude. This eliminates the hold/rep_failed race
+//    where both fired within milliseconds of each other.
+//
+// 3. PHASE-CHANGE CLEARING
+//    When phase changes, the coaching panel clears immediately.
+//    No stale "Hold at the top" persisting into lowering phase.
+//
+// 4. ALWAYS SPEAK ON REP COMPLETE
+//    Claude is instructed to always return a brief cue after
+//    a rep, even if it is just "Good." Silence is only allowed
+//    for observation triggers.
+//
+// 5. TRIGGER PRIORITY
+//    rep_failed (5) > rep_completed (4) > exercise_started (3)
+//    > hesitation_detected (2) > observation_ready (1)
+//    Lower-priority calls are dropped if a higher one is queued.
+//
+// 6. RATE LIMITING
+//    Separate clocks for coaching vs framing.
+//    Minimum 5s between coaching calls except rep_failed
+//    which always fires.
 // ============================================================
 
 import { useRef, useState, useCallback } from "react";
@@ -40,8 +48,7 @@ import {
 } from "@/lib/coaching/clinicalContextAssembler";
 import {
   buildCoachingPrompt,
-  parseCoachingResponse,
-  type CoachingResponse
+  parseCoachingResponse
 } from "@/lib/coaching/coachingPromptBuilder";
 
 import type { PatientProfile, ExerciseSessionContext } from "@/lib/patient/patientTypes";
@@ -52,35 +59,35 @@ import type { Observation } from "@/lib/coaching/types";
 // CONSTANTS
 // ============================================================
 
-const API_TIMEOUT_MS = 4000;
+const API_TIMEOUT_MS = 5000;
 const HESITATION_THRESHOLD_MS = 12000;
+const MIN_COACHING_INTERVAL_MS = 5000;
+const MIN_OBSERVATION_INTERVAL_MS = 15000;
 
-// Hard rate limit guard — no matter what, API calls cannot
-// fire faster than this interval. Keeps us well under 50 rpm.
-const MIN_API_INTERVAL_MS = 5000;
+// Priority values — higher number = higher priority
+const TRIGGER_PRIORITY: Record<CoachingTrigger, number> = {
+  rep_failed:        5,
+  exercise_completing: 4,
+  rep_completed:     4,
+  exercise_started:  3,
+  hold_started:      2,
+  hesitation_detected: 2,
+  observation_ready: 1
+};
 
-// Observation triggers come from feedFrame (30fps) so need
-// extra throttle on top of the silence gate.
-const MIN_OBSERVATION_INTERVAL_MS = 12000;
+// ============================================================
+// COACHING PANEL STATE
+// ============================================================
 
 export type CoachingPanelState = {
-  // Current message to display/speak
   message: string | null;
-
-  // Visual tone for styling the panel
   tone: "encouraging" | "corrective" | "neutral" | "urgent";
-
-  // Whether Claude is currently thinking
   isThinking: boolean;
-
-  // Whether this message came from AI or deterministic fallback
   source: "ai" | "fallback" | "deterministic" | "idle";
-
-  // Timestamp of when this message was set
   setAtMs: number;
 };
 
-function createIdlePanelState(): CoachingPanelState {
+function createIdleState(): CoachingPanelState {
   return {
     message: null,
     tone: "neutral",
@@ -95,471 +102,484 @@ function createIdlePanelState(): CoachingPanelState {
 // ============================================================
 
 export function useCoachingBrain() {
-  // Observation buffer — detects patterns across frames
+  // Observation buffer
   const observationBufferRef = useRef(new ObservationBuffer());
 
-  // Silence gate — prevents over-coaching
+  // Silence gate
   const silenceGateRef = useRef<SilenceGateState>(createSilenceGateState());
 
-  // Pending API call tracking
-  const pendingCallIdRef = useRef<string | null>(null);
+  // Active call tracking
+  const activeCallIdRef = useRef<string | null>(null);
+  const activePriorityRef = useRef<number>(0);
+
+  // Rate limiting — separate from framing
+  const lastCoachingCallAtMsRef = useRef<number>(0);
+  const lastObservationCallAtMsRef = useRef<number>(0);
 
   // Hesitation tracking
   const lastRepCompletedAtMsRef = useRef<number | null>(null);
   const hesitationFiredRef = useRef(false);
 
-  // Track last phase to detect phase changes for message clearing
+  // Phase tracking for clearing
   const lastPhaseFedRef = useRef<string>("ready");
 
-  // Rate limiting — separate clocks per trigger category.
-  // Framing calls and coaching calls do not share a clock.
-  // This prevents framing from blocking coaching and vice versa.
-  const lastCoachingCallAtMsRef = useRef<number>(0);
-  const lastObservationCallAtMsRef = useRef<number>(0);
+  // Timeout handle
+  const timeoutHandleRef = useRef<number | null>(null);
 
-  // UI state
-  const [panelState, setPanelState] =
-    useState<CoachingPanelState>(createIdlePanelState());
+  // Panel state
+  const [panelState, setPanelState] = useState<CoachingPanelState>(createIdleState());
 
   // ----------------------------------------------------------
   // RESET
-  // Call when exercise changes
   // ----------------------------------------------------------
 
   const reset = useCallback(() => {
     observationBufferRef.current = new ObservationBuffer();
     silenceGateRef.current = createSilenceGateState();
-    pendingCallIdRef.current = null;
-    lastRepCompletedAtMsRef.current = null;
-    hesitationFiredRef.current = false;
+    activeCallIdRef.current = null;
+    activePriorityRef.current = 0;
     lastCoachingCallAtMsRef.current = 0;
     lastObservationCallAtMsRef.current = 0;
+    lastRepCompletedAtMsRef.current = null;
+    hesitationFiredRef.current = false;
     lastPhaseFedRef.current = "ready";
-    setPanelState(createIdlePanelState());
+
+    if (timeoutHandleRef.current !== null) {
+      window.clearTimeout(timeoutHandleRef.current);
+      timeoutHandleRef.current = null;
+    }
+
+    setPanelState(createIdleState());
   }, []);
 
   // ----------------------------------------------------------
-  // CLAUDE API CALL
-  // Async — never blocks the frame loop.
-  // Fires fallback immediately if timeout exceeded.
+  // CLEAR PANEL
+  // Called when phase changes to avoid stale messages
   // ----------------------------------------------------------
 
-  const callClaude = useCallback(
-    async (
-      callId: string,
-      prompt: string,
-      fallbackText: string | null,
-      trigger: CoachingTrigger,
-      nowMs: number
-    ) => {
-      // Log that we are about to call Claude
-      console.log('[CoachingBrain] callClaude firing', { callId, trigger, nowMs });
+  const clearPanel = useCallback(() => {
+    setPanelState(createIdleState());
+  }, []);
 
-      // Show thinking indicator
-      setPanelState((prev) => ({
-        ...prev,
-        isThinking: true
-      }));
+  // ----------------------------------------------------------
+  // CALL CLAUDE
+  // Async — never blocks frame loop.
+  // ----------------------------------------------------------
 
-      // Set up timeout — fires fallback if Claude is slow
-      const timeoutHandle = window.setTimeout(() => {
-        if (pendingCallIdRef.current !== callId) return;
+  const callClaude = useCallback(async (params: {
+    callId: string;
+    prompt: string;
+    fallbackText: string | null;
+    trigger: CoachingTrigger;
+    nowMs: number;
+  }) => {
+    const { callId, prompt, fallbackText, trigger, nowMs } = params;
 
-        pendingCallIdRef.current = null;
+    // Show thinking indicator only for important triggers
+    if (trigger === "rep_failed" || trigger === "exercise_started") {
+      setPanelState(prev => ({ ...prev, isThinking: true }));
+    }
 
-        if (fallbackText) {
-          setPanelState({
-            message: fallbackText,
-            tone: "neutral",
-            isThinking: false,
-            source: "fallback",
-            setAtMs: Date.now()
-          });
-        } else {
-          setPanelState((prev) => ({
-            ...prev,
-            isThinking: false
-          }));
-        }
-      }, API_TIMEOUT_MS);
+    // Set up timeout
+    if (timeoutHandleRef.current !== null) {
+      window.clearTimeout(timeoutHandleRef.current);
+    }
 
-      try {
-        const response = await fetch("/api/coach", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            system:
-              "You are a physiotherapy coaching assistant. You make coaching decisions during live exercise sessions. Always respond with valid JSON only. Be concise — coaching cues must be short."
-          })
-        });
+    timeoutHandleRef.current = window.setTimeout(() => {
+      if (activeCallIdRef.current !== callId) return;
 
-        window.clearTimeout(timeoutHandle);
+      activeCallIdRef.current = null;
+      activePriorityRef.current = 0;
+      timeoutHandleRef.current = null;
 
-        // Check if this call is still current
-        if (pendingCallIdRef.current !== callId) return;
-        pendingCallIdRef.current = null;
-
-        if (!response.ok) throw new Error(`API ${response.status}`);
-
-        const data = await response.json();
-        const rawText = data.text ?? "";
-
-        const parsed: CoachingResponse | null = parseCoachingResponse(rawText);
-
-        if (!parsed || !parsed.speak || !parsed.text) {
-          // AI decided not to speak
-          setPanelState((prev) => ({
-            ...prev,
-            isThinking: false
-          }));
-          return;
-        }
-
-        // Update silence gate
-        silenceGateRef.current = updateSilenceGate(
-          silenceGateRef.current,
-          trigger,
-          nowMs
-        );
-
+      if (fallbackText) {
         setPanelState({
-          message: parsed.text,
-          tone: parsed.tone,
+          message: fallbackText,
+          tone: "neutral",
           isThinking: false,
-          source: "ai",
+          source: "fallback",
           setAtMs: Date.now()
         });
-      } catch {
-        window.clearTimeout(timeoutHandle);
-        if (pendingCallIdRef.current !== callId) return;
-        pendingCallIdRef.current = null;
-
-        if (fallbackText) {
-          setPanelState({
-            message: fallbackText,
-            tone: "neutral",
-            isThinking: false,
-            source: "fallback",
-            setAtMs: Date.now()
-          });
-        } else {
-          setPanelState((prev) => ({ ...prev, isThinking: false }));
-        }
+      } else {
+        setPanelState(prev => ({ ...prev, isThinking: false }));
       }
-    },
-    []
-  );
+    }, API_TIMEOUT_MS);
+
+    try {
+      const response = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system:
+            "You are a physiotherapy coaching assistant. You make coaching decisions during live exercise sessions. Always respond with valid JSON only. Be concise — coaching cues must be short."
+        })
+      });
+
+      // Clear timeout
+      if (timeoutHandleRef.current !== null) {
+        window.clearTimeout(timeoutHandleRef.current);
+        timeoutHandleRef.current = null;
+      }
+
+      // Check if still current
+      if (activeCallIdRef.current !== callId) return;
+
+      activeCallIdRef.current = null;
+      activePriorityRef.current = 0;
+
+      if (!response.ok) throw new Error("API " + response.status);
+
+      const data = await response.json();
+      const rawText = data.text ?? "";
+      const parsed = parseCoachingResponse(rawText);
+
+      if (!parsed || !parsed.speak || !parsed.text) {
+        // Claude chose not to speak — clear thinking indicator
+        setPanelState(prev => ({ ...prev, isThinking: false }));
+        return;
+      }
+
+      // Update silence gate
+      silenceGateRef.current = updateSilenceGate(
+        silenceGateRef.current,
+        trigger,
+        nowMs
+      );
+
+      setPanelState({
+        message: parsed.text,
+        tone: parsed.tone,
+        isThinking: false,
+        source: "ai",
+        setAtMs: Date.now()
+      });
+    } catch {
+      if (timeoutHandleRef.current !== null) {
+        window.clearTimeout(timeoutHandleRef.current);
+        timeoutHandleRef.current = null;
+      }
+
+      if (activeCallIdRef.current !== callId) return;
+      activeCallIdRef.current = null;
+      activePriorityRef.current = 0;
+
+      if (fallbackText) {
+        setPanelState({
+          message: fallbackText,
+          tone: "neutral",
+          isThinking: false,
+          source: "fallback",
+          setAtMs: Date.now()
+        });
+      } else {
+        setPanelState(prev => ({ ...prev, isThinking: false }));
+      }
+    }
+  }, []);
 
   // ----------------------------------------------------------
   // TRIGGER COACHING DECISION
-  // Core function — assembles context and fires Claude call
+  // Core gate — decides whether to call Claude
   // ----------------------------------------------------------
 
-  const triggerCoachingDecision = useCallback(
-    (params: {
-      trigger: CoachingTrigger;
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      failureReason?: string | null;
-      observation?: Observation | null;
-      holdElapsedMs?: number | null;
-      holdRequiredMs?: number | null;
-      nowMs: number;
-    }) => {
-      const {
-        trigger,
-        prescription,
-        patientProfile,
-        exerciseContext,
-        failureReason = null,
-        observation = null,
-        holdElapsedMs = null,
-        holdRequiredMs = null,
-        nowMs
-      } = params;
+  const triggerCoachingDecision = useCallback((params: {
+    trigger: CoachingTrigger;
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    failureReason?: string | null;
+    observation?: Observation | null;
+    holdElapsedMs?: number | null;
+    holdRequiredMs?: number | null;
+    nowMs: number;
+  }) => {
+    const {
+      trigger,
+      prescription,
+      patientProfile,
+      exerciseContext,
+      failureReason = null,
+      observation = null,
+      holdElapsedMs = null,
+      holdRequiredMs = null,
+      nowMs
+    } = params;
 
-      // Check silence gate — never trigger if within silence window
-      // Exception: rep_failed and exercise_started always get through
-      if (
-        trigger !== "rep_failed" &&
-        trigger !== "exercise_started" &&
-        isSilenceWindowActive(silenceGateRef.current, nowMs)
-      ) {
-        console.log("[CoachingBrain] BLOCKED by silence gate", { trigger, silentUntil: silenceGateRef.current.silentUntilMs, nowMs });
-        return;
-      }
+    const priority = TRIGGER_PRIORITY[trigger];
 
-      // Hard rate limit — coaching calls cannot fire faster than MIN_API_INTERVAL_MS.
-      // exercise_started and rep_failed always bypass this to ensure they fire.
-      if (
-        trigger !== "exercise_started" &&
-        trigger !== "rep_failed" &&
-        nowMs - lastCoachingCallAtMsRef.current < MIN_API_INTERVAL_MS
-      ) {
-        console.log("[CoachingBrain] BLOCKED by rate limit", { trigger, msSinceLast: nowMs - lastCoachingCallAtMsRef.current, limit: MIN_API_INTERVAL_MS });
-        return;
-      }
+    // Drop lower-priority calls if a higher one is in flight
+    if (
+      activeCallIdRef.current !== null &&
+      priority < activePriorityRef.current
+    ) {
+      return;
+    }
 
-      // Cancel any pending call
-      const callId = `coaching-${trigger}-${nowMs}`;
-      pendingCallIdRef.current = callId;
+    // Silence gate — rep_failed and exercise_started always bypass
+    const bypassSilence =
+      trigger === "rep_failed" ||
+      trigger === "exercise_started" ||
+      trigger === "exercise_completing";
 
-      // Assemble clinical context
-      const clinicalContext = assembleClinicalContext({
-        prescription,
-        patientProfile,
-        exerciseContext,
-        trigger,
-        failureReason,
-        observation,
-        holdElapsedMs,
-        holdRequiredMs,
-        nowMs
-      });
+    if (
+      !bypassSilence &&
+      isSilenceWindowActive(silenceGateRef.current, nowMs)
+    ) {
+      return;
+    }
 
-      // Build prompt
-      const prompt = buildCoachingPrompt(clinicalContext);
+    // Rate limit — rep_failed and exercise_started always bypass
+    const bypassRateLimit =
+      trigger === "rep_failed" ||
+      trigger === "exercise_started" ||
+      trigger === "exercise_completing";
 
-      // Get deterministic fallback from prescription coaching strings
-      const fallbackText = getFallbackText(trigger, prescription, failureReason);
+    if (
+      !bypassRateLimit &&
+      nowMs - lastCoachingCallAtMsRef.current < MIN_COACHING_INTERVAL_MS
+    ) {
+      return;
+    }
 
-      // Record coaching call time for rate limiting
-      lastCoachingCallAtMsRef.current = nowMs;
+    // Build context and prompt
+    const clinicalContext = assembleClinicalContext({
+      prescription,
+      patientProfile,
+      exerciseContext,
+      trigger,
+      failureReason,
+      observation,
+      holdElapsedMs,
+      holdRequiredMs,
+      nowMs
+    });
 
-      // Log before firing
-      console.log("[CoachingBrain] triggerCoachingDecision firing", { trigger, callId, promptLength: prompt.length });
+    const prompt = buildCoachingPrompt(clinicalContext);
+    const fallbackText = getFallbackText(trigger, prescription, failureReason);
 
-      // Fire async Claude call
-      callClaude(callId, prompt, fallbackText, trigger, nowMs);
-    },
-    [callClaude]
-  );
+    const callId = trigger + "-" + nowMs;
+    activeCallIdRef.current = callId;
+    activePriorityRef.current = priority;
+    lastCoachingCallAtMsRef.current = nowMs;
+
+    callClaude({ callId, prompt, fallbackText, trigger, nowMs });
+  }, [callClaude]);
 
   // ----------------------------------------------------------
   // FEED FRAME
-  // Called every frame from the inference loop.
-  // Feeds the ObservationBuffer and checks for:
-  // - New stable observations → trigger coaching
-  // - Hesitation between reps → trigger coaching
+  // Called every frame — feeds observation buffer,
+  // detects phase changes, detects hesitation
   // ----------------------------------------------------------
 
-  const feedFrame = useCallback(
-    (params: {
-      phase: string;
-      repCount: number;
-      holdElapsedMs: number | null;
-      holdRequiredMs: number | null;
-      primaryIssue: string;
-      armElevation?: number | null;
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      nowMs: number;
-    }) => {
-      const {
-        phase,
-        repCount,
-        holdElapsedMs,
-        holdRequiredMs,
-        primaryIssue,
-        armElevation,
+  const feedFrame = useCallback((params: {
+    phase: string;
+    repCount: number;
+    holdElapsedMs: number | null;
+    holdRequiredMs: number | null;
+    primaryIssue: string;
+    armElevation?: number | null;
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    nowMs: number;
+  }) => {
+    const {
+      phase,
+      repCount,
+      holdElapsedMs,
+      holdRequiredMs,
+      primaryIssue,
+      armElevation,
+      prescription,
+      patientProfile,
+      exerciseContext,
+      nowMs
+    } = params;
+
+    const prevPhase = lastPhaseFedRef.current;
+
+    // Clear stale coaching message on phase change
+    // Only clear if transitioning away from a "done" state
+    if (prevPhase !== phase) {
+      const staleOnChange =
+        (prevPhase === "holding" && phase === "lowering") ||
+        (prevPhase === "lowering" && phase === "ready") ||
+        (prevPhase === "ready" && phase === "lifting");
+
+      if (staleOnChange) {
+        clearPanel();
+      }
+    }
+
+    lastPhaseFedRef.current = phase;
+
+    // Feed observation buffer
+    const observations = observationBufferRef.current.add({
+      timestampMs: nowMs,
+      phase: phase as any,
+      repCount,
+      holdElapsedMs,
+      holdRequiredMs,
+      detectedIssues: primaryIssue !== "idle" ? [primaryIssue] : [],
+      primaryIssue,
+      armElevation
+    });
+
+    // Observation-triggered coaching (heavily throttled)
+    if (
+      observations.length > 0 &&
+      !isSilenceWindowActive(silenceGateRef.current, nowMs) &&
+      nowMs - lastObservationCallAtMsRef.current >= MIN_OBSERVATION_INTERVAL_MS &&
+      activeCallIdRef.current === null
+    ) {
+      const topObservation = observations.reduce((best, obs) =>
+        obs.confidence > best.confidence ? obs : best
+      );
+
+      lastObservationCallAtMsRef.current = nowMs;
+
+      triggerCoachingDecision({
+        trigger: "observation_ready",
         prescription,
         patientProfile,
         exerciseContext,
-        nowMs
-      } = params;
-
-      // Clear stale hold message when phase changes away from holding
-      // This prevents "Hold at the top" persisting into the lowering phase
-      if (lastPhaseFedRef.current === "holding" && phase !== "holding") {
-        setPanelState((prev) => {
-          // Only clear if the message is hold-related
-          const holdMessages = ["hold", "Hold", "keep holding", "Keep holding", "keep it", "breathe"];
-          const isHoldMessage = holdMessages.some(kw => (prev.message ?? "").toLowerCase().includes(kw.toLowerCase()));
-          if (isHoldMessage || prev.source === "fallback") {
-            return createIdlePanelState();
-          }
-          return prev;
-        });
-      }
-      lastPhaseFedRef.current = phase;
-
-      // Feed observation buffer
-      const observations = observationBufferRef.current.add({
-        timestampMs: nowMs,
-        phase: phase as any,
-        repCount,
+        observation: topObservation,
         holdElapsedMs,
         holdRequiredMs,
-        detectedIssues: primaryIssue !== "idle" ? [primaryIssue] : [],
-        primaryIssue,
-        armElevation
+        nowMs
       });
+    }
 
-      // Check for new stable observations
-      // Extra throttle for observation triggers — they fire from feedFrame
-      // so need stricter interval than the general MIN_API_INTERVAL_MS
-      if (
-        observations.length > 0 &&
-        !isSilenceWindowActive(silenceGateRef.current, nowMs) &&
-        nowMs - lastObservationCallAtMsRef.current >= MIN_OBSERVATION_INTERVAL_MS
-      ) {
-        // Use the highest-confidence observation
-        const topObservation = observations.reduce((best, obs) =>
-          obs.confidence > best.confidence ? obs : best
-        );
-
-        lastObservationCallAtMsRef.current = nowMs;
+    // Hesitation detection
+    if (
+      phase === "ready" &&
+      lastRepCompletedAtMsRef.current !== null &&
+      !hesitationFiredRef.current
+    ) {
+      const hesitationMs = nowMs - lastRepCompletedAtMsRef.current;
+      if (hesitationMs >= HESITATION_THRESHOLD_MS) {
+        hesitationFiredRef.current = true;
         triggerCoachingDecision({
-          trigger: "observation_ready",
+          trigger: "hesitation_detected",
           prescription,
           patientProfile,
           exerciseContext,
-          observation: topObservation,
-          holdElapsedMs,
-          holdRequiredMs,
           nowMs
         });
       }
+    }
 
-      // Check for hesitation between reps
-      if (
-        phase === "ready" &&
-        lastRepCompletedAtMsRef.current !== null &&
-        !hesitationFiredRef.current
-      ) {
-        const hesitationMs = nowMs - lastRepCompletedAtMsRef.current;
-        if (hesitationMs >= HESITATION_THRESHOLD_MS) {
-          hesitationFiredRef.current = true;
-          triggerCoachingDecision({
-            trigger: "hesitation_detected",
-            prescription,
-            patientProfile,
-            exerciseContext,
-            nowMs
-          });
-        }
-      }
-
-      // Reset hesitation flag when movement resumes
-      if (phase !== "ready") {
-        hesitationFiredRef.current = false;
-      }
-    },
-    [triggerCoachingDecision]
-  );
+    // Reset hesitation when movement resumes
+    if (phase !== "ready") {
+      hesitationFiredRef.current = false;
+    }
+  }, [triggerCoachingDecision, clearPanel]);
 
   // ----------------------------------------------------------
   // EVENT HANDLERS
-  // Called from SessionRunner at key moments
   // ----------------------------------------------------------
 
-  const onRepCompleted = useCallback(
-    (params: {
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      nowMs: number;
-    }) => {
-      lastRepCompletedAtMsRef.current = params.nowMs;
-      hesitationFiredRef.current = false;
+  const onRepCompleted = useCallback((params: {
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    nowMs: number;
+  }) => {
+    lastRepCompletedAtMsRef.current = params.nowMs;
+    hesitationFiredRef.current = false;
 
-      triggerCoachingDecision({
-        trigger: "rep_completed",
-        ...params
-      });
-    },
-    [triggerCoachingDecision]
-  );
+    triggerCoachingDecision({
+      trigger: "rep_completed",
+      ...params
+    });
+  }, [triggerCoachingDecision]);
 
-  const onRepFailed = useCallback(
-    (params: {
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      failureReason: string;
-      nowMs: number;
-    }) => {
-      triggerCoachingDecision({
-        trigger: "rep_failed",
-        ...params
-      });
-    },
-    [triggerCoachingDecision]
-  );
+  const onRepFailed = useCallback((params: {
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    failureReason: string;
+    nowMs: number;
+  }) => {
+    // Cancel any pending lower-priority call
+    activeCallIdRef.current = null;
+    activePriorityRef.current = 0;
 
-  const onHoldStarted = useCallback(
-    (params: {
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      holdRequiredMs: number;
-      nowMs: number;
-    }) => {
-      triggerCoachingDecision({
-        trigger: "hold_started",
-        holdElapsedMs: 0,
-        ...params
-      });
-    },
-    [triggerCoachingDecision]
-  );
+    triggerCoachingDecision({
+      trigger: "rep_failed",
+      ...params
+    });
+  }, [triggerCoachingDecision]);
 
-  const onExerciseStarted = useCallback(
-    (params: {
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      nowMs: number;
-    }) => {
-      reset();
-      triggerCoachingDecision({
-        trigger: "exercise_started",
-        ...params
-      });
-    },
-    [reset, triggerCoachingDecision]
-  );
+  const onHoldStarted = useCallback((params: {
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    holdRequiredMs: number;
+    nowMs: number;
+  }) => {
+    // Hold cues are DETERMINISTIC — no API call.
+    // This eliminates the hold/rep_failed race condition.
+    // The hold text comes directly from the prescription.
+    const holdSec = Math.round(params.holdRequiredMs / 1000);
+    const holdText = params.prescription.coaching.hold ?? "Hold at the top.";
+    const message = holdSec > 0
+      ? holdText + " (" + holdSec + "s)"
+      : holdText;
 
-  const onExerciseCompleting = useCallback(
-    (params: {
-      prescription: ExercisePrescription;
-      patientProfile: PatientProfile;
-      exerciseContext: ExerciseSessionContext;
-      nowMs: number;
-    }) => {
-      triggerCoachingDecision({
-        trigger: "exercise_completing",
-        ...params
-      });
-    },
-    [triggerCoachingDecision]
-  );
+    // Only show if not currently showing a more important message
+    setPanelState(prev => {
+      if (prev.source === "ai" && prev.tone === "corrective") return prev;
+      return {
+        message,
+        tone: "neutral",
+        isThinking: false,
+        source: "deterministic",
+        setAtMs: Date.now()
+      };
+    });
+  }, []);
+
+  const onExerciseStarted = useCallback((params: {
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    nowMs: number;
+  }) => {
+    reset();
+    triggerCoachingDecision({
+      trigger: "exercise_started",
+      ...params
+    });
+  }, [reset, triggerCoachingDecision]);
+
+  const onExerciseCompleting = useCallback((params: {
+    prescription: ExercisePrescription;
+    patientProfile: PatientProfile;
+    exerciseContext: ExerciseSessionContext;
+    nowMs: number;
+  }) => {
+    triggerCoachingDecision({
+      trigger: "exercise_completing",
+      ...params
+    });
+  }, [triggerCoachingDecision]);
 
   return {
-    // UI state
     panelState,
-
-    // Frame feed
     feedFrame,
-
-    // Event handlers
     onRepCompleted,
     onRepFailed,
     onHoldStarted,
     onExerciseStarted,
     onExerciseCompleting,
-
-    // Lifecycle
     reset
   };
 }
 
 // ============================================================
-// FALLBACK TEXT BUILDER
-// ============================================================
+// FALLBACK TEXT
 // Deterministic text used when Claude times out.
 // Drawn from prescription coaching strings.
 // ============================================================
@@ -584,9 +604,6 @@ function getFallbackText(
         return prescription.coaching.failedIsolation ?? null;
       return prescription.coaching.failedHeight;
 
-    case "hold_started":
-      return prescription.coaching.hold;
-
     case "exercise_started":
       return prescription.coaching.intro;
 
@@ -594,10 +611,13 @@ function getFallbackText(
       return "Well done — exercise complete.";
 
     case "hesitation_detected":
-      return "Take your time — begin the next movement when ready.";
+      return "Take your time — begin when ready.";
+
+    case "hold_started":
+      return prescription.coaching.hold;
 
     case "observation_ready":
-      return null; // No fallback for observations — stay silent
+      return null;
 
     default:
       return null;
