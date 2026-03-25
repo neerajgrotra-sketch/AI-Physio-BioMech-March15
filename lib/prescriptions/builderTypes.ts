@@ -1,14 +1,14 @@
 import type {
   ExercisePosture,
   ExerciseSide,
-  ExerciseTemplateId
+  ExerciseTemplate
 } from "@/lib/types/exercise";
 
 export type BuilderFormValues = {
   id: string;
   name: string;
   category: "upper_body" | "lower_body" | "transfer" | "balance";
-  template: ExerciseTemplateId;
+  template: ExerciseTemplate;
   side: ExerciseSide;
   posture: ExercisePosture;
 
