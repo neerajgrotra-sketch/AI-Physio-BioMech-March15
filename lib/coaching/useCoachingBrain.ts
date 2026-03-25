@@ -55,6 +55,14 @@ import type { Observation } from "@/lib/coaching/types";
 const API_TIMEOUT_MS = 4000;
 const HESITATION_THRESHOLD_MS = 12000;
 
+// Hard rate limit guard — no matter what, API calls cannot
+// fire faster than this interval. Keeps us well under 50 rpm.
+const MIN_API_INTERVAL_MS = 8000;
+
+// Observation triggers come from feedFrame (30fps) so need
+// extra throttle on top of the silence gate.
+const MIN_OBSERVATION_INTERVAL_MS = 15000;
+
 // ============================================================
 // COACHING PANEL STATE
 // ============================================================
@@ -106,6 +114,10 @@ export function useCoachingBrain() {
   const lastRepCompletedAtMsRef = useRef<number | null>(null);
   const hesitationFiredRef = useRef(false);
 
+  // Rate limiting — hard guards on API call frequency
+  const lastApiCallAtMsRef = useRef<number>(0);
+  const lastObservationCallAtMsRef = useRef<number>(0);
+
   // UI state
   const [panelState, setPanelState] =
     useState<CoachingPanelState>(createIdlePanelState());
@@ -121,6 +133,8 @@ export function useCoachingBrain() {
     pendingCallIdRef.current = null;
     lastRepCompletedAtMsRef.current = null;
     hesitationFiredRef.current = false;
+    lastApiCallAtMsRef.current = 0;
+    lastObservationCallAtMsRef.current = 0;
     setPanelState(createIdlePanelState());
   }, []);
 
@@ -167,13 +181,15 @@ export function useCoachingBrain() {
       }, API_TIMEOUT_MS);
 
       try {
-        const response = await fetch("/api/coach", {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-          prompt,
-          system:
-            "You are a physiotherapy coaching assistant. You make coaching decisions during live exercise sessions. Always respond with valid JSON only. Be concise — coaching cues must be short."
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1000,
+            system:
+              "You are a physiotherapy coaching assistant. You make coaching decisions during live exercise sessions. Always respond with valid JSON only. Be concise — coaching cues must be short.",
+            messages: [{ role: "user", content: prompt }]
           })
         });
 
@@ -185,8 +201,12 @@ export function useCoachingBrain() {
 
         if (!response.ok) throw new Error(`API ${response.status}`);
 
-       const data = await response.json();
-       const rawText = data.text ?? "";
+        const data = await response.json();
+        const rawText = data.content
+          ?.map((item: { type: string; text?: string }) =>
+            item.type === "text" ? item.text ?? "" : ""
+          )
+          .join("");
 
         const parsed: CoachingResponse | null = parseCoachingResponse(rawText);
 
@@ -273,6 +293,12 @@ export function useCoachingBrain() {
         return;
       }
 
+      // Hard rate limit — never fire more than once per MIN_API_INTERVAL_MS
+      // regardless of trigger type or silence gate state
+      if (nowMs - lastApiCallAtMsRef.current < MIN_API_INTERVAL_MS) {
+        return;
+      }
+
       // Cancel any pending call
       const callId = `coaching-${trigger}-${nowMs}`;
       pendingCallIdRef.current = callId;
@@ -295,6 +321,9 @@ export function useCoachingBrain() {
 
       // Get deterministic fallback from prescription coaching strings
       const fallbackText = getFallbackText(trigger, prescription, failureReason);
+
+      // Record API call time for rate limiting
+      lastApiCallAtMsRef.current = nowMs;
 
       // Fire async Claude call
       callClaude(callId, prompt, fallbackText, trigger, nowMs);
@@ -349,15 +378,19 @@ export function useCoachingBrain() {
       });
 
       // Check for new stable observations
+      // Extra throttle for observation triggers — they fire from feedFrame
+      // so need stricter interval than the general MIN_API_INTERVAL_MS
       if (
         observations.length > 0 &&
-        !isSilenceWindowActive(silenceGateRef.current, nowMs)
+        !isSilenceWindowActive(silenceGateRef.current, nowMs) &&
+        nowMs - lastObservationCallAtMsRef.current >= MIN_OBSERVATION_INTERVAL_MS
       ) {
         // Use the highest-confidence observation
         const topObservation = observations.reduce((best, obs) =>
           obs.confidence > best.confidence ? obs : best
         );
 
+        lastObservationCallAtMsRef.current = nowMs;
         triggerCoachingDecision({
           trigger: "observation_ready",
           prescription,
