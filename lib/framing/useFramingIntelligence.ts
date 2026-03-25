@@ -15,7 +15,7 @@ import { useRef, useState, useCallback } from "react";
 
 import { FramingMonitor } from "@/lib/framing/framingMonitor";
 import { FramingEvaluator } from "@/lib/framing/framingEvaluator";
-import type { PatientProfile } from "@/lib/framing/framingEvaluator";
+import type { PatientProfile } from "@/lib/patient/patientTypes";
 import type { FramingPanelState } from "@/lib/framing/framingTypes";
 import type { PoseFrame } from "@/lib/types/pose";
 import type { MovementFeatures } from "@/lib/types/movement";
