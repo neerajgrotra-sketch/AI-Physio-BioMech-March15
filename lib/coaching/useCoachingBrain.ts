@@ -48,6 +48,21 @@ import type { PatientProfile, ExerciseSessionContext } from "@/lib/patient/patie
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { Observation } from "@/lib/coaching/types";
 
+// ============================================================
+// CONSTANTS
+// ============================================================
+
+const API_TIMEOUT_MS = 4000;
+const HESITATION_THRESHOLD_MS = 12000;
+
+// Hard rate limit guard — no matter what, API calls cannot
+// fire faster than this interval. Keeps us well under 50 rpm.
+const MIN_API_INTERVAL_MS = 5000;
+
+// Observation triggers come from feedFrame (30fps) so need
+// extra throttle on top of the silence gate.
+const MIN_OBSERVATION_INTERVAL_MS = 12000;
+
 export type CoachingPanelState = {
   // Current message to display/speak
   message: string | null;
