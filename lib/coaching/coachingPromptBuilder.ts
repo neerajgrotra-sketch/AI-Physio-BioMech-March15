@@ -100,7 +100,7 @@ ${clinicalNotes}
 
 EXERCISE: ${prescription.name}
 - Progress: ${repProgress}
-- Hold required: ${prescription.holdRequired ? `Yes — ${prescription.holddurationMs / 1000}s` : "No"}
+- Hold required: ${prescription.holdRequired ? `Yes — ${prescription.holdDurationMs / 1000}s` : "No"}
 - Patient fatigue: ${performance.fatigueLevel}
 - Patient sentiment: ${performance.sentiment}
 
