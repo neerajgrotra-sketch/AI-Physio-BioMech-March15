@@ -1,13 +1,25 @@
+// ============================================================
+// lib/types/exercise.ts
+// ============================================================
+// Core exercise type definitions.
+// Module 1 addition: FramingDeclaration — exercise-aware
+// camera framing intelligence schema.
+// ============================================================
+
+export type ExerciseCategory =
+  | "upper_body"
+  | "lower_body"
+  | "transfer"
+  | "balance"
+  | "core";
+
 export type ExerciseSide = "left" | "right" | "both" | "center";
+
 export type ExercisePosture = "seated" | "standing" | "either";
 
-export type ExerciseTemplateId =
-  | "raise_hold_lower"
-  | "rise_hold_lower"
-  | "alternating_lift"
-  | "static_hold";
+export type ExerciseTemplate = "raise_hold_lower" | "rise_hold_lower";
 
-export type ExerciseRuntimeStatus = "active" | "planned";
+export type ExerciseRuntimeStatus = "active" | "draft" | "disabled";
 
 export type MovementPhase =
   | "idle"
@@ -17,7 +29,8 @@ export type MovementPhase =
   | "holding"
   | "lowering"
   | "bottom"
-  | "complete";
+  | "complete"
+  | "unknown";
 
 export type MetricSource =
   | "rightArmElevationDeg"
@@ -27,40 +40,94 @@ export type MetricSource =
   | "leftElbowAngleDeg"
   | "torsoLeanDeg"
   | "shoulderTiltDeg"
-  | "rightWristAboveShoulder"
-  | "leftWristAboveShoulder"
   | "rightWristToShoulderDy"
   | "leftWristToShoulderDy"
   | "hipCenterY"
   | "hipHeightNormalized"
   | "hipCenterVelocityY"
-  | "kneeToHipExtensionScore";
+  | "kneeToHipExtensionScore"
+  | "rightWristAboveShoulder"
+  | "leftWristAboveShoulder";
 
-export type ExerciseTarget = {
-  metric: MetricSource;
-  label: string;
-  targetValue: number;
-  tolerance?: number;
+// ============================================================
+// FRAMING DECLARATION — Module 1
+// ============================================================
+// Describes exactly what the camera needs to see to make
+// this exercise's measurements valid. Used by the framing
+// monitor and the AI framing evaluator.
+// ============================================================
+
+export type FramingLandmarkTier = {
+  // Exercise measurement fails without these.
+  // Loss for > 1500ms triggers exercise pause (between reps).
+  critical: string[];
+
+  // Measurement quality degrades without these.
+  // Loss triggers a warning only — exercise continues.
+  supporting: string[];
+
+  // Useful context but not required for core measurement.
+  reference: string[];
 };
 
-export type HoldRequirement = {
-  required: boolean;
-  durationMs: number;
+export type FramingConfidenceThresholds = {
+  // Critical landmarks below this = lost
+  critical: number;
+
+  // Supporting landmarks below this = weak
+  supporting: number;
 };
 
-export type TempoRequirement = {
-  liftMinMs?: number;
-  lowerMinMs?: number;
-  label?: string;
+export type FramingPeakMovementZone =
+  | "shoulder_height"
+  | "above_head"
+  | "hip_level"
+  | "standing_full";
+
+export type FramingDeclaration = {
+  // What the camera must capture for measurement to be valid.
+  // This is fed directly into the AI framing prompt.
+  intent: string;
+
+  // Landmarks split by clinical importance
+  landmarks: FramingLandmarkTier;
+
+  // Minimum confidence scores per tier
+  confidenceThresholds: FramingConfidenceThresholds;
+
+  // Minimum body coverage required in frame
+  requiredCoverage: "upper_body" | "torso_and_hips" | "full_body";
+
+  // Where the movement reaches at its peak.
+  // Used to check if there is enough headroom in frame.
+  peakMovementZone: FramingPeakMovementZone;
+
+  // The posture the patient must be in before starting
+  requiredStartPosture: ExercisePosture;
+
+  // Whether both sides need equal visibility.
+  // True for bilateral exercises — asymmetric visibility
+  // produces false measurement failures.
+  bilateralSymmetryRequired: boolean;
+
+  // Camera angle guidance for the AI evaluator.
+  // Explains what angle is needed and why.
+  angleGuidance: string;
+
+  // What goes wrong clinically if framing is inadequate.
+  // Used by AI to generate specific patient instructions.
+  measurementRisk: string;
 };
 
-export type QualityLimits = {
-  maxTorsoLeanDeg?: number;
-  maxShoulderTiltDeg?: number;
-  maxOppositeArmElevationDeg?: number;
-};
+// ============================================================
+// COACHING STRINGS
+// ============================================================
+// Deterministic fallback text per scenario.
+// Used when AI is unavailable or timed out.
+// Also used as the baseline instruction panel text.
+// ============================================================
 
-export type CoachingCues = {
+export type ExerciseCoachingStrings = {
   intro: string;
   lift: string;
   hold: string;
@@ -75,26 +142,60 @@ export type CoachingCues = {
   liveBilateralCue?: string;
 };
 
+// ============================================================
+// EXERCISE PRESCRIPTION
+// ============================================================
+
 export type ExercisePrescription = {
   id: string;
   name: string;
-  category: "upper_body" | "lower_body" | "transfer" | "balance";
-  template: ExerciseTemplateId;
+  category: ExerciseCategory;
+  template: ExerciseTemplate;
   runtimeStatus: ExerciseRuntimeStatus;
-
   side: ExerciseSide;
   posture: ExercisePosture;
   description: string;
 
   repTarget: number;
 
+  // Movement thresholds (in metric units, e.g. degrees)
   startThreshold: number;
   targetThreshold: number;
   finishThreshold: number;
 
-  target: ExerciseTarget;
-  hold: HoldRequirement;
-  tempo?: TempoRequirement;
-  qualityLimits?: QualityLimits;
-  coaching: CoachingCues;
+  target: {
+    metric: MetricSource;
+    label: string;
+    targetValue: number;
+    tolerance?: number;
+  };
+
+  hold: {
+    required: boolean;
+    durationMs: number;
+  };
+
+  tempo: {
+    label: string;
+  };
+
+  qualityLimits?: {
+    maxTorsoLeanDeg?: number;
+    maxShoulderTiltDeg?: number;
+    maxOppositeArmElevationDeg?: number;
+  };
+
+  // Deterministic coaching strings — used as fallbacks
+  // when AI is unavailable
+  coaching: ExerciseCoachingStrings;
+
+  // Exercise-aware framing intelligence declaration
+  // Added in Module 1
+  framing: FramingDeclaration;
 };
+
+export type ExerciseDefinitionId =
+  | "right-arm-raise"
+  | "left-arm-raise"
+  | "both-arm-raise"
+  | "sit-to-stand";
