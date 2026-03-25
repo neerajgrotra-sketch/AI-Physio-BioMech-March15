@@ -5,7 +5,7 @@ export const sitToStandPrescription: ExercisePrescription = {
   name: "Sit to Stand",
   category: "transfer",
   template: "rise_hold_lower",
-  runtimeStatus: "planned",
+  runtimeStatus: "draft",
   side: "center",
   posture: "either",
   description: "Stand up fully, pause briefly, then sit down with control.",
