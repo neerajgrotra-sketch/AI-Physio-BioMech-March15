@@ -226,6 +226,11 @@ export default function SessionRunner() {
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
 
+  // Keep patientContext profile in sync when user changes patient type
+  useEffect(() => {
+    patientContext.updatePatientProfile(patientProfile);
+  }, [patientProfile]);
+
   // Session timer — runs while engine is running
   const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running");
 
@@ -348,6 +353,21 @@ export default function SessionRunner() {
     }
   }), [sessionQueue, patientProfile, patientContext, coachingBrain]);
 
+  // Keep a stable ref to coachingCallbacks so the inference loop
+  // always calls the latest version — avoids stale closure bug
+  const coachingCallbacksRef = useRef(coachingCallbacks);
+  useEffect(() => {
+    coachingCallbacksRef.current = coachingCallbacks;
+  }, [coachingCallbacks]);
+
+  const stableCoachingCallbacks = useRef({
+    onRepCompleted: (nowMs: number) => coachingCallbacksRef.current.onRepCompleted(nowMs),
+    onRepFailed: (reason: string, nowMs: number) => coachingCallbacksRef.current.onRepFailed(reason, nowMs),
+    onHoldStarted: (ms: number, nowMs: number) => coachingCallbacksRef.current.onHoldStarted(ms, nowMs),
+    onExerciseStarted: (nowMs: number) => coachingCallbacksRef.current.onExerciseStarted(nowMs),
+    feedFrame: (params: any) => coachingCallbacksRef.current.feedFrame(params),
+  }).current;
+
   const framingCallbacks = useMemo(() => ({
     evaluateFraming: framingIntelligence.evaluateFraming
   }), [framingIntelligence.evaluateFraming]);
@@ -403,7 +423,7 @@ export default function SessionRunner() {
     writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
     framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
-    inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, coachingCallbacks, framingCallbacks, readinessEvaluator);
+    inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
   }
 
   function handleCameraStop() {
@@ -485,7 +505,9 @@ export default function SessionRunner() {
             <div style={{ borderLeft: "1px solid rgba(255,255,255,0.08)", paddingLeft: 12 }}>
               <div style={{ fontSize: 11, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.8 }}>Exercise</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "white" }}>
-                {sessionQueue.overallProgressLabel}
+                {currentQueueItem
+                  ? `${sessionQueue.queueIndex + 1} / ${sessionQueue.getActiveQueue().length}`
+                  : "—"}
               </div>
             </div>
           </div>
