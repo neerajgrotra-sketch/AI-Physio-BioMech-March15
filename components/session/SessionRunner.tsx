@@ -254,28 +254,6 @@ export default function SessionRunner() {
     patientContext.updatePatientProfile(patientProfile);
   }, [patientProfile]);
 
-  // Record messages to timeline when coaching panel updates
-  const prevMessageRef = useRef<string | null>(null);
-  useEffect(() => {
-    const msg = coachingBrain.panelState.message;
-    const src = coachingBrain.panelState.source;
-    const tone = coachingBrain.panelState.tone;
-    if (msg && msg !== prevMessageRef.current && src !== "idle") {
-      prevMessageRef.current = msg;
-      // Infer trigger from source and tone
-      const trigger = src === "deterministic" ? "hold_started" :
-        tone === "corrective" ? "rep_failed" : "rep_completed";
-      recordMessage({
-        source: src as "ai" | "fallback" | "deterministic",
-        trigger,
-        text: msg,
-        tone,
-        nowMs: coachingBrain.panelState.setAtMs || Date.now()
-      });
-    }
-    if (!msg) prevMessageRef.current = null;
-  }, [coachingBrain.panelState.message, coachingBrain.panelState.source]);
-
   // Session timer — runs while engine is running
   const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running");
 
