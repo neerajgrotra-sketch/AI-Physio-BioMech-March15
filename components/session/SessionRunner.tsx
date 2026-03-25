@@ -75,6 +75,15 @@ function createEmptyFeatures(): MovementFeatures {
   };
 }
 
+function formatPhase(phase: string): string {
+  if (phase === "lifting") return "Lift";
+  if (phase === "holding") return "Hold";
+  if (phase === "lowering") return "Lower";
+  if (phase === "ready") return "Ready";
+  if (phase === "complete") return "Complete";
+  return "Tracking";
+}
+
 function estimateExerciseSeconds(prescription: ExercisePrescription): number {
   const holdSec = prescription.hold.required
     ? prescription.hold.durationMs / 1000
