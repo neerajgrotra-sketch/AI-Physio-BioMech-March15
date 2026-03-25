@@ -114,8 +114,10 @@ export function useCoachingBrain() {
   const lastRepCompletedAtMsRef = useRef<number | null>(null);
   const hesitationFiredRef = useRef(false);
 
-  // Rate limiting — hard guards on API call frequency
-  const lastApiCallAtMsRef = useRef<number>(0);
+  // Rate limiting — separate clocks per trigger category.
+  // Framing calls and coaching calls do not share a clock.
+  // This prevents framing from blocking coaching and vice versa.
+  const lastCoachingCallAtMsRef = useRef<number>(0);
   const lastObservationCallAtMsRef = useRef<number>(0);
 
   // UI state
@@ -133,7 +135,7 @@ export function useCoachingBrain() {
     pendingCallIdRef.current = null;
     lastRepCompletedAtMsRef.current = null;
     hesitationFiredRef.current = false;
-    lastApiCallAtMsRef.current = 0;
+    lastCoachingCallAtMsRef.current = 0;
     lastObservationCallAtMsRef.current = 0;
     setPanelState(createIdlePanelState());
   }, []);
@@ -293,9 +295,9 @@ export function useCoachingBrain() {
         return;
       }
 
-      // Hard rate limit — never fire more than once per MIN_API_INTERVAL_MS
-      // regardless of trigger type or silence gate state
-      if (nowMs - lastApiCallAtMsRef.current < MIN_API_INTERVAL_MS) {
+      // Hard rate limit — coaching calls cannot fire faster than MIN_API_INTERVAL_MS.
+      // Uses a separate clock from framing so framing delays never block coaching.
+      if (nowMs - lastCoachingCallAtMsRef.current < MIN_API_INTERVAL_MS) {
         return;
       }
 
@@ -322,8 +324,8 @@ export function useCoachingBrain() {
       // Get deterministic fallback from prescription coaching strings
       const fallbackText = getFallbackText(trigger, prescription, failureReason);
 
-      // Record API call time for rate limiting
-      lastApiCallAtMsRef.current = nowMs;
+      // Record coaching call time for rate limiting
+      lastCoachingCallAtMsRef.current = nowMs;
 
       // Fire async Claude call
       callClaude(callId, prompt, fallbackText, trigger, nowMs);
