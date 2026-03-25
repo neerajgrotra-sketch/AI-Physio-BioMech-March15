@@ -158,6 +158,9 @@ export function useCoachingBrain() {
       trigger: CoachingTrigger,
       nowMs: number
     ) => {
+      // Log that we are about to call Claude
+      console.log('[CoachingBrain] callClaude firing', { callId, trigger, nowMs });
+
       // Show thinking indicator
       setPanelState((prev) => ({
         ...prev,
@@ -290,12 +293,13 @@ export function useCoachingBrain() {
       } = params;
 
       // Check silence gate — never trigger if within silence window
-      // Exception: rep_failed always gets through
+      // Exception: rep_failed and exercise_started always get through
       if (
         trigger !== "rep_failed" &&
         trigger !== "exercise_started" &&
         isSilenceWindowActive(silenceGateRef.current, nowMs)
       ) {
+        console.log("[CoachingBrain] BLOCKED by silence gate", { trigger, silentUntil: silenceGateRef.current.silentUntilMs, nowMs });
         return;
       }
 
@@ -306,6 +310,7 @@ export function useCoachingBrain() {
         trigger !== "rep_failed" &&
         nowMs - lastCoachingCallAtMsRef.current < MIN_API_INTERVAL_MS
       ) {
+        console.log("[CoachingBrain] BLOCKED by rate limit", { trigger, msSinceLast: nowMs - lastCoachingCallAtMsRef.current, limit: MIN_API_INTERVAL_MS });
         return;
       }
 
@@ -334,6 +339,9 @@ export function useCoachingBrain() {
 
       // Record coaching call time for rate limiting
       lastCoachingCallAtMsRef.current = nowMs;
+
+      // Log before firing
+      console.log("[CoachingBrain] triggerCoachingDecision firing", { trigger, callId, promptLength: prompt.length });
 
       // Fire async Claude call
       callClaude(callId, prompt, fallbackText, trigger, nowMs);
