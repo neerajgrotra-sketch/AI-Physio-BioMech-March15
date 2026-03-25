@@ -167,15 +167,13 @@ export function useCoachingBrain() {
       }, API_TIMEOUT_MS);
 
       try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
+        const response = await fetch("/api/coach", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1000,
-            system:
-              "You are a physiotherapy coaching assistant. You make coaching decisions during live exercise sessions. Always respond with valid JSON only. Be concise — coaching cues must be short.",
-            messages: [{ role: "user", content: prompt }]
+          prompt,
+          system:
+            "You are a physiotherapy coaching assistant. You make coaching decisions during live exercise sessions. Always respond with valid JSON only. Be concise — coaching cues must be short."
           })
         });
 
@@ -187,12 +185,8 @@ export function useCoachingBrain() {
 
         if (!response.ok) throw new Error(`API ${response.status}`);
 
-        const data = await response.json();
-        const rawText = data.content
-          ?.map((item: { type: string; text?: string }) =>
-            item.type === "text" ? item.text ?? "" : ""
-          )
-          .join("");
+       const data = await response.json();
+       const rawText = data.text ?? "";
 
         const parsed: CoachingResponse | null = parseCoachingResponse(rawText);
 
