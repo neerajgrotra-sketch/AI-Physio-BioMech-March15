@@ -53,5 +53,27 @@ export const leftArmRaisePrescription: ExercisePrescription = {
     failedIsolation:
       "That rep did not count. Keep your right arm relaxed at your side and raise only your left arm.",
     liveIsolationCue: "Keep your right arm relaxed at your side."
+  },
+
+  framing: {
+    intent:
+      "Measure left arm elevation arc from resting position to shoulder height. Torso must be visible to detect compensation via trunk lean.",
+    landmarks: {
+      critical: ["left_shoulder", "left_elbow", "left_wrist"],
+      supporting: ["right_shoulder", "nose", "left_hip"],
+      reference: ["right_elbow", "right_wrist", "right_hip"]
+    },
+    confidenceThresholds: {
+      critical: 0.5,
+      supporting: 0.35
+    },
+    requiredCoverage: "upper_body",
+    peakMovementZone: "shoulder_height",
+    requiredStartPosture: "either",
+    bilateralSymmetryRequired: false,
+    angleGuidance:
+      "Frontal view is essential. A side-on camera angle will not capture the arm elevation arc correctly and will produce inaccurate measurements.",
+    measurementRisk:
+      "If the left elbow or wrist are not clearly visible, arm elevation cannot be measured. If the right shoulder is not visible, isolation violations cannot be detected."
   }
 };
