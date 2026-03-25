@@ -57,11 +57,11 @@ const HESITATION_THRESHOLD_MS = 12000;
 
 // Hard rate limit guard — no matter what, API calls cannot
 // fire faster than this interval. Keeps us well under 50 rpm.
-const MIN_API_INTERVAL_MS = 8000;
+const MIN_API_INTERVAL_MS = 5000;
 
 // Observation triggers come from feedFrame (30fps) so need
 // extra throttle on top of the silence gate.
-const MIN_OBSERVATION_INTERVAL_MS = 15000;
+const MIN_OBSERVATION_INTERVAL_MS = 12000;
 
 // ============================================================
 // COACHING PANEL STATE
@@ -114,6 +114,9 @@ export function useCoachingBrain() {
   const lastRepCompletedAtMsRef = useRef<number | null>(null);
   const hesitationFiredRef = useRef(false);
 
+  // Track last phase to detect phase changes for message clearing
+  const lastPhaseFedRef = useRef<string>("ready");
+
   // Rate limiting — separate clocks per trigger category.
   // Framing calls and coaching calls do not share a clock.
   // This prevents framing from blocking coaching and vice versa.
@@ -137,6 +140,7 @@ export function useCoachingBrain() {
     hesitationFiredRef.current = false;
     lastCoachingCallAtMsRef.current = 0;
     lastObservationCallAtMsRef.current = 0;
+    lastPhaseFedRef.current = "ready";
     setPanelState(createIdlePanelState());
   }, []);
 
@@ -366,6 +370,21 @@ export function useCoachingBrain() {
         exerciseContext,
         nowMs
       } = params;
+
+      // Clear stale hold message when phase changes away from holding
+      // This prevents "Hold at the top" persisting into the lowering phase
+      if (lastPhaseFedRef.current === "holding" && phase !== "holding") {
+        setPanelState((prev) => {
+          // Only clear if the message is hold-related
+          const holdMessages = ["hold", "Hold", "keep holding", "Keep holding", "keep it", "breathe"];
+          const isHoldMessage = holdMessages.some(kw => (prev.message ?? "").toLowerCase().includes(kw.toLowerCase()));
+          if (isHoldMessage || prev.source === "fallback") {
+            return createIdlePanelState();
+          }
+          return prev;
+        });
+      }
+      lastPhaseFedRef.current = phase;
 
       // Feed observation buffer
       const observations = observationBufferRef.current.add({
