@@ -340,7 +340,7 @@ export default function SessionRunner() {
     onRepFailed: (failureReason: string, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      writeDebugLog("warning", "COACHING", `Rep failed: ${failureReason}`, `ctx=${exerciseCtx ? "ok" : "null"}`);
+      writeDebugLog("warning", "COACHING", "Rep failed: " + failureReason, "ctx=" + (exerciseCtx ? "ok" : "null"));
       if (!prescription || !exerciseCtx) return;
       patientContext.recordRepOutcome("failed", failureReason, null);
       coachingBrain.onRepFailed({ prescription, patientProfile, exerciseContext: exerciseCtx, failureReason, nowMs });
@@ -348,14 +348,14 @@ export default function SessionRunner() {
     onHoldStarted: (holdRequiredMs: number, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      writeDebugLog("info", "COACHING", `Hold started (${holdRequiredMs}ms)`);
+      writeDebugLog("info", "COACHING", "Hold started (" + holdRequiredMs + "ms)");
       if (!prescription || !exerciseCtx) return;
       coachingBrain.onHoldStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, holdRequiredMs, nowMs });
     },
     onExerciseStarted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
-      writeDebugLog("info", "COACHING", `Exercise started: ${prescription?.name ?? "unknown"}`, `ctx=${exerciseCtx ? "ok" : "null"} prescription=${prescription?.id ?? "null"}`);
+      writeDebugLog("info", "COACHING", "Exercise started: " + (prescription?.name ?? "unknown"), "ctx=" + (exerciseCtx ? "ok" : "null") + " prescription=" + (prescription?.id ?? "null"));
       if (!prescription) { writeDebugLog("error", "COACHING", "onExerciseStarted — prescription is null"); return; }
       if (!exerciseCtx) {
         writeDebugLog("warning", "COACHING", "onExerciseStarted — ctx null, retrying in 300ms");
@@ -363,7 +363,7 @@ export default function SessionRunner() {
         window.setTimeout(() => {
           const retryCtx = patientContext.getCurrentExerciseContext();
           const retryPrescription = sessionQueue.getActivePrescription();
-          writeDebugLog("info", "COACHING", `onExerciseStarted retry: ctx=${retryCtx ? "ok" : "still null"}`);
+          writeDebugLog("info", "COACHING", "onExerciseStarted retry: ctx=" + (retryCtx ? "ok" : "still null"));
           if (retryCtx && retryPrescription) {
             coachingBrain.onExerciseStarted({ prescription: retryPrescription, patientProfile, exerciseContext: retryCtx, nowMs: Date.now() });
           }
@@ -797,9 +797,8 @@ export default function SessionRunner() {
                   "API Status: " + apiStatus,
                   "",
                   "=== DEBUG LOG (newest first) ===",
-                  ...debugLog.map(e => `[${e.timestamp}] [${e.level.toUpperCase()}] [${e.category}] ${e.message}${e.detail ? " | " + e.detail.slice(0, 200) : ""}`)
-                ].join("
-");
+                  ...debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? " | " + e.detail.slice(0, 200) : ""))
+                ].join("\n");
                 copyToClipboard(snapshot);
               }}
               style={{ background: "rgba(155,231,176,0.15)", color: "#9be7b0", border: "1px solid rgba(155,231,176,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
@@ -808,9 +807,7 @@ export default function SessionRunner() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                const text = debugLog.map(e => `[${e.timestamp}] [${e.level.toUpperCase()}] [${e.category}] ${e.message}${e.detail ? "
-  " + e.detail : ""}`).join("
-");
+                const text = debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? "\n  " + e.detail : "")).join("\n");
                 copyToClipboard(text);
               }}
               style={{ background: "rgba(124,198,255,0.1)", color: "#7cc6ff", border: "1px solid rgba(124,198,255,0.2)", borderRadius: 6, padding: "3px 12px", fontSize: 11, cursor: "pointer" }}>
