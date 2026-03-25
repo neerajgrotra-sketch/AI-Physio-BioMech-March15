@@ -124,6 +124,10 @@ export function useCoachingBrain() {
   // Phase tracking for clearing
   const lastPhaseFedRef = useRef<string>("ready");
 
+  // Phase at the time each call was triggered
+  // Used to expire responses that arrive after phase has changed
+  const phaseAtCallRef = useRef<string>("ready");
+
   // Timeout handle
   const timeoutHandleRef = useRef<number | null>(null);
 
@@ -173,8 +177,9 @@ export function useCoachingBrain() {
     fallbackText: string | null;
     trigger: CoachingTrigger;
     nowMs: number;
+    phaseAtTrigger: string;
   }) => {
-    const { callId, prompt, fallbackText, trigger, nowMs } = params;
+    const { callId, prompt, fallbackText, trigger, nowMs, phaseAtTrigger } = params;
 
     // Show thinking indicator only for important triggers
     if (trigger === "rep_failed" || trigger === "exercise_started") {
@@ -233,6 +238,29 @@ export function useCoachingBrain() {
 
       if (!parsed || !parsed.speak || !parsed.text) {
         // Claude chose not to speak — clear thinking indicator
+        setPanelState(prev => ({ ...prev, isThinking: false }));
+        return;
+      }
+
+      // Expire response if phase has changed since trigger
+      // Exception: exercise_started and rep_failed are always relevant
+      const currentPhase = lastPhaseFedRef.current;
+      const phaseChanged = currentPhase !== phaseAtTrigger;
+      const isPhaseIndependent =
+        trigger === "exercise_started" ||
+        trigger === "exercise_completing" ||
+        trigger === "rep_failed";
+
+      if (phaseChanged && !isPhaseIndependent) {
+        // Response arrived too late — phase has moved on
+        // Record it as expired in timeline for debugging
+        recordMessage({
+          source: "ai",
+          trigger: trigger + "_EXPIRED",
+          text: parsed.text + " [expired — phase changed]",
+          tone: "neutral",
+          nowMs: Date.now()
+        });
         setPanelState(prev => ({ ...prev, isThinking: false }));
         return;
       }
@@ -367,8 +395,9 @@ export function useCoachingBrain() {
     activeCallIdRef.current = callId;
     activePriorityRef.current = priority;
     lastCoachingCallAtMsRef.current = nowMs;
+    phaseAtCallRef.current = lastPhaseFedRef.current;
 
-    callClaude({ callId, prompt, fallbackText, trigger, nowMs });
+    callClaude({ callId, prompt, fallbackText, trigger, nowMs, phaseAtTrigger: phaseAtCallRef.current });
   }, [callClaude]);
 
   // ----------------------------------------------------------
