@@ -108,6 +108,19 @@ function patchFetch() {
   };
 }
 
+// Copy text to clipboard helper
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text).catch(() => {
+    // fallback
+    const el = document.createElement("textarea");
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand("copy");
+    document.body.removeChild(el);
+  });
+}
+
 // ============================================================
 // SESSION TIMER HOOK
 // ============================================================
@@ -765,6 +778,41 @@ export default function SessionRunner() {
             <span style={{ fontSize: 11, color: "#7a88a8" }}>{debugLog.length} entries</span>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const snapshot = [
+                  "=== AI PHYSIO DEBUG SNAPSHOT ===",
+                  "Time: " + new Date().toISOString(),
+                  "Engine: " + inferenceLoop.engineStatus,
+                  "Phase: " + inferenceLoop.phase,
+                  "RepCount: " + inferenceLoop.repCount + " / " + (currentPrescription?.repTarget ?? "?"),
+                  "Exercise: " + (currentQueueItem?.displayName ?? "none"),
+                  "Patient: " + patientProfile.type + " session#" + patientProfile.sessionNumber,
+                  "Framing: " + framingPanelState.severity + " — " + framingPanelState.message,
+                  "Coaching msg: " + (coachingPanelState.message ?? "none") + " [" + coachingPanelState.source + "]",
+                  "API Status: " + apiStatus,
+                  "",
+                  "=== DEBUG LOG (newest first) ===",
+                  ...debugLog.map(e => `[${e.timestamp}] [${e.level.toUpperCase()}] [${e.category}] ${e.message}${e.detail ? " | " + e.detail.slice(0, 200) : ""}`)
+                ].join("
+");
+                copyToClipboard(snapshot);
+              }}
+              style={{ background: "rgba(155,231,176,0.15)", color: "#9be7b0", border: "1px solid rgba(155,231,176,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              📋 Copy Snapshot
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const text = debugLog.map(e => `[${e.timestamp}] [${e.level.toUpperCase()}] [${e.category}] ${e.message}${e.detail ? "
+  " + e.detail : ""}`).join("
+");
+                copyToClipboard(text);
+              }}
+              style={{ background: "rgba(124,198,255,0.1)", color: "#7cc6ff", border: "1px solid rgba(124,198,255,0.2)", borderRadius: 6, padding: "3px 12px", fontSize: 11, cursor: "pointer" }}>
+              Copy Log
+            </button>
             <button onClick={(e) => { e.stopPropagation(); globalDebugLog = []; setDebugLog([]); }}
               style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>
               Clear
