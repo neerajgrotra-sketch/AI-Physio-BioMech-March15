@@ -41,6 +41,16 @@ import { usePatientContext } from "@/lib/patient/usePatientContext";
 import { createDefaultPatientProfile } from "@/lib/patient/patientTypes";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
+import MovementTimelinePanel from "@/components/debug/MovementTimelinePanel";
+import {
+  recordSnapshot,
+  recordRepCompleted,
+  recordRepFailed,
+  recordHoldStarted,
+  recordMessage,
+  recordExerciseStart,
+  recordExerciseComplete
+} from "@/lib/debug/movementTimeline";
 
 // ============================================================
 // DEBUG LOG
@@ -244,6 +254,28 @@ export default function SessionRunner() {
     patientContext.updatePatientProfile(patientProfile);
   }, [patientProfile]);
 
+  // Record messages to timeline when coaching panel updates
+  const prevMessageRef = useRef<string | null>(null);
+  useEffect(() => {
+    const msg = coachingBrain.panelState.message;
+    const src = coachingBrain.panelState.source;
+    const tone = coachingBrain.panelState.tone;
+    if (msg && msg !== prevMessageRef.current && src !== "idle") {
+      prevMessageRef.current = msg;
+      // Infer trigger from source and tone
+      const trigger = src === "deterministic" ? "hold_started" :
+        tone === "corrective" ? "rep_failed" : "rep_completed";
+      recordMessage({
+        source: src as "ai" | "fallback" | "deterministic",
+        trigger,
+        text: msg,
+        tone,
+        nowMs: coachingBrain.panelState.setAtMs || Date.now()
+      });
+    }
+    if (!msg) prevMessageRef.current = null;
+  }, [coachingBrain.panelState.message, coachingBrain.panelState.source]);
+
   // Session timer — runs while engine is running
   const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running");
 
@@ -333,6 +365,7 @@ export default function SessionRunner() {
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + (exerciseCtx?.repCount ?? "?"));
       if (!prescription || !exerciseCtx) { writeDebugLog("error", "COACHING", "onRepCompleted BLOCKED — null ctx or prescription"); return; }
+      recordRepCompleted(exerciseCtx.repCount, nowMs);
       patientContext.recordRepOutcome("success", null, null);
       writeDebugLog("info", "COACHING", "Calling coachingBrain.onRepCompleted");
       coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
@@ -342,6 +375,7 @@ export default function SessionRunner() {
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       writeDebugLog("warning", "COACHING", "Rep failed: " + failureReason, "ctx=" + (exerciseCtx ? "ok" : "null"));
       if (!prescription || !exerciseCtx) return;
+      recordRepFailed(failureReason, exerciseCtx.repCount, nowMs);
       patientContext.recordRepOutcome("failed", failureReason, null);
       coachingBrain.onRepFailed({ prescription, patientProfile, exerciseContext: exerciseCtx, failureReason, nowMs });
     },
@@ -350,6 +384,7 @@ export default function SessionRunner() {
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       writeDebugLog("info", "COACHING", "Hold started (" + holdRequiredMs + "ms)");
       if (!prescription || !exerciseCtx) return;
+      recordHoldStarted(holdRequiredMs, nowMs);
       coachingBrain.onHoldStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, holdRequiredMs, nowMs });
     },
     onExerciseStarted: (nowMs: number) => {
@@ -372,10 +407,20 @@ export default function SessionRunner() {
       }
       coachingBrain.onExerciseStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
     },
-    feedFrame: (params: { phase: string; repCount: number; holdElapsedMs: number | null; holdRequiredMs: number | null; primaryIssue: string; armElevation?: number | null; nowMs: number; }) => {
+          feedFrame: (params: { phase: string; repCount: number; holdElapsedMs: number | null; holdRequiredMs: number | null; primaryIssue: string; armElevation?: number | null; nowMs: number; }) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       if (!prescription || !exerciseCtx) return;
+      recordSnapshot({
+        nowMs: params.nowMs,
+        phase: params.phase,
+        repCount: params.repCount,
+        repTarget: prescription.repTarget,
+        activeMetricValue: params.armElevation ?? null,
+        holdElapsedMs: params.holdElapsedMs,
+        holdRequiredMs: params.holdRequiredMs,
+        primaryIssue: params.primaryIssue
+      });
       coachingBrain.feedFrame({ ...params, prescription, patientProfile, exerciseContext: exerciseCtx });
     }
   }), [sessionQueue, patientProfile, patientContext, coachingBrain]);
@@ -855,6 +900,9 @@ export default function SessionRunner() {
           </div>
         )}
       </div>
+
+      {/* ── MOVEMENT TIMELINE ── */}
+      <MovementTimelinePanel defaultOpen={true} />
 
       <style>{`
         @keyframes pulse {
