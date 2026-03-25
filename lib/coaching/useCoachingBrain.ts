@@ -300,8 +300,12 @@ export function useCoachingBrain() {
       }
 
       // Hard rate limit — coaching calls cannot fire faster than MIN_API_INTERVAL_MS.
-      // Uses a separate clock from framing so framing delays never block coaching.
-      if (nowMs - lastCoachingCallAtMsRef.current < MIN_API_INTERVAL_MS) {
+      // exercise_started and rep_failed always bypass this to ensure they fire.
+      if (
+        trigger !== "exercise_started" &&
+        trigger !== "rep_failed" &&
+        nowMs - lastCoachingCallAtMsRef.current < MIN_API_INTERVAL_MS
+      ) {
         return;
       }
 
