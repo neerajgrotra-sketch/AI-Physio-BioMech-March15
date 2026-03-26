@@ -297,7 +297,7 @@ ${buildSharedContextBlock(ctx)}
 
 EXERCISE DETAILS:
 - Name: ${prescription.name}
-- Target: ${prescription.repTarget} reps
+- Target: ${prescription.repTarget} repetitions
 - Hold: ${holdInfo}
 - Movement: ${prescription.coachingStrings.lift}
 - Exercise ${sessionPosition.exerciseIndex + 1} of ${sessionPosition.totalExercises} in this session
@@ -311,12 +311,12 @@ DECISION GUIDANCE:
 - For a TRANSITION between exercises: announce the new exercise, reps, and hold. Keep it crisp — they are already warmed up.
 - For returning patients or practiced familiarity: one sentence covering movement + reps + hold.
 - For seniors and chronic pain patients: warm tone, reassure they can go at their own pace.
-- Maximum 35 words. Cover all three elements: movement, reps, hold.
+- Maximum 35 words. Cover all three elements: movement, repetition count, hold duration.
 
 Example good responses:
 - "Next up: right arm raise. Lift to shoulder height, hold for 2 seconds, 6 times. Take it steady."
 - "Now we are doing sit to stand — stand up fully, hold briefly, then sit back down. Five times."
-- "Right arm raises — lift to shoulder height, hold 2 seconds, lower slowly. Six reps when you are ready."
+- "Right arm raises — lift to shoulder height, hold 2 seconds, lower slowly. Six times, when you are ready."
 
 ${RESPONSE_FORMAT}`;
 }
