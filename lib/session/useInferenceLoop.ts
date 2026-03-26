@@ -262,6 +262,7 @@ export function useInferenceLoop() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const trackingActiveRef = useRef(false);
+  const exerciseCompleteFiredRef = useRef(false);  // prevent repeated complete events
 
   const repStateRef = useRef<RuntimeRepState>(createInitialRepState());
   const featureHistoryRef = useRef(new FeatureHistory(5));
@@ -296,6 +297,7 @@ export function useInferenceLoop() {
   // ----------------------------------------------------------
 
   const resetTrackingState = useCallback(() => {
+    exerciseCompleteFiredRef.current = false;
     repStateRef.current = createInitialRepState();
     featureHistoryRef.current.clear();
     prevPhaseRef.current = "ready";
@@ -554,7 +556,8 @@ export function useInferenceLoop() {
             // ------------------------------------------------
             // EXERCISE COMPLETE
             // ------------------------------------------------
-            if (output.isComplete) {
+            if (output.isComplete && !exerciseCompleteFiredRef.current) {
+              exerciseCompleteFiredRef.current = true;
               onExerciseComplete();
             }
           } catch (error) {
