@@ -119,6 +119,17 @@ function speakMessage(text: string, rate = 0.95, pitch = 1.0) {
   window.speechSynthesis.speak(utterance);
 }
 
+function sanitizeForSpeech(text: string): string {
+  // Fix TTS pronunciation issues
+  // "reps" → "repetitions" prevents "representatives" being read
+  return text
+    .replace(/(\d+)\s+reps?/gi, (_, n) => n + " repetitions")
+    .replace(/rep\s+(\d+)/gi, "repetition $1")
+    .replace(/five\s+more\s+reps?/gi, "five more repetitions")
+    .replace(/more\s+reps?/gi, "more repetitions")
+    .replace(/next\s+rep/gi, "next repetition");
+}
+
 function cancelSpeech() {
   if (typeof window === "undefined") return;
   if (!window.speechSynthesis) return;
@@ -229,6 +240,9 @@ export function useCoachingBrain() {
 
   // Track when exercise started to protect intro speech
   const exerciseStartedAtMsRef = useRef<number>(0);
+
+  // Track when exercise_completing fired to protect its speech
+  const exerciseCompletingFiredAtMsRef = useRef<number>(0);
 
   // Phase at the time each call was triggered
   // Used to expire responses that arrive after phase has changed
@@ -414,9 +428,8 @@ export function useCoachingBrain() {
 
       // Speak the message if voice is enabled
       if (voiceEnabledRef.current) {
-        // Slightly slower for corrective tone, normal for encouraging
         const rate = parsed.tone === "corrective" ? 0.88 : 0.95;
-        speakMessage(parsed.text, rate);
+        speakMessage(sanitizeForSpeech(parsed.text), rate);
       }
 
       setPanelState({
@@ -709,7 +722,7 @@ export function useCoachingBrain() {
 
     // Speak immediately
     if (voiceEnabledRef.current) {
-      speakMessage(immediateCue, 0.95);
+      speakMessage(sanitizeForSpeech(immediateCue), 0.95);
     }
 
     repCountAtLastCompletionRef.current = completedRepNumber;
@@ -813,6 +826,7 @@ export function useCoachingBrain() {
     exerciseContext: ExerciseSessionContext;
     nowMs: number;
   }) => {
+    exerciseCompletingFiredAtMsRef.current = params.nowMs;
     triggerCoachingDecision({
       trigger: "exercise_completing",
       ...params
