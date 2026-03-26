@@ -227,6 +227,9 @@ export function useCoachingBrain() {
   // Track rep count for immediate completion cues
   const repCountAtLastCompletionRef = useRef<number>(0);
 
+  // Track when exercise started to protect intro speech
+  const exerciseStartedAtMsRef = useRef<number>(0);
+
   // Phase at the time each call was triggered
   // Used to expire responses that arrive after phase has changed
   const phaseAtCallRef = useRef<string>("ready");
@@ -680,6 +683,10 @@ export function useCoachingBrain() {
     lastRepCompletedAtMsRef.current = params.nowMs;
     hesitationFiredRef.current = false;
 
+    // Check if this is the final rep — exercise_completing will handle the
+    // summary, so skip the AI rep_completed call to avoid double messages
+    const isFinalRep = params.exerciseContext.repCount + 1 >= params.prescription.repTarget;
+
     // IMMEDIATE deterministic rep completion cue
     // Fires within ~50ms — no API call
     const completedRepNumber = params.exerciseContext.repCount;
@@ -707,11 +714,14 @@ export function useCoachingBrain() {
 
     repCountAtLastCompletionRef.current = completedRepNumber;
 
-    // Then fire AI for detailed follow-up coaching (arrives 2-3s later)
-    triggerCoachingDecision({
-      trigger: "rep_completed",
-      ...params
-    });
+    // Fire AI for detailed follow-up coaching (arrives 2-3s later)
+    // Skip on final rep — exercise_completing handles the summary instead
+    if (!isFinalRep) {
+      triggerCoachingDecision({
+        trigger: "rep_completed",
+        ...params
+      });
+    }
   }, [triggerCoachingDecision]);
 
   const onRepFailed = useCallback((params: {
@@ -750,9 +760,26 @@ export function useCoachingBrain() {
       const holdMs = Date.now();
       recordMessage({ source: "deterministic", trigger: "hold_started", text: message, tone: "neutral", nowMs: holdMs });
 
-      // Speak hold cue if voice enabled — brief, natural pause before speaking
+      // Speak hold cue if voice enabled
+      // But don't interrupt if exercise intro was spoken recently (< 4s)
+      // Queue it to play after current speech ends instead
       if (voiceEnabledRef.current) {
-        setTimeout(() => speakMessage(message, 0.9), 200);
+        const timeSinceExerciseStart = Date.now() - exerciseStartedAtMsRef.current;
+        const introStillSpeaking = timeSinceExerciseStart < 4000;
+
+        if (introStillSpeaking && window.speechSynthesis?.speaking) {
+          // Queue hold cue to fire after current speech ends
+          const checkAndSpeak = () => {
+            if (!window.speechSynthesis.speaking) {
+              speakMessage(message, 0.9);
+            } else {
+              setTimeout(checkAndSpeak, 200);
+            }
+          };
+          setTimeout(checkAndSpeak, 200);
+        } else {
+          setTimeout(() => speakMessage(message, 0.9), 200);
+        }
       }
 
       return {
@@ -773,6 +800,7 @@ export function useCoachingBrain() {
   }) => {
     reset();
     repCountAtLastCompletionRef.current = 0;
+    exerciseStartedAtMsRef.current = params.nowMs;
     triggerCoachingDecision({
       trigger: "exercise_started",
       ...params
