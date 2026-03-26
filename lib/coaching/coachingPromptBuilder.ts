@@ -282,25 +282,41 @@ ${RESPONSE_FORMAT}`;
 function buildExerciseStartedPrompt(ctx: ClinicalContext): string {
   const { patientProfile, prescription, sessionPosition } = ctx;
 
-  return `You are a physiotherapy coach. A new exercise is about to begin.
+  const holdInfo = prescription.holdRequired
+    ? "Hold each rep for " + Math.round(prescription.holdDurationMs / 1000) + " seconds."
+    : "No hold required.";
+
+  const isTransition = !sessionPosition.isFirstExercise;
+
+  return `You are a physiotherapy coach. ${isTransition ? "The session is moving to the next exercise." : "A new exercise session is starting."}
 
 ${getPatientToneInstruction(patientProfile.type)}
 ${getFamiliarityInstruction(ctx.prescription.coachingStrings.lift, patientProfile.sessionNumber)}
 
 ${buildSharedContextBlock(ctx)}
 
-WHAT IS HAPPENING: Exercise starting.
-Exercise: ${prescription.name}
-Exercise ${sessionPosition.exerciseIndex + 1} of ${sessionPosition.totalExercises} in this session.
-${sessionPosition.isFirstExercise ? "This is the FIRST exercise of the session." : ""}
-${patientProfile.isReturningPatient ? "Returning patient — skip introductory explanations." : ""}
+EXERCISE DETAILS:
+- Name: ${prescription.name}
+- Target: ${prescription.repTarget} reps
+- Hold: ${holdInfo}
+- Movement: ${prescription.coachingStrings.lift}
+- Exercise ${sessionPosition.exerciseIndex + 1} of ${sessionPosition.totalExercises} in this session
+${sessionPosition.isFirstExercise ? "- This is the FIRST exercise of the session." : "- This is a TRANSITION from the previous exercise."}
+${patientProfile.isReturningPatient ? "- Returning patient — they know the drill, keep intro brief." : ""}
 
 DECISION GUIDANCE:
-- Always speak at exercise start — patient needs to know what they are about to do.
-- If first time (session 1), briefly explain the movement and what to aim for.
-- If returning patient or practiced familiarity, a short cue is enough.
-- For seniors and chronic pain patients, mention that they can go at their own pace.
-- Maximum 20 words.
+- Always speak — the patient must know what exercise is coming and what to do.
+- Your response MUST include: (1) the exercise name or movement, (2) the rep target, (3) the hold duration if applicable.
+- For a FIRST exercise or FIRST session: give a clear, friendly explanation. Tell them the movement, how many reps, and how long to hold. Mention the purpose briefly (e.g. "builds shoulder strength").
+- For a TRANSITION between exercises: announce the new exercise, reps, and hold. Keep it crisp — they are already warmed up.
+- For returning patients or practiced familiarity: one sentence covering movement + reps + hold.
+- For seniors and chronic pain patients: warm tone, reassure they can go at their own pace.
+- Maximum 35 words. Cover all three elements: movement, reps, hold.
+
+Example good responses:
+- "Next up: right arm raise. Lift to shoulder height, hold for 2 seconds, 6 times. Take it steady."
+- "Now we are doing sit to stand — stand up fully, hold briefly, then sit back down. Five times."
+- "Right arm raises — lift to shoulder height, hold 2 seconds, lower slowly. Six reps when you are ready."
 
 ${RESPONSE_FORMAT}`;
 }
