@@ -1,5 +1,6 @@
 // ============================================================
 // lib/coaching/useCoachingBrain.ts
+// Version: module-2-v1 (immediate rep cues + hesitation fix)
 // ============================================================
 // AI coaching brain — clean rewrite.
 //
@@ -363,10 +364,11 @@ export function useCoachingBrain() {
 
       if (!isPhaseIndependent) {
         if (trigger === "rep_completed") {
-          // rep_completed: expire only if a new rep has started
-          // (patient is lifting, at top, or holding again)
-          // READY is fine — patient is between reps, message is still relevant
-          isExpired = activeMovementPhases.includes(currentPhase);
+          // rep_completed: expire only if patient is actively holding again
+          // 'lifting' (0.3-0.5s) and 'top' (instant) are brief enough that
+          // feedback arriving then is still contextually relevant
+          // Only expire when clearly into the next hold
+          isExpired = currentPhase === "holding";
         } else if (trigger === "hold_started") {
           // hold_started: expire if no longer holding
           isExpired = currentPhase !== "holding";
