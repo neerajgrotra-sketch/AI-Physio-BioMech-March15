@@ -448,11 +448,16 @@ export default function SessionRunner() {
     patientContext.completeExercise();
     sessionQueue.advanceQueue(
       (nextItem: QueueItem, nextIndex: number) => {
-        writeDebugLog("info", "SESSION", `Advancing to: ${nextItem.displayName}`);
+        writeDebugLog("info", "SESSION", "Advancing to: " + nextItem.displayName);
         inferenceLoop.resetTrackingState();
         framingIntelligence.reset("Position yourself for the next exercise.");
         patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
         framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
+        // Fire exercise started coaching for the new exercise
+        // Delay slightly to allow patientContext state to settle
+        window.setTimeout(() => {
+          stableCoachingCallbacks.onExerciseStarted(Date.now());
+        }, 200);
       },
       () => { writeDebugLog("success", "SESSION", "All exercises complete"); }
     );
