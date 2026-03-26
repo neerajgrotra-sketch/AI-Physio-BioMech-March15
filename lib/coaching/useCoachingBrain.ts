@@ -62,7 +62,7 @@ import { recordMessage } from "@/lib/debug/movementTimeline";
 
 const API_TIMEOUT_MS = 5000;
 const HESITATION_THRESHOLD_MS = 12000;
-const MIN_COACHING_INTERVAL_MS = 5000;
+const MIN_COACHING_INTERVAL_MS = 3000;
 const MIN_OBSERVATION_INTERVAL_MS = 15000;
 
 // Priority values — higher number = higher priority
@@ -75,6 +75,55 @@ const TRIGGER_PRIORITY: Record<CoachingTrigger, number> = {
   hesitation_detected: 2,
   observation_ready: 1
 };
+
+// ============================================================
+// VOICE SYNTHESIS
+// ============================================================
+// Browser speech synthesis for spoken coaching cues.
+// Speaks the coaching message when it is set.
+// Respects a minimum silence window between utterances.
+// Automatically cancelled when a new message arrives.
+// ============================================================
+
+let activeSpeechUtterance: SpeechSynthesisUtterance | null = null;
+
+function speakMessage(text: string, rate = 0.95, pitch = 1.0) {
+  if (typeof window === "undefined") return;
+  if (!window.speechSynthesis) return;
+
+  // Cancel any current speech
+  window.speechSynthesis.cancel();
+  activeSpeechUtterance = null;
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = rate;
+  utterance.pitch = pitch;
+  utterance.volume = 1.0;
+
+  // Prefer a natural English voice if available
+  const voices = window.speechSynthesis.getVoices();
+  const preferred = voices.find(
+    v => v.lang.startsWith("en") && (
+      v.name.includes("Natural") ||
+      v.name.includes("Neural") ||
+      v.name.includes("Premium") ||
+      v.name.includes("Samantha") ||
+      v.name.includes("Karen") ||
+      v.name.includes("Daniel")
+    )
+  );
+  if (preferred) utterance.voice = preferred;
+
+  activeSpeechUtterance = utterance;
+  window.speechSynthesis.speak(utterance);
+}
+
+function cancelSpeech() {
+  if (typeof window === "undefined") return;
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  activeSpeechUtterance = null;
+}
 
 // ============================================================
 // COACHING PANEL STATE
@@ -128,6 +177,9 @@ export function useCoachingBrain() {
   // Used to expire responses that arrive after phase has changed
   const phaseAtCallRef = useRef<string>("ready");
 
+  // Voice enabled state
+  const voiceEnabledRef = useRef<boolean>(true);
+
   // Timeout handle
   const timeoutHandleRef = useRef<number | null>(null);
 
@@ -154,6 +206,7 @@ export function useCoachingBrain() {
       timeoutHandleRef.current = null;
     }
 
+    cancelSpeech();
     setPanelState(createIdleState());
   }, []);
 
@@ -300,6 +353,14 @@ export function useCoachingBrain() {
         tone: parsed.tone,
         nowMs: setAtMs
       });
+
+      // Speak the message if voice is enabled
+      if (voiceEnabledRef.current) {
+        // Slightly slower for corrective tone, normal for encouraging
+        const rate = parsed.tone === "corrective" ? 0.88 : 0.95;
+        speakMessage(parsed.text, rate);
+      }
+
       setPanelState({
         message: parsed.text,
         tone: parsed.tone,
@@ -587,6 +648,12 @@ export function useCoachingBrain() {
       if (prev.source === "ai" && prev.tone === "corrective") return prev;
       const holdMs = Date.now();
       recordMessage({ source: "deterministic", trigger: "hold_started", text: message, tone: "neutral", nowMs: holdMs });
+
+      // Speak hold cue if voice enabled — brief, natural pause before speaking
+      if (voiceEnabledRef.current) {
+        setTimeout(() => speakMessage(message, 0.9), 200);
+      }
+
       return {
         message,
         tone: "neutral",
@@ -622,6 +689,14 @@ export function useCoachingBrain() {
     });
   }, [triggerCoachingDecision]);
 
+  // Voice toggle — exposed so SessionRunner can add a UI control
+  const setVoiceEnabled = useCallback((enabled: boolean) => {
+    voiceEnabledRef.current = enabled;
+    if (!enabled) cancelSpeech();
+  }, []);
+
+  const isVoiceEnabled = () => voiceEnabledRef.current;
+
   return {
     panelState,
     feedFrame,
@@ -630,7 +705,9 @@ export function useCoachingBrain() {
     onHoldStarted,
     onExerciseStarted,
     onExerciseCompleting,
-    reset
+    reset,
+    setVoiceEnabled,
+    isVoiceEnabled
   };
 }
 
