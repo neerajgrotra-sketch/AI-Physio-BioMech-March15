@@ -58,7 +58,7 @@ export const RIGHT_ARM_RAISE: ExercisePrescription = {
   coaching: {
     intro: "Begin when ready. Lift only your right arm.",
     lift: "Lift your right arm to shoulder height.",
-    hold: "Hold at the top.",
+    hold: "Hold it there.",
     lower: "Lower with control.",
     success: "Good repetition.",
     failedHeight:
@@ -154,7 +154,7 @@ export const LEFT_ARM_RAISE: ExercisePrescription = {
   coaching: {
     intro: "Begin when ready. Lift only your left arm.",
     lift: "Lift your left arm to shoulder height.",
-    hold: "Hold at the top.",
+    hold: "Hold it there.",
     lower: "Lower with control.",
     success: "Good repetition.",
     failedHeight:
@@ -247,7 +247,7 @@ export const BOTH_ARM_RAISE: ExercisePrescription = {
   coaching: {
     intro: "Begin when ready. Lift both arms together evenly.",
     lift: "Lift both arms to shoulder height.",
-    hold: "Hold at the top.",
+    hold: "Hold it there.",
     lower: "Lower with control.",
     success: "Good repetition.",
     failedHeight:
@@ -346,7 +346,7 @@ export const SIT_TO_STAND: ExercisePrescription = {
   coaching: {
     intro: "Begin seated. Stand up fully when ready, then sit back down slowly.",
     lift: "Stand up fully.",
-    hold: "Hold your standing position.",
+    hold: "Hold that position.",
     lower: "Sit back down slowly.",
     success: "Good stand.",
     failedHeight:
