@@ -454,10 +454,20 @@ export default function SessionRunner() {
         patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
         framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
         // Fire exercise started coaching for the new exercise
-        // Delay slightly to allow patientContext state to settle
-        window.setTimeout(() => {
-          stableCoachingCallbacks.onExerciseStarted(Date.now());
-        }, 200);
+        // Wait for exercise_completing speech to finish if it's still speaking
+        // This prevents the next exercise intro from cutting off the completion summary
+        const waitForSpeech = () => {
+          if (window.speechSynthesis?.speaking) {
+            window.setTimeout(waitForSpeech, 300);
+          } else {
+            // Add a brief natural pause after speech ends
+            window.setTimeout(() => {
+              stableCoachingCallbacks.onExerciseStarted(Date.now());
+            }, 600);
+          }
+        };
+        // Start checking after a minimum delay for state to settle
+        window.setTimeout(waitForSpeech, 300);
       },
       () => { writeDebugLog("success", "SESSION", "All exercises complete"); }
     );
