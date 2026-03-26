@@ -78,13 +78,13 @@ export function updateSilenceGate(
 ): SilenceGateState {
   // Silence windows per trigger type (ms)
   const silenceWindowMs: Record<CoachingTrigger, number> = {
-    rep_completed: 4000,
-    rep_failed: 5000,
-    hold_started: 2000,
-    observation_ready: 5000,
-    hesitation_detected: 6000,
-    exercise_started: 3000,
-    exercise_completing: 4000
+    rep_completed:       2000,  // short — next rep starts in 3-5s anyway
+    rep_failed:          1500,  // very short — patient may fail again quickly
+    hold_started:        1000,  // minimal — deterministic cue anyway
+    observation_ready:   8000,  // long — these are bonus cues
+    hesitation_detected: 5000,  // medium
+    exercise_started:    2000,  // short — first rep may come quickly
+    exercise_completing: 3000
   };
 
   return {
@@ -234,7 +234,9 @@ export function assembleClinicalContext(params: {
     Object.entries(patternCounts).find(([, count]) => count >= 3)?.[0] ??
     null;
 
-  const isFirstRep = exerciseContext.repCount === 0;
+  // isFirstRep: true only if no successful reps have been recorded yet
+  // Using successfulReps as a more reliable indicator than repCount (which can be stale)
+  const isFirstRep = exerciseContext.successfulReps === 0 && exerciseContext.failedReps === 0;
   const isFinalRep =
     exerciseContext.repCount === exerciseContext.repTarget - 1;
 
