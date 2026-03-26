@@ -473,8 +473,13 @@ export function useCoachingBrain() {
     const fallbackText = getFallbackText(trigger, prescription, failureReason);
 
     const callId = trigger + "-" + nowMs;
-    activeCallIdRef.current = callId;
-    activePriorityRef.current = priority;
+    // Only cancel previous call if new trigger has strictly higher priority
+    // This allows previous responses to still arrive and display
+    // unless something more important superseded them
+    if (priority >= activePriorityRef.current) {
+      activeCallIdRef.current = callId;
+      activePriorityRef.current = priority;
+    }
     lastCoachingCallAtMsRef.current = nowMs;
     phaseAtCallRef.current = lastPhaseFedRef.current;
 
@@ -514,8 +519,7 @@ export function useCoachingBrain() {
 
     const prevPhase = lastPhaseFedRef.current;
 
-    // Clear stale coaching message on phase change
-    // Only clear if transitioning away from a "done" state
+    // Phase transition handling
     if (prevPhase !== phase) {
       const staleOnChange =
         (prevPhase === "holding" && phase === "lowering") ||
@@ -524,6 +528,14 @@ export function useCoachingBrain() {
 
       if (staleOnChange) {
         clearPanel();
+      }
+
+      // Deterministic voice cue: hold complete → lower
+      // Only fire if hold was satisfied (not an early drop)
+      if (prevPhase === "holding" && phase === "lowering") {
+        if (voiceEnabledRef.current) {
+          setTimeout(() => speakMessage("Lower slowly.", 0.88), 100);
+        }
       }
     }
 
@@ -542,8 +554,11 @@ export function useCoachingBrain() {
     });
 
     // Observation-triggered coaching (heavily throttled)
+    // Suppress until at least 1 rep has been attempted to avoid
+    // premature "stopped_moving" observations at exercise start
     if (
       observations.length > 0 &&
+      repCount >= 1 &&
       !isSilenceWindowActive(silenceGateRef.current, nowMs) &&
       nowMs - lastObservationCallAtMsRef.current >= MIN_OBSERVATION_INTERVAL_MS &&
       activeCallIdRef.current === null
@@ -637,11 +652,8 @@ export function useCoachingBrain() {
     // Hold cues are DETERMINISTIC — no API call.
     // This eliminates the hold/rep_failed race condition.
     // The hold text comes directly from the prescription.
-    const holdSec = Math.round(params.holdRequiredMs / 1000);
-    const holdText = params.prescription.coaching.hold ?? "Hold at the top.";
-    const message = holdSec > 0
-      ? holdText + " (" + holdSec + "s)"
-      : holdText;
+    const holdText = params.prescription.coaching.hold ?? "Hold it there.";
+    const message = holdText;
 
     // Only show if not currently showing a more important message
     setPanelState(prev => {
