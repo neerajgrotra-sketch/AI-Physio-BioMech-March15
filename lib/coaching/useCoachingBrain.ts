@@ -126,6 +126,56 @@ function cancelSpeech() {
 }
 
 // ============================================================
+// REP COMPLETION CUES
+// ============================================================
+// Immediate deterministic spoken acknowledgement the moment
+// a rep completes. No API call — fires within 50ms.
+// Rotates through short phrases so it does not feel robotic.
+// Special cues for first rep, halfway, and final rep.
+// ============================================================
+
+const REP_CUES_GENERAL = [
+  "Good.",
+  "That's it.",
+  "Nice.",
+  "Well done.",
+  "Good rep.",
+];
+
+function getImmediateRepCue(
+  repNumber: number,   // 0-indexed rep just completed
+  repTarget: number,
+  failedRepCount: number
+): string {
+  const completedCount = repNumber + 1; // 1-indexed for display
+
+  // First rep
+  if (repNumber === 0) {
+    return failedRepCount > 0
+      ? "Good — that one counted."
+      : "Good form on the first one.";
+  }
+
+  // Final rep
+  if (completedCount === repTarget) {
+    return "That's all of them. Well done.";
+  }
+
+  // Halfway milestone
+  if (repTarget >= 4 && completedCount === Math.floor(repTarget / 2)) {
+    return "Halfway there.";
+  }
+
+  // Second to last
+  if (completedCount === repTarget - 1) {
+    return "One more.";
+  }
+
+  // Rotate through general cues based on rep number
+  return REP_CUES_GENERAL[repNumber % REP_CUES_GENERAL.length];
+}
+
+// ============================================================
 // COACHING PANEL STATE
 // ============================================================
 
@@ -172,6 +222,9 @@ export function useCoachingBrain() {
 
   // Phase tracking for clearing
   const lastPhaseFedRef = useRef<string>("ready");
+
+  // Track rep count for immediate completion cues
+  const repCountAtLastCompletionRef = useRef<number>(0);
 
   // Phase at the time each call was triggered
   // Used to expire responses that arrive after phase has changed
@@ -582,8 +635,14 @@ export function useCoachingBrain() {
     }
 
     // Hesitation detection
+    // Suppressed after exercise COMPLETE — patient is done,
+    // hesitation prompts after completion are confusing
+    const exerciseIsComplete = repCount >= prescription.repTarget ||
+      phase === "complete";
+
     if (
       phase === "ready" &&
+      !exerciseIsComplete &&
       lastRepCompletedAtMsRef.current !== null &&
       !hesitationFiredRef.current
     ) {
@@ -619,6 +678,34 @@ export function useCoachingBrain() {
     lastRepCompletedAtMsRef.current = params.nowMs;
     hesitationFiredRef.current = false;
 
+    // IMMEDIATE deterministic rep completion cue
+    // Fires within ~50ms — no API call
+    const completedRepNumber = params.exerciseContext.repCount;
+    const repTarget = params.prescription.repTarget;
+    const failedReps = params.exerciseContext.failedReps;
+    const immediateCue = getImmediateRepCue(
+      completedRepNumber,
+      repTarget,
+      failedReps
+    );
+
+    // Show in panel immediately
+    setPanelState({
+      message: immediateCue,
+      tone: "encouraging",
+      isThinking: false,
+      source: "deterministic",
+      setAtMs: params.nowMs
+    });
+
+    // Speak immediately
+    if (voiceEnabledRef.current) {
+      speakMessage(immediateCue, 0.95);
+    }
+
+    repCountAtLastCompletionRef.current = completedRepNumber;
+
+    // Then fire AI for detailed follow-up coaching (arrives 2-3s later)
     triggerCoachingDecision({
       trigger: "rep_completed",
       ...params
@@ -683,6 +770,7 @@ export function useCoachingBrain() {
     nowMs: number;
   }) => {
     reset();
+    repCountAtLastCompletionRef.current = 0;
     triggerCoachingDecision({
       trigger: "exercise_started",
       ...params
