@@ -55,7 +55,7 @@ import {
 import type { PatientProfile, ExerciseSessionContext } from "@/lib/patient/patientTypes";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { Observation } from "@/lib/coaching/types";
-import { recordMessage } from "@/lib/debug/movementTimeline";
+import { recordMessage, recordVoiceEvent } from "@/lib/debug/movementTimeline";
 
 // ============================================================
 // CONSTANTS
@@ -117,22 +117,39 @@ function speakMessage(text: string, rate = 0.95, pitch = 1.0) {
 
   activeSpeechUtterance = utterance;
   window.speechSynthesis.speak(utterance);
+  // Estimate duration: avg ~150 chars/second at rate 0.95
+  const estimatedDurationMs = Math.round((text.length / 15) * (1 / rate) * 1000);
+  recordVoiceEvent({ event: "spoken", text, nowMs: Date.now(), durationEstimateMs: estimatedDurationMs });
 }
 
 function sanitizeForSpeech(text: string): string {
-  // Fix TTS pronunciation issues
-  // "reps" → "repetitions" prevents "representatives" being read
-  return text
-    .replace(/(\d+)\s+reps?/gi, (_, n) => n + " repetitions")
-    .replace(/rep\s+(\d+)/gi, "repetition $1")
-    .replace(/five\s+more\s+reps?/gi, "five more repetitions")
-    .replace(/more\s+reps?/gi, "more repetitions")
-    .replace(/next\s+rep/gi, "next repetition");
+  // Fix TTS mispronunciation: "reps" → "repetitions"
+  // Handles both numeric ("6 reps") and spelled-out ("six reps") numbers
+  const numberWords = "one|two|three|four|five|six|seven|eight|nine|ten";
+  let result = text;
+  // "6 reps" or "six reps" → "6 repetitions" etc
+  result = result.replace(
+    new RegExp("\\b(\\d+|" + numberWords + ")\\s+reps?\\b", "gi"),
+    (_, n) => n + " repetitions"
+  );
+  // "more reps", "next rep", "reps total", "total reps"
+  result = result.replace(/more reps?/gi, "more repetitions");
+  result = result.replace(/next rep/gi, "next repetition");
+  result = result.replace(/reps? total/gi, "repetitions total");
+  result = result.replace(/total reps?/gi, "total repetitions");
+  return result;
 }
 
 function cancelSpeech() {
   if (typeof window === "undefined") return;
   if (!window.speechSynthesis) return;
+  // Record cancellation if something was actually speaking
+  if (window.speechSynthesis.speaking && activeSpeechUtterance) {
+    const cancelledText = activeSpeechUtterance.text ?? "";
+    if (cancelledText) {
+      recordVoiceEvent({ event: "cancelled", text: cancelledText, nowMs: Date.now() });
+    }
+  }
   window.speechSynthesis.cancel();
   activeSpeechUtterance = null;
 }
