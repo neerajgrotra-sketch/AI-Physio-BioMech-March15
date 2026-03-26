@@ -90,6 +90,7 @@ function patchFetch() {
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
+    const fetchStartMs = Date.now();
     if (url.includes("/api/coach")) {
       let promptSnippet = "";
       try {
@@ -106,6 +107,11 @@ function patchFetch() {
           } else {
             const text = (data.text ?? "").slice(0, 300);
             writeDebugLog("api_in", "API", "← Response received", text);
+          // Track coaching call latency (exclude framing evaluations)
+          if (text && !text.includes('"adequate"')) {
+            const latencyMs = Date.now() - fetchStartMs;
+            if ((window as any).__setApiLatency) (window as any).__setApiLatency(latencyMs);
+          }
           }
         }).catch(() => writeDebugLog("error", "API", "Could not parse response"));
         return response;
@@ -228,10 +234,19 @@ export default function SessionRunner() {
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
 
-  useEffect(() => { patchFetch(); }, []);
+  useEffect(() => {
+    patchFetch();
+    // Expose latency setter to fetch patcher
+    (window as any).__setApiLatency = (ms: number) => setApiLatencyMs(ms);
+    return () => { delete (window as any).__setApiLatency; };
+  }, []);
 
   // Voice toggle
   const [voiceOn, setVoiceOn] = useState(true);
+
+  // API latency tracking for the header indicator
+  const [apiLatencyMs, setApiLatencyMs] = useState<number | null>(null);
+  const apiCallTimesRef = useRef<Record<string, number>>({});
   const handleVoiceToggle = () => {
     const next = !voiceOn;
     setVoiceOn(next);
@@ -606,7 +621,7 @@ export default function SessionRunner() {
               animation: aiEngineStatus === "checking" ? "pulse 1s infinite" : "none"
             }} />
             <span style={{ fontSize: 12, color: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
-              {aiEngineStatus === "ok" ? "AI Engine Ready" : aiEngineStatus === "error" ? "AI Engine Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
+              {aiEngineStatus === "ok" ? "AI Engine Ready" : aiEngineStatus === "error" ? "AI Engine Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine" + (apiLatencyMs ? " · " + apiLatencyMs + "ms" : "")}
             </span>
           </div>
           <button
