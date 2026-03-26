@@ -230,12 +230,21 @@ export default function SessionRunner() {
 
   useEffect(() => { patchFetch(); }, []);
 
+  // Voice toggle
+  const [voiceOn, setVoiceOn] = useState(true);
+  const handleVoiceToggle = () => {
+    const next = !voiceOn;
+    setVoiceOn(next);
+    coachingBrain.setVoiceEnabled(next);
+  };
+
   const [debugLog, setDebugLog] = useState<DebugLogEntry[]>([]);
   const [debugOpen, setDebugOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState<"untested" | "ok" | "error">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(createDefaultPatientProfile());
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
 
   useEffect(() => {
@@ -578,6 +587,18 @@ export default function SessionRunner() {
               {apiStatus === "ok" ? "API Connected" : apiStatus === "error" ? "API Error" : "API Untested"}
             </span>
           </div>
+          <button
+            onClick={handleVoiceToggle}
+            style={{
+              background: voiceOn ? "rgba(100,220,150,0.12)" : "rgba(255,255,255,0.06)",
+              color: voiceOn ? "#9be7b0" : "#7a88a8",
+              border: "1px solid " + (voiceOn ? "rgba(100,220,150,0.3)" : "rgba(255,255,255,0.1)"),
+              borderRadius: 7, padding: "5px 12px",
+              fontSize: 11, fontWeight: 700, cursor: "pointer"
+            }}
+          >
+            {voiceOn ? "🔊 Voice" : "🔇 Muted"}
+          </button>
           <button onClick={testApiConnection} style={{
             background: "rgba(124,198,255,0.1)", color: "#7cc6ff",
             border: "1px solid rgba(124,198,255,0.25)", borderRadius: 7,
