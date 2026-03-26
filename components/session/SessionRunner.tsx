@@ -240,7 +240,7 @@ export default function SessionRunner() {
 
   const [debugLog, setDebugLog] = useState<DebugLogEntry[]>([]);
   const [debugOpen, setDebugOpen] = useState(false);
-  const [apiStatus, setApiStatus] = useState<"untested" | "ok" | "error">("untested");
+  const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(createDefaultPatientProfile());
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
@@ -276,35 +276,38 @@ export default function SessionRunner() {
   // API TEST
   // ============================================================
 
-  async function testApiConnection() {
-    writeDebugLog("info", "API", "Testing /api/coach…");
-    setApiStatus("untested");
+  async function checkAiEngine(silent = false) {
+    if (!silent) writeDebugLog("info", "API", "Testing AI engine…");
+    setAiEngineStatus("checking");
     try {
       const response = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: 'Reply with this exact JSON: {"status":"ok","message":"API connection successful"}',
+          prompt: 'Reply with this exact JSON: {"status":"ok"}',
           system: "You are a test endpoint. Always respond with valid JSON only."
         })
       });
       if (!response.ok) {
-        const data = await response.json();
-        writeDebugLog("error", "API", `HTTP ${response.status}`, data.error ?? "");
-        setApiStatus("error");
-        return;
+        const errData = await response.json().catch(() => ({}));
+        if (!silent) writeDebugLog("error", "API", "AI engine error: HTTP " + response.status, errData.error ?? "");
+        setAiEngineStatus("error");
+        return false;
       }
       const data = await response.json();
       if (data.text) {
-        writeDebugLog("success", "API", "Connected ✓", data.text.slice(0, 100));
-        setApiStatus("ok");
+        if (!silent) writeDebugLog("success", "API", "AI engine connected ✓");
+        setAiEngineStatus("ok");
+        return true;
       } else {
-        writeDebugLog("error", "API", "Missing text field", JSON.stringify(data).slice(0, 200));
-        setApiStatus("error");
+        if (!silent) writeDebugLog("error", "API", "Unexpected response", JSON.stringify(data).slice(0, 100));
+        setAiEngineStatus("error");
+        return false;
       }
     } catch (error) {
-      writeDebugLog("error", "API", "Failed", error instanceof Error ? error.message : String(error));
-      setApiStatus("error");
+      if (!silent) writeDebugLog("error", "API", "AI engine unreachable", error instanceof Error ? error.message : String(error));
+      setAiEngineStatus("error");
+      return false;
     }
   }
 
@@ -462,6 +465,9 @@ export default function SessionRunner() {
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
     writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
+    // Auto-check AI engine on session start
+    checkAiEngine(true);
+
     const started = sessionQueue.beginSession(combinedQueue);
     if (!started) { writeDebugLog("error", "SESSION", "beginSession returned false"); return; }
     setSelectorCollapsed(true);
@@ -580,11 +586,12 @@ export default function SessionRunner() {
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{
               width: 8, height: 8, borderRadius: "50%",
-              background: apiStatus === "ok" ? "#9be7b0" : apiStatus === "error" ? "#ff8f8f" : "#7a88a8",
-              boxShadow: apiStatus === "ok" ? "0 0 6px #9be7b0" : "none"
+              background: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : aiEngineStatus === "checking" ? "#ffcc80" : "#7a88a8",
+              boxShadow: aiEngineStatus === "ok" ? "0 0 6px #9be7b0" : aiEngineStatus === "checking" ? "0 0 6px #ffcc80" : "none",
+              animation: aiEngineStatus === "checking" ? "pulse 1s infinite" : "none"
             }} />
-            <span style={{ fontSize: 12, color: apiStatus === "ok" ? "#9be7b0" : apiStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
-              {apiStatus === "ok" ? "API Connected" : apiStatus === "error" ? "API Error" : "API Untested"}
+            <span style={{ fontSize: 12, color: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
+              {aiEngineStatus === "ok" ? "AI Engine Ready" : aiEngineStatus === "error" ? "AI Engine Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
             </span>
           </div>
           <button
@@ -599,7 +606,7 @@ export default function SessionRunner() {
           >
             {voiceOn ? "🔊 Voice" : "🔇 Muted"}
           </button>
-          <button onClick={testApiConnection} style={{
+          <button onClick={() => checkAiEngine(false)} style={{
             background: "rgba(124,198,255,0.1)", color: "#7cc6ff",
             border: "1px solid rgba(124,198,255,0.25)", borderRadius: 7,
             padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer"
@@ -838,7 +845,7 @@ export default function SessionRunner() {
                   "Patient: " + patientProfile.type + " session#" + patientProfile.sessionNumber,
                   "Framing: " + framingPanelState.severity + " — " + framingPanelState.message,
                   "Coaching msg: " + (coachingPanelState.message ?? "none") + " [" + coachingPanelState.source + "]",
-                  "API Status: " + apiStatus,
+                  "API Status: " + aiEngineStatus,
                   "",
                   "=== DEBUG LOG (newest first) ===",
                   ...debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? " | " + e.detail.slice(0, 200) : ""))
