@@ -67,6 +67,14 @@ export type TimelineEvent =
       latencyMs: number | null; // ms from trigger to message appearing
     }
   | {
+      kind: "voice_event";
+      timestampMs: number;
+      timestamp: string;
+      event: "spoken" | "cancelled" | "queued";
+      text: string;
+      durationEstimateMs?: number;
+    }
+  | {
       kind: "exercise_start";
       timestampMs: number;
       timestamp: string;
@@ -211,6 +219,23 @@ export function recordHoldStarted(holdRequiredMs: number, nowMs: number) {
     timestampMs: nowMs,
     timestamp: formatTimestamp(nowMs),
     holdRequiredMs
+  });
+}
+
+export function recordVoiceEvent(params: {
+  event: "spoken" | "cancelled" | "queued";
+  text: string;
+  nowMs: number;
+  durationEstimateMs?: number;
+}) {
+  const { event, text, nowMs, durationEstimateMs } = params;
+  push({
+    kind: "voice_event",
+    timestampMs: nowMs,
+    timestamp: formatTimestamp(nowMs),
+    event,
+    text,
+    durationEstimateMs
   });
 }
 
@@ -379,6 +404,16 @@ export function timelineToText(entries: TimelineEntry[]): string {
             ': "' +
             entry.text +
             '"'
+        );
+        break;
+
+      case "voice_event":
+        const voiceIcon = entry.event === "spoken" ? "🔊" :
+          entry.event === "cancelled" ? "🔇" : "⏳";
+        lines.push(
+          entry.timestamp +
+            "  " + voiceIcon + " [VOICE:" + entry.event.toUpperCase() + '] "' +
+            entry.text + '"'
         );
         break;
     }
