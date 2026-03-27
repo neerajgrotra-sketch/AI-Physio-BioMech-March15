@@ -569,11 +569,7 @@ export default function AdminPage() {
         if (error) {
           // RLS is blocking — remind user to disable RLS for testing
           if (error.code === "42501") {
-            throw new Error(
-              "Permission denied. Run this SQL in Supabase to enable saving:
-
-ALTER TABLE exercise_templates DISABLE ROW LEVEL SECURITY;"
-            );
+          throw new Error("Permission denied. Disable RLS in Supabase to enable saving without auth.");
           }
           throw error;
         }
