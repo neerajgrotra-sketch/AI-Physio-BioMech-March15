@@ -160,6 +160,8 @@ DECISION GUIDANCE:
 - Only speak if the rep had something worth acknowledging (first rep, recovery, final rep, or after a period of failure).
 - If you do speak, keep it short — 2 to 8 words is ideal for a successful rep.
 - Never repeat the same encouragement that was just given.
+- CRITICAL: Do NOT mention holding or hold duration — the hold cue fires automatically. Saying it again creates confusing duplicates.
+- Focus only on: form, effort, progress, or encouragement.
 
 ${RESPONSE_FORMAT}`;
 }
