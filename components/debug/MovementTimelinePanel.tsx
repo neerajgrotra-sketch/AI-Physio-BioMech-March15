@@ -288,6 +288,37 @@ function EventRow({ entry }: { entry: TimelineEvent }) {
         </div>
       );
 
+    case "voice_event":
+      const voiceStyles = {
+        spoken:    { icon: "🔊", color: "#9be7b0", bg: "rgba(100,220,150,0.06)", label: "SPOKEN" },
+        cancelled: { icon: "🔇", color: "#ff8f8f", bg: "rgba(255,100,100,0.06)", label: "CANCELLED" },
+        queued:    { icon: "⏳", color: "#ffcc80", bg: "rgba(255,200,80,0.06)",  label: "QUEUED" }
+      };
+      const vs = voiceStyles[entry.event];
+      return (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "3px 8px 3px 20px",
+          background: vs.bg, borderRadius: "0 6px 6px 0",
+          borderLeft: "2px solid " + vs.color
+        }}>
+          <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", width: 90, flexShrink: 0 }}>
+            {entry.timestamp}
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: vs.color, flexShrink: 0 }}>
+            {vs.icon} {vs.label}
+          </span>
+          <span style={{ fontSize: 11, color: vs.color, fontStyle: "italic" }}>
+            "{entry.text.length > 50 ? entry.text.slice(0, 50) + "…" : entry.text}"
+          </span>
+          {entry.durationEstimateMs && entry.event === "spoken" && (
+            <span style={{ fontSize: 10, color: "#7a88a8", marginLeft: "auto" }}>
+              ~{(entry.durationEstimateMs / 1000).toFixed(1)}s
+            </span>
+          )}
+        </div>
+      );
+
     default:
       return null;
   }
@@ -342,9 +373,12 @@ export default function MovementTimelinePanel({
   }
 
   // Filter entries based on showSnapshots toggle
-  const filteredEntries = showSnapshots
-    ? entries
-    : entries.filter(e => e.kind !== "snapshot");
+  const [showVoice, setShowVoice] = useState(true);
+  const filteredEntries = entries.filter(e => {
+    if (e.kind === "snapshot" && !showSnapshots) return false;
+    if (e.kind === "voice_event" && !showVoice) return false;
+    return true;
+  });
 
   const messageCount = entries.filter(e => e.kind === "message").length;
   const repCount = entries.filter(e => e.kind === "rep_completed").length;
@@ -405,6 +439,19 @@ export default function MovementTimelinePanel({
           style={{ display: "flex", gap: 8, alignItems: "center" }}
           onClick={e => e.stopPropagation()}
         >
+          {/* Voice toggle */}
+          <button
+            onClick={() => setShowVoice(v => !v)}
+            style={{
+              background: showVoice ? "rgba(100,220,150,0.12)" : "rgba(255,255,255,0.05)",
+              color: showVoice ? "#9be7b0" : "#7a88a8",
+              border: "none", borderRadius: 6,
+              padding: "3px 10px", fontSize: 11, cursor: "pointer"
+            }}
+          >
+            {showVoice ? "🔊 Voice" : "🔇 Voice"}
+          </button>
+
           {/* Snapshots toggle */}
           <button
             onClick={() => setShowSnapshots(v => !v)}
