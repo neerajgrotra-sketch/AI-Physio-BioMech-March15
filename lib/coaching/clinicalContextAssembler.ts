@@ -234,9 +234,11 @@ export function assembleClinicalContext(params: {
     Object.entries(patternCounts).find(([, count]) => count >= 3)?.[0] ??
     null;
 
-  // isFirstRep: true only if no successful reps have been recorded yet
-  // Using successfulReps as a more reliable indicator than repCount (which can be stale)
-  const isFirstRep = exerciseContext.successfulReps === 0 && exerciseContext.failedReps === 0;
+  // isFirstRep: true when this is the FIRST SUCCESSFUL rep completed
+  // successfulReps === 1 means exactly one rep just succeeded (this one)
+  // successfulReps === 0 means the rep that just completed is the first success
+  // We check === 0 because successfulReps increments AFTER the callback fires
+  const isFirstRep = exerciseContext.successfulReps === 0;
   const isFinalRep =
     exerciseContext.repCount === exerciseContext.repTarget - 1;
 
