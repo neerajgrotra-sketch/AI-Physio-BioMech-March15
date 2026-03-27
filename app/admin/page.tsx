@@ -272,12 +272,10 @@ function ExerciseCard({
         {!template.is_vanilla && (
           <Btn onClick={onEdit} small>Edit</Btn>
         )}
+        <Btn onClick={onEdit} small>
+          {template.is_vanilla ? "View / Edit" : "Edit"}
+        </Btn>
         <Btn onClick={onClone} small>Clone</Btn>
-        {template.is_vanilla && (
-          <span style={{ fontSize: 12, color: C.textDim, alignSelf: "center", marginLeft: 4 }}>
-            System template — clone to customise
-          </span>
-        )}
         {!template.is_vanilla && onDelete && (
           <div style={{ marginLeft: "auto" }}>
             <Btn onClick={onDelete} variant="danger" small>Delete</Btn>
@@ -457,7 +455,7 @@ function ExerciseEditor({
                 ].map(([key, label, hint]) => (
                   <Field key={key} label={label} hint={hint}>
                     <Input
-                      value={(form.coaching_strings as unknown as Record<string, string>)[key] ?? ""}
+                      value={(form.coaching_strings as Record<string, string>)[key] ?? ""}
                       onChange={v => setCoaching(key as keyof CoachingStrings, v)}
                     />
                   </Field>
@@ -498,6 +496,8 @@ export default function AdminPage() {
   const [editingTemplate, setEditingTemplate] = useState<ExerciseTemplate | null>(null);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"vanilla" | "mine">("vanilla");
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
   const showToast = (msg: string, ok = true) => {
@@ -552,21 +552,34 @@ export default function AdminPage() {
   const handleSave = async (template: ExerciseTemplate) => {
     setSaving(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      // Always save custom templates as non-vanilla (never overwrite system templates)
+      const isNew = !template.id || template.is_vanilla;
       const payload = {
         ...template,
         is_vanilla: false,
-        created_by: user?.id ?? null,
+        created_by: null, // will be set properly once auth is added
       };
 
-      if (!template.id) {
-        // New (cloned)
-        delete (payload as Partial<ExerciseTemplate>).id;
-        const { error } = await supabase.from("exercise_templates").insert(payload);
-        if (error) throw error;
-        showToast("Exercise created successfully.");
+      if (isNew) {
+        // New — clone from vanilla or create fresh
+        const { id: _id, ...insertPayload } = payload;
+        const { error } = await supabase
+          .from("exercise_templates")
+          .insert(insertPayload);
+        if (error) {
+          // RLS is blocking — remind user to disable RLS for testing
+          if (error.code === "42501") {
+            throw new Error(
+              "Permission denied. Run this SQL in Supabase to enable saving:
+
+ALTER TABLE exercise_templates DISABLE ROW LEVEL SECURITY;"
+            );
+          }
+          throw error;
+        }
+        showToast("Exercise created in My Library.");
       } else {
-        // Update existing
+        // Update existing custom template
         const { error } = await supabase
           .from("exercise_templates")
           .update(payload)
@@ -598,7 +611,14 @@ export default function AdminPage() {
     }
   };
 
-  const activeTemplates = tab === "vanilla" ? vanillaTemplates : myTemplates;
+  const rawTemplates = tab === "vanilla" ? vanillaTemplates : myTemplates;
+  const activeTemplates = rawTemplates.filter(t => {
+    const matchesSearch = search === "" ||
+      t.display_name.toLowerCase().includes(search.toLowerCase()) ||
+      (t.description ?? "").toLowerCase().includes(search.toLowerCase());
+    const matchesType = typeFilter === "all" || t.exercise_type === typeFilter;
+    return matchesSearch && matchesType;
+  });
 
   return (
     <div style={{
@@ -692,6 +712,50 @@ export default function AdminPage() {
               {label}
             </button>
           ))}
+        </div>
+
+        {/* Search + Filter */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          <input
+            type="text"
+            placeholder="Search exercises…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              flex: 1, minWidth: 200,
+              background: C.surface, border: `1px solid ${C.border}`,
+              borderRadius: 6, padding: "8px 12px",
+              color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none",
+            }}
+          />
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value)}
+            style={{
+              background: C.surface, border: `1px solid ${C.border}`,
+              borderRadius: 6, padding: "8px 12px",
+              color: typeFilter === "all" ? C.textMuted : C.text,
+              fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer",
+            }}
+          >
+            <option value="all">All types</option>
+            <option value="arm_raise">Arm Raise</option>
+            <option value="bilateral_arm_raise">Bilateral Arm Raise</option>
+            <option value="sit_to_stand">Sit to Stand</option>
+            <option value="custom">Custom</option>
+          </select>
+          {(search || typeFilter !== "all") && (
+            <button
+              onClick={() => { setSearch(""); setTypeFilter("all"); }}
+              style={{
+                background: "transparent", border: `1px solid ${C.border}`,
+                borderRadius: 6, padding: "8px 12px",
+                color: C.textMuted, fontSize: 12, fontFamily: "inherit", cursor: "pointer",
+              }}
+            >
+              Clear filters
+            </button>
+          )}
         </div>
 
         {/* Content */}
