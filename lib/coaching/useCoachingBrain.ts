@@ -124,19 +124,14 @@ function speakMessage(text: string, rate = 0.95, pitch = 1.0) {
 
 function sanitizeForSpeech(text: string): string {
   // Fix TTS mispronunciation: "reps" → "repetitions"
-  // Handles both numeric ("6 reps") and spelled-out ("six reps") numbers
-  const numberWords = "one|two|three|four|five|six|seven|eight|nine|ten";
+  // The TTS engine reads "reps" as "representatives" in sentence context
+  // Catch ALL uses of the word "reps" or "rep" (standalone)
   let result = text;
-  // "6 reps" or "six reps" → "6 repetitions" etc
-  result = result.replace(
-    new RegExp("\\b(\\d+|" + numberWords + ")\\s+reps?\\b", "gi"),
-    (_, n) => n + " repetitions"
-  );
-  // "more reps", "next rep", "reps total", "total reps"
-  result = result.replace(/more reps?/gi, "more repetitions");
-  result = result.replace(/next rep/gi, "next repetition");
-  result = result.replace(/reps? total/gi, "repetitions total");
-  result = result.replace(/total reps?/gi, "total repetitions");
+  // Replace standalone "reps" anywhere — must be a whole word
+  // "reps" → "repetitions", "rep" → "repetition" (as standalone word)
+  result = result.replace(/reps/gi, "repetitions");
+  result = result.replace(/(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+rep/gi,
+    (_, n) => n + " repetition");
   return result;
 }
 
