@@ -455,7 +455,7 @@ function ExerciseEditor({
                 ].map(([key, label, hint]) => (
                   <Field key={key} label={label} hint={hint}>
                     <Input
-                      value={(form.coaching_strings as Record<string, string>)[key] ?? ""}
+                      value={(form.coaching_strings as unknown as Record<string, string>)[key] ?? ""}
                       onChange={v => setCoaching(key as keyof CoachingStrings, v)}
                     />
                   </Field>
