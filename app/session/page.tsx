@@ -164,7 +164,7 @@ function buildPrescription(
           landmarks: { critical: ["left_hip", "right_hip", "left_knee", "right_knee"], supporting: ["left_shoulder", "right_shoulder", "left_ankle", "right_ankle"], reference: [] },
           confidenceThresholds: { critical: 0.5, supporting: 0.35 },
           requiredCoverage: "full_body",
-          peakMovementZone: "full_standing",
+          peakMovementZone: "standing_full",
           requiredStartPosture: "seated",
           bilateralSymmetryRequired: false,
           angleGuidance: "Side or frontal view. Full body must be visible from head to feet.",
