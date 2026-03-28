@@ -13,7 +13,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import SessionRunner from "@/components/session/SessionRunner";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { PatientProfile } from "@/lib/patient/patientTypes";
-import type { PatientType as SupabasePatientType } from "@/lib/supabase/types";
+
 
 // ─── Mapping from Supabase template name → ExercisePrescription ──────────────
 // The biomechanics engine works with specific prescription shapes.
@@ -320,23 +320,36 @@ function SessionPageInner() {
           setStatus("error");
           return;
         }
-        // Fetch the patient associated with this prescription
-if (data.patient_id) {
-  const { data: pt } = await supabase
-    .from("patients_mvp")
-    .select("first_name, patient_type, condition_notes")
-    .eq("id", data.patient_id)
-    .single();
+       
+// Fetch the patient associated with this prescription
+        if (data.patient_id) {
+          const { data: pt } = await supabase
+            .from("patients_mvp")
+            .select("first_name, patient_type, condition_notes")
+            .eq("id", data.patient_id)
+            .single();
 
-  if (pt) {
-    setPatientProfile({
-      type: pt.patient_type as SupabasePatientType,
-      sessionNumber: 1,
-      isReturningPatient: false,
-      clinicalNotes: pt.condition_notes ?? null,
-    });
-  }
-}
+          if (pt) {
+            // Map DB values → canonical coaching engine PatientType.
+            // Handles both old values (elderly/pediatric) and new
+            // (senior/chronic_pain) so the build is safe before and
+            // after migration 002 runs in Supabase.
+            const typeMap: Record<string, import("@/lib/patient/patientTypes").PatientType> = {
+              general_fitness: "general_fitness",
+              post_surgery:    "post_surgery",
+              senior:          "senior",
+              chronic_pain:    "chronic_pain",
+              elderly:         "senior",       // pre-migration rows
+              pediatric:       "general_fitness", // pre-migration rows
+            };
+            setPatientProfile({
+              type: typeMap[pt.patient_type] ?? "general_fitness",
+              sessionNumber: 1,
+              isReturningPatient: false,
+              clinicalNotes: pt.condition_notes ?? null,
+            });
+          }
+        }
 
         // Map each exercise to an ExercisePrescription
         const mapped: ExercisePrescription[] = [];
