@@ -227,9 +227,11 @@ interface SessionRunnerProps {
   prescriptionQueue?: import("@/lib/types/exercise").ExercisePrescription[];
   sessionTitle?: string;
   initialPatientProfile?: import("@/lib/patient/patientTypes").PatientProfile;
+  /** Registered patient's full name — shown in the pre-session card and coaching panel */
+  patientName?: string;
 }
 
-export default function SessionRunner({ prescriptionQueue, sessionTitle, initialPatientProfile }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, sessionTitle, initialPatientProfile, patientName }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -748,7 +750,7 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
             </div>
 
             <div style={{ marginTop: 10, fontSize: 11, color: "#7a88a8" }}>
-              Patient: <strong style={{ color: "white" }}>{patientProfile.type.replace("_", " ")}</strong>
+              Patient: <strong style={{ color: "white" }}>{patientName ?? patientProfile.type.replace(/_/g, " ")}</strong>
               {" · "}Session #{patientProfile.sessionNumber}
             </div>
           </div>
@@ -768,7 +770,109 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
         </div>
       </div>
 
-      {/* ── SESSION SELECTOR ── */}
+      {/* ── PRE-SESSION CARD (prescription mode) ── */}
+      {prescriptionQueue && prescriptionQueue.length > 0 && !sessionQueue.sessionStarted && (
+        <div style={{ background: "#1a2040", borderRadius: 12, padding: 20, border: "1px solid rgba(124,198,255,0.2)", marginBottom: 12 }}>
+
+          {/* Patient + session identity */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 4 }}>
+                Your Session
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "white" }}>
+                {sessionTitle ?? "Prescribed Session"}
+              </div>
+              {patientName && (
+                <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 3 }}>
+                  Patient: <strong style={{ color: "white" }}>{patientName}</strong>
+                  {" · "}<span style={{ color: "#7a88a8" }}>{patientProfile.type.replace(/_/g, " ")}</span>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                formatDurationRange(combinedDurationSeconds),
+                `${combinedQueue.length} exercise${combinedQueue.length !== 1 ? "s" : ""}`,
+                `${combinedTotalReps} reps`
+              ].map(label => (
+                <span key={label} style={{
+                  padding: "4px 12px", borderRadius: 999,
+                  background: "rgba(124,198,255,0.08)", color: "#7cc6ff",
+                  fontSize: 12, fontWeight: 600
+                }}>{label}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Exercise list */}
+          <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+            {combinedQueue.map((item, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "10px 14px", borderRadius: 8,
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.05)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    width: 22, height: 22, borderRadius: "50%",
+                    background: "rgba(124,198,255,0.12)", color: "#7cc6ff",
+                    fontSize: 11, fontWeight: 700,
+                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                  }}>{i + 1}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "white" }}>{item.displayName}</span>
+                </div>
+                <span style={{ fontSize: 12, color: "#7a88a8" }}>
+                  {item.prescription.repTarget} reps
+                  {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Begin button */}
+          <button
+            onClick={beginCombinedSession}
+            disabled={!canBegin}
+            style={{
+              width: "100%", padding: "12px 0",
+              background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.2)",
+              color: canBegin ? "#08111f" : "#7a88a8",
+              fontWeight: 800, fontSize: 15,
+              borderRadius: 10, border: "none",
+              cursor: canBegin ? "pointer" : "not-allowed",
+              letterSpacing: 0.3
+            }}
+          >
+            Begin Session
+          </button>
+        </div>
+      )}
+
+      {/* ── SESSION CONTROLS (prescription mode — session running) ── */}
+      {prescriptionQueue && prescriptionQueue.length > 0 && sessionQueue.sessionStarted && (
+        <div style={{ background: "#1a2040", borderRadius: 12, padding: "12px 16px", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontSize: 13, color: "#aab6d3" }}>
+            {patientName && <><strong style={{ color: "white" }}>{patientName}</strong>{" · "}</>}
+            <span style={{ color: "#7cc6ff" }}>{sessionTitle ?? "Session"}</span>
+            {" · "}Exercise {sessionQueue.queueIndex + 1} of {sessionQueue.getActiveQueue().length}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={endSession} style={{
+              background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "7px 14px",
+              borderRadius: 8, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 13
+            }}>End</button>
+            <button onClick={resetSession} style={{
+              background: "rgba(255,255,255,0.06)", color: "#aab6d3", padding: "7px 14px",
+              borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13
+            }}>Reset</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── SESSION SELECTOR (local builder mode only — hidden when prescription loaded) ── */}
+      {!prescriptionQueue?.length && (
       <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: selectorCollapsed ? 0 : 14, flexWrap: "wrap", gap: 10 }}>
           <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Session Selector</div>
@@ -846,6 +950,7 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
           </div>
         )}
       </div>
+      )}
 
       {/* ── DEBUG LOG ── */}
       <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(124,198,255,0.15)", overflow: "hidden" }}>
