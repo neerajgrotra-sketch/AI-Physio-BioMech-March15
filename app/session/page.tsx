@@ -309,7 +309,7 @@ export default function SessionPage() {
 
         // Sort exercises by sequence order
         const exercises: SupabasePrescriptionExercise[] = (
-          (data.prescription_exercises as SupabasePrescriptionExercise[]) ?? []
+          (data.prescription_exercises as unknown as SupabasePrescriptionExercise[]) ?? []
         ).sort((a, b) => a.sequence_order - b.sequence_order);
 
         if (exercises.length === 0) {
