@@ -14,7 +14,6 @@ import SessionRunner from "@/components/session/SessionRunner";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { PatientProfile } from "@/lib/patient/patientTypes";
 
-
 // ─── Mapping from Supabase template name → ExercisePrescription ──────────────
 // The biomechanics engine works with specific prescription shapes.
 // We map by the template's `name` field (slug), then apply overrides.
@@ -255,11 +254,13 @@ function ErrorScreen({ message, prescriptionId }: { message: string; prescriptio
 function SessionPageInner() {
   const searchParams = useSearchParams();
   const prescriptionId = searchParams.get("prescription");
-  const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(undefined);
+
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "no-param">("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [prescriptions, setPrescriptions] = useState<ExercisePrescription[]>([]);
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(undefined);
+  const [patientName, setPatientName] = useState<string | undefined>(undefined);
 
   const supabase = getSupabaseClient();
   const loadedRef = useRef(false);
@@ -310,6 +311,35 @@ function SessionPageInner() {
 
         setSessionTitle(data.title);
 
+        // Fetch the patient linked to this prescription so coaching
+        // brain gets the real registered patient type — not the manual
+        // selector default.
+        if (data.patient_id) {
+          const { data: pt } = await supabase
+            .from("patients_mvp")
+            .select("full_name, patient_type, condition_notes")
+            .eq("id", data.patient_id)
+            .single();
+
+          if (pt) {
+            setPatientName(pt.full_name as string);
+            const typeMap: Record<string, import("@/lib/patient/patientTypes").PatientType> = {
+              general_fitness: "general_fitness",
+              post_surgery:    "post_surgery",
+              senior:          "senior",
+              chronic_pain:    "chronic_pain",
+              elderly:         "senior",
+              pediatric:       "general_fitness",
+            };
+            setPatientProfile({
+              type: typeMap[pt.patient_type as string] ?? "general_fitness",
+              sessionNumber: 1,
+              isReturningPatient: false,
+              clinicalNotes: (pt.condition_notes as string | null) ?? null,
+            });
+          }
+        }
+
         // Sort exercises by sequence order
         const exercises: SupabasePrescriptionExercise[] = (
           (data.prescription_exercises as unknown as SupabasePrescriptionExercise[]) ?? []
@@ -319,36 +349,6 @@ function SessionPageInner() {
           setErrorMessage("This session has no exercises assigned. Add exercises in the Session Builder.");
           setStatus("error");
           return;
-        }
-       
-// Fetch the patient associated with this prescription
-        if (data.patient_id) {
-          const { data: pt } = await supabase
-            .from("patients_mvp")
-            .select("first_name, patient_type, condition_notes")
-            .eq("id", data.patient_id)
-            .single();
-
-          if (pt) {
-            // Map DB values → canonical coaching engine PatientType.
-            // Handles both old values (elderly/pediatric) and new
-            // (senior/chronic_pain) so the build is safe before and
-            // after migration 002 runs in Supabase.
-            const typeMap: Record<string, import("@/lib/patient/patientTypes").PatientType> = {
-              general_fitness: "general_fitness",
-              post_surgery:    "post_surgery",
-              senior:          "senior",
-              chronic_pain:    "chronic_pain",
-              elderly:         "senior",       // pre-migration rows
-              pediatric:       "general_fitness", // pre-migration rows
-            };
-            setPatientProfile({
-              type: typeMap[pt.patient_type] ?? "general_fitness",
-              sessionNumber: 1,
-              isReturningPatient: false,
-              clinicalNotes: pt.condition_notes ?? null,
-            });
-          }
         }
 
         // Map each exercise to an ExercisePrescription
@@ -406,6 +406,7 @@ function SessionPageInner() {
       prescriptionQueue={prescriptions}
       sessionTitle={sessionTitle}
       initialPatientProfile={patientProfile}
+      patientName={patientName}
     />
   );
 }
