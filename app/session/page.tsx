@@ -65,6 +65,17 @@ function buildPrescription(
         tempo: { label: "slow and controlled" },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15, maxOppositeArmElevationDeg: 35 },
         coaching,
+        framing: {
+          intent: "Measure right arm elevation arc from resting position to shoulder height.",
+          landmarks: { critical: ["right_shoulder", "right_elbow", "right_wrist"], supporting: ["left_shoulder", "nose", "right_hip"], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "upper_body",
+          peakMovementZone: "shoulder_height",
+          requiredStartPosture: "either",
+          bilateralSymmetryRequired: false,
+          angleGuidance: "Frontal view preferred. Ensure the right arm and shoulder are clearly visible.",
+          measurementRisk: "Without clear visibility of right arm landmarks, elevation cannot be measured accurately.",
+        },
       };
 
     case "left-arm-raise":
@@ -86,6 +97,17 @@ function buildPrescription(
         tempo: { label: "slow and controlled" },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15, maxOppositeArmElevationDeg: 35 },
         coaching,
+        framing: {
+          intent: "Measure left arm elevation arc from resting position to shoulder height.",
+          landmarks: { critical: ["left_shoulder", "left_elbow", "left_wrist"], supporting: ["right_shoulder", "nose", "left_hip"], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "upper_body",
+          peakMovementZone: "shoulder_height",
+          requiredStartPosture: "either",
+          bilateralSymmetryRequired: false,
+          angleGuidance: "Frontal view preferred. Ensure the left arm and shoulder are clearly visible.",
+          measurementRisk: "Without clear visibility of left arm landmarks, elevation cannot be measured accurately.",
+        },
       };
 
     case "both-arm-raise":
@@ -107,6 +129,17 @@ function buildPrescription(
         tempo: { label: "slow and controlled" },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15 },
         coaching,
+        framing: {
+          intent: "Measure bilateral arm elevation simultaneously. Both arms must be equally visible.",
+          landmarks: { critical: ["left_shoulder", "left_elbow", "left_wrist", "right_shoulder", "right_elbow", "right_wrist"], supporting: ["nose", "left_hip", "right_hip"], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "upper_body",
+          peakMovementZone: "shoulder_height",
+          requiredStartPosture: "either",
+          bilateralSymmetryRequired: true,
+          angleGuidance: "Frontal view required. Patient must be centred with both arms fully visible.",
+          measurementRisk: "Without bilateral landmark visibility, asymmetry cannot be detected.",
+        },
       };
 
     case "sit-to-stand":
@@ -126,6 +159,17 @@ function buildPrescription(
         target: { metric: "kneeToHipExtensionScore", label: "full standing", targetValue: 170, tolerance: 10 },
         hold: { required: holdMsOverride > 0, durationMs: holdMsOverride || 1000 },
         coaching,
+        framing: {
+          intent: "Detect hip transition from seated to full standing. Hip and knee landmarks must be visible throughout.",
+          landmarks: { critical: ["left_hip", "right_hip", "left_knee", "right_knee"], supporting: ["left_shoulder", "right_shoulder", "left_ankle", "right_ankle"], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "full_body",
+          peakMovementZone: "full_standing",
+          requiredStartPosture: "seated",
+          bilateralSymmetryRequired: false,
+          angleGuidance: "Side or frontal view. Full body must be visible from head to feet.",
+          measurementRisk: "Without hip and knee visibility, standing position cannot be confirmed.",
+        },
       };
 
     default:
