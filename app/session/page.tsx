@@ -12,6 +12,8 @@ import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import SessionRunner from "@/components/session/SessionRunner";
 import type { ExercisePrescription } from "@/lib/types/exercise";
+import type { PatientProfile } from "@/lib/patient/patientTypes";
+import type { PatientType as SupabasePatientType } from "@/lib/supabase/types";
 
 // ─── Mapping from Supabase template name → ExercisePrescription ──────────────
 // The biomechanics engine works with specific prescription shapes.
