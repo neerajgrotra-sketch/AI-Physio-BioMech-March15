@@ -261,6 +261,7 @@ function SessionPageInner() {
   const [prescriptions, setPrescriptions] = useState<ExercisePrescription[]>([]);
   const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(undefined);
   const [patientName, setPatientName] = useState<string | undefined>(undefined);
+  const [patientId, setPatientId] = useState<string | undefined>(undefined);
 
   const supabase = getSupabaseClient();
   const loadedRef = useRef(false);
@@ -315,6 +316,7 @@ function SessionPageInner() {
         // brain gets the real registered patient type — not the manual
         // selector default.
         if (data.patient_id) {
+          setPatientId(data.patient_id);
           const { data: pt } = await supabase
             .from("patients_mvp")
             .select("full_name, patient_type, condition_notes")
@@ -407,6 +409,8 @@ function SessionPageInner() {
       sessionTitle={sessionTitle}
       initialPatientProfile={patientProfile}
       patientName={patientName}
+      prescriptionId={prescriptionId ?? undefined}
+      patientId={patientId}
     />
   );
 }
