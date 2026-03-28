@@ -253,7 +253,7 @@ function ErrorScreen({ message, prescriptionId }: { message: string; prescriptio
 function SessionPageInner() {
   const searchParams = useSearchParams();
   const prescriptionId = searchParams.get("prescription");
-
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(undefined);
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "no-param">("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
@@ -317,6 +317,23 @@ function SessionPageInner() {
           setStatus("error");
           return;
         }
+        // Fetch the patient associated with this prescription
+if (data.patient_id) {
+  const { data: pt } = await supabase
+    .from("patients_mvp")
+    .select("first_name, patient_type, condition_notes")
+    .eq("id", data.patient_id)
+    .single();
+
+  if (pt) {
+    setPatientProfile({
+      type: pt.patient_type as SupabasePatientType,
+      sessionNumber: 1,
+      isReturningPatient: false,
+      clinicalNotes: pt.condition_notes ?? null,
+    });
+  }
+}
 
         // Map each exercise to an ExercisePrescription
         const mapped: ExercisePrescription[] = [];
