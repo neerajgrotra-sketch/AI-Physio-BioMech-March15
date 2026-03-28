@@ -158,7 +158,8 @@ function buildPrescription(
         finishThreshold: 120,
         target: { metric: "kneeToHipExtensionScore", label: "full standing", targetValue: 170, tolerance: 10 },
         hold: { required: holdMsOverride > 0, durationMs: holdMsOverride || 1000 },
-        coaching,
+tempo: { label: "slow and controlled" },
+coaching,
         framing: {
           intent: "Detect hip transition from seated to full standing. Hip and knee landmarks must be visible throughout.",
           landmarks: { critical: ["left_hip", "right_hip", "left_knee", "right_knee"], supporting: ["left_shoulder", "right_shoulder", "left_ankle", "right_ankle"], reference: [] },
