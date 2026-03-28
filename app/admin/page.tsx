@@ -368,13 +368,13 @@ function PatientsTab({ showToast }: { showToast: (msg: string, ok?: boolean) => 
   const loadPatients = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
-      .from("patient_profiles")
-      .select("*, profiles(full_name)")
+      .from("patients_mvp")
+      .select("*")
       .order("created_at", { ascending: false });
     if (!error && data) {
       setPatients(data.map((p: Record<string, unknown>) => ({
         id: p.id as string,
-        full_name: (p.profiles as { full_name: string } | null)?.full_name ?? "Unknown",
+        full_name: p.full_name as string,
         patient_type: p.patient_type as string,
         condition_notes: p.condition_notes as string | null,
         date_of_birth: p.date_of_birth as string | null,
@@ -390,25 +390,19 @@ function PatientsTab({ showToast }: { showToast: (msg: string, ok?: boolean) => 
     if (!form.full_name.trim()) { showToast("Patient name is required.", false); return; }
     setSaving(true);
     try {
-      // Insert into profiles first (no auth, so use a placeholder uuid)
-      const tempId = crypto.randomUUID();
-      const { error: profileError } = await supabase
-        .from("profiles")
-        .insert({ id: tempId, role: "patient", full_name: form.full_name.trim() });
-      if (profileError) throw profileError;
-
-      const { error: patientError } = await supabase
-        .from("patient_profiles")
+      // Insert directly into patient_profiles_standalone (no auth dependency)
+      // This table is separate from profiles/auth.users for MVP testing
+      const { error } = await supabase
+        .from("patients_mvp")
         .insert({
-          id: tempId,
+          full_name: form.full_name.trim(),
           patient_type: form.patient_type,
           date_of_birth: form.date_of_birth || null,
           condition_notes: form.condition_notes || null,
           goals: form.goals || null,
           consent_given_at: new Date().toISOString(),
-          consent_version: "1.0",
         });
-      if (patientError) throw patientError;
+      if (error) throw error;
 
       showToast(`Patient "${form.full_name}" registered.`);
       setForm({ full_name: "", date_of_birth: "", patient_type: "general_fitness", condition_notes: "", goals: "" });
@@ -423,8 +417,7 @@ function PatientsTab({ showToast }: { showToast: (msg: string, ok?: boolean) => 
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete patient "${name}"? This will also delete their session history.`)) return;
-    await supabase.from("patient_profiles").delete().eq("id", id);
-    await supabase.from("profiles").delete().eq("id", id);
+    await supabase.from("patients_mvp").delete().eq("id", id);
     showToast("Patient deleted.");
     loadPatients();
   };
@@ -535,7 +528,7 @@ function SessionsTab({ showToast }: { showToast: (msg: string, ok?: boolean) => 
     setLoading(true);
     const [{ data: tmpl }, { data: pts }, { data: sess }] = await Promise.all([
       supabase.from("exercise_templates").select("*").order("display_name"),
-      supabase.from("patient_profiles").select("*, profiles(full_name)").order("created_at", { ascending: false }),
+      supabase.from("patients_mvp").select("*").order("created_at", { ascending: false }),
       supabase.from("session_prescriptions").select("*, prescription_exercises(*, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
     ]);
 
@@ -547,7 +540,7 @@ function SessionsTab({ showToast }: { showToast: (msg: string, ok?: boolean) => 
     if (pts) {
       setPatients(pts.map((p: Record<string, unknown>) => ({
         id: p.id as string,
-        full_name: (p.profiles as { full_name: string } | null)?.full_name ?? "Unknown",
+        full_name: p.full_name as string,
         patient_type: p.patient_type as string,
         condition_notes: p.condition_notes as string | null,
         date_of_birth: p.date_of_birth as string | null,
