@@ -226,9 +226,10 @@ const LOG_COLORS: Record<LogLevel, { bg: string; color: string; label: string }>
 interface SessionRunnerProps {
   prescriptionQueue?: import("@/lib/types/exercise").ExercisePrescription[];
   sessionTitle?: string;
+  initialPatientProfile?: import("@/lib/patient/patientTypes").PatientProfile;
 }
 
-export default function SessionRunner({ prescriptionQueue, sessionTitle }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, sessionTitle, initialPatientProfile }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -247,7 +248,9 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle }: Sessi
   const [debugOpen, setDebugOpen] = useState(false);
   const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
-  const [patientProfile, setPatientProfile] = useState<PatientProfile>(createDefaultPatientProfile());
+  const [patientProfile, setPatientProfile] = useState<PatientProfile>(
+  initialPatientProfile ?? createDefaultPatientProfile()
+);
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
