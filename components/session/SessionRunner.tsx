@@ -39,6 +39,7 @@ import { useFramingIntelligence } from "@/lib/framing/useFramingIntelligence";
 import { useCoachingBrain } from "@/lib/coaching/useCoachingBrain";
 import { usePatientContext } from "@/lib/patient/usePatientContext";
 import { createDefaultPatientProfile } from "@/lib/patient/patientTypes";
+import { getSupabaseClient } from "@/lib/supabase/client";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
 import MovementTimelinePanel from "@/components/debug/MovementTimelinePanel";
@@ -227,14 +228,19 @@ interface SessionRunnerProps {
   prescriptionQueue?: import("@/lib/types/exercise").ExercisePrescription[];
   sessionTitle?: string;
   initialPatientProfile?: import("@/lib/patient/patientTypes").PatientProfile;
-  /** Registered patient's full name — shown in the pre-session card and coaching panel */
+  /** Supabase UUID of the session_prescription — used to write results and update status */
+  prescriptionId?: string;
+  /** Supabase UUID of the patient in patients_mvp — written to session_results */
+  patientId?: string;
+  /** Registered patient full name — shown in pre-session card and coaching panel */
   patientName?: string;
 }
 
-export default function SessionRunner({ prescriptionQueue, sessionTitle, initialPatientProfile, patientName }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
+  const sessionStartedAtMsRef = useRef<number | null>(null);
 
   useEffect(() => { patchFetch(); }, []);
 
@@ -487,9 +493,129 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
         // Start checking after a minimum delay for state to settle
         window.setTimeout(waitForSpeech, 300);
       },
-      () => { writeDebugLog("success", "SESSION", "All exercises complete"); }
+      () => {
+        writeDebugLog("success", "SESSION", "All exercises complete");
+        writeSessionResults();
+      }
     );
   }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence]);
+
+  // ============================================================
+  // SESSION RESULTS WRITER
+  // ============================================================
+  // Called when all exercises are complete.
+  // Writes to session_results + exercise_results in Supabase,
+  // then updates session_prescriptions.status → completed.
+  // ============================================================
+
+  async function writeSessionResults() {
+    const summary = patientContext.buildSessionSummaryInput();
+    if (!summary) {
+      writeDebugLog("warning", "RESULTS", "buildSessionSummaryInput returned null — skipping write");
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    const completedAt = new Date().toISOString();
+    const startedAt = sessionStartedAtMsRef.current
+      ? new Date(sessionStartedAtMsRef.current).toISOString()
+      : completedAt;
+    const durationMs = sessionStartedAtMsRef.current
+      ? Date.now() - sessionStartedAtMsRef.current
+      : summary.totalDurationMs;
+
+    // Compute mobility score (0–100):
+    // weighted average of rep completion rate (60%) + hold compliance (40%)
+    const allEx = summary.exercises;
+    const repCompletionRate = allEx.length > 0
+      ? allEx.reduce((sum, ex) => sum + (ex.repTarget > 0 ? ex.successfulReps / ex.repTarget : 0), 0) / allEx.length
+      : 0;
+    const mobilityScore = Math.round(Math.min(100, repCompletionRate * 100));
+
+    writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}`);
+
+    try {
+      // 1. Insert session_results row
+      const { data: sessionResult, error: sessionErr } = await supabase
+        .from("session_results")
+        .insert({
+          prescription_id: prescriptionId ?? null,
+          patient_id: patientId ?? null,
+          started_at: startedAt,
+          completed_at: completedAt,
+          duration_ms: durationMs,
+          mobility_score: mobilityScore,
+          claude_summary: null,  // future: generate via AI
+          physio_reviewed: false,
+        })
+        .select("id")
+        .single();
+
+      if (sessionErr || !sessionResult) {
+        writeDebugLog("error", "RESULTS", "Failed to insert session_results", sessionErr?.message ?? "unknown");
+        return;
+      }
+
+      const sessionResultId = sessionResult.id;
+      writeDebugLog("success", "RESULTS", "session_results written", `id=${sessionResultId}`);
+
+      // 2. Insert exercise_results rows
+      const queue = sessionQueue.getActiveQueue();
+      const exerciseRows = allEx.map((ex, i) => {
+        const queueItem = queue[i];
+        const repTarget = ex.repTarget;
+        const attempted = ex.successfulReps + ex.failedReps;
+        const holdCompliance = repTarget > 0 ? ex.successfulReps / repTarget : null;
+
+        return {
+          session_result_id: sessionResultId,
+          template_id: null,           // future: map exercise id → template uuid
+          prescription_exercise_id: null, // future: include in prescriptionQueue items
+          sequence_order: i,
+          reps_prescribed: repTarget,
+          reps_attempted: attempted,
+          reps_successful: ex.successfulReps,
+          reps_failed: ex.failedReps,
+          hold_compliance_rate: holdCompliance,
+          avg_hold_ms: null,            // future: track per-rep hold durations
+          avg_metric_degrees: null,     // future: average from movement timeline
+          target_metric_degrees: queueItem?.prescription.target?.targetValue ?? null,
+          failed_hold_count: ex.failureReasons.hold,
+          failed_height_count: ex.failureReasons.height,
+          failed_balance_count: ex.failureReasons.balance,
+          failed_isolation_count: ex.failureReasons.isolation,
+          movement_timeline: null,      // future: pass from movementTimeline store
+        };
+      });
+
+      const { error: exErr } = await supabase
+        .from("exercise_results")
+        .insert(exerciseRows);
+
+      if (exErr) {
+        writeDebugLog("error", "RESULTS", "Failed to insert exercise_results", exErr.message);
+      } else {
+        writeDebugLog("success", "RESULTS", `exercise_results written — ${exerciseRows.length} rows`);
+      }
+
+      // 3. Update prescription status → completed
+      if (prescriptionId) {
+        const { error: statusErr } = await supabase
+          .from("session_prescriptions")
+          .update({ status: "completed" })
+          .eq("id", prescriptionId);
+
+        if (statusErr) {
+          writeDebugLog("error", "RESULTS", "Failed to update prescription status", statusErr.message);
+        } else {
+          writeDebugLog("success", "RESULTS", "Prescription status → completed");
+        }
+      }
+
+    } catch (err) {
+      writeDebugLog("error", "RESULTS", "writeSessionResults threw", err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // ============================================================
   // SESSION LIFECYCLE
@@ -497,6 +623,7 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
 
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
+    sessionStartedAtMsRef.current = Date.now();
     writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
     // Auto-check AI engine on session start
     checkAiEngine(true);
@@ -773,8 +900,6 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
       {/* ── PRE-SESSION CARD (prescription mode) ── */}
       {prescriptionQueue && prescriptionQueue.length > 0 && !sessionQueue.sessionStarted && (
         <div style={{ background: "#1a2040", borderRadius: 12, padding: 20, border: "1px solid rgba(124,198,255,0.2)", marginBottom: 12 }}>
-
-          {/* Patient + session identity */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
             <div>
               <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 4 }}>
@@ -805,7 +930,6 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
             </div>
           </div>
 
-          {/* Exercise list */}
           <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
             {combinedQueue.map((item, i) => (
               <div key={i} style={{
@@ -831,7 +955,6 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
             ))}
           </div>
 
-          {/* Begin button */}
           <button
             onClick={beginCombinedSession}
             disabled={!canBegin}
