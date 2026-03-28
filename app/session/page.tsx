@@ -283,6 +283,7 @@ function SessionPageInner() {
             id,
             title,
             objective,
+            patient_id,
             prescription_exercises (
               sequence_order,
               reps_override,
@@ -391,6 +392,7 @@ if (data.patient_id) {
     <SessionRunner
       prescriptionQueue={prescriptions}
       sessionTitle={sessionTitle}
+      initialPatientProfile={patientProfile}
     />
   );
 }
