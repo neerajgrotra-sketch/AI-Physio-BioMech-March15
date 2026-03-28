@@ -7,7 +7,7 @@
 //
 // Falls back to the full exercise library if no prescription param is given.
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import SessionRunner from "@/components/session/SessionRunner";
@@ -250,7 +250,7 @@ function ErrorScreen({ message, prescriptionId }: { message: string; prescriptio
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function SessionPage() {
+function SessionPageInner() {
   const searchParams = useSearchParams();
   const prescriptionId = searchParams.get("prescription");
 
@@ -373,5 +373,17 @@ export default function SessionPage() {
       prescriptionQueue={prescriptions}
       sessionTitle={sessionTitle}
     />
+  );
+}
+
+export default function SessionPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: "100vh", background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center", color: "#7d8590", fontFamily: "sans-serif" }}>
+        Loading session…
+      </div>
+    }>
+      <SessionPageInner />
+    </Suspense>
   );
 }
