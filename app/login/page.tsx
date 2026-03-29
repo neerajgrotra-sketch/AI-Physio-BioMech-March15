@@ -27,21 +27,25 @@ function LoginForm() {
 
   const supabase = getSupabaseClient()
 
-  const handleSignIn = async () => {
-    setLoading(true)
-    setError(null)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setError(error.message)
-      setLoading(false)
-    } else {
-      supabase.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' && session) {
-          window.location.href = redirectTo ?? '/admin'
-        }
-      })
-    }
+ const handleSignIn = async () => {
+  setLoading(true)
+  setError(null)
+  
+  console.log('1. Starting sign in...')
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  console.log('2. Sign in response:', { data, error })
+  
+  if (error) {
+    console.log('3. Error path:', error.message)
+    setError(error.message)
+    setLoading(false)
+    return
   }
+
+  console.log('4. Success path - session:', data.session?.access_token ? 'EXISTS' : 'NULL')
+  setError('DEBUG: Sign in succeeded. Check console.')
+  setLoading(false)
+}
 
   const handleRegister = async () => {
     if (!fullName.trim()) { setError('Full name is required'); return }
