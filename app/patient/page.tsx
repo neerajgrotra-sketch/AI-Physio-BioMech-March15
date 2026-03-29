@@ -66,10 +66,10 @@ const PATIENT_TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_CONFIG: Record<PrescriptionStatus, { label: string; color: string; bg: string }> = {
-  pending:     { label: "Pending",     color: C.blue,    bg: C.blueDim },
-  in_progress: { label: "In Progress", color: C.orange,  bg: C.orangeDim },
-  completed:   { label: "Completed",   color: C.green,   bg: C.greenDim },
-  missed:      { label: "Missed",      color: C.red,     bg: "rgba(248,81,73,0.12)" },
+  pending:     { label: "Pending",     color: C.blue,   bg: C.blueDim },
+  in_progress: { label: "In Progress", color: C.orange, bg: C.orangeDim },
+  completed:   { label: "Completed",   color: C.green,  bg: C.greenDim },
+  missed:      { label: "Missed",      color: C.red,    bg: "rgba(248,81,73,0.12)" },
   cancelled:   { label: "Cancelled",   color: C.textDim, bg: "transparent" },
 };
 
@@ -96,7 +96,7 @@ function StatusBadge({ status }: { status: PrescriptionStatus }) {
 }
 
 function SessionCard({ session }: { session: SessionRow }) {
-  const isRunnable  = session.status === "pending" || session.status === "in_progress";
+  const isRunnable = session.status === "pending" || session.status === "in_progress";
   const isCompleted = session.status === "completed";
   const buttonLabel = isCompleted ? "↺ Re-run" : "▶ Run Session";
 
@@ -110,6 +110,7 @@ function SessionCard({ session }: { session: SessionRow }) {
       flexDirection: "column",
       gap: 12,
     }}>
+      {/* Header row */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>
@@ -124,11 +125,17 @@ function SessionCard({ session }: { session: SessionRow }) {
         <StatusBadge status={session.status} />
       </div>
 
+      {/* Meta row */}
       <div style={{ display: "flex", gap: 16 }}>
-        <span style={{ fontSize: 12, color: C.textDim }}>⏱ {session.estimated_duration_mins} min</span>
-        <span style={{ fontSize: 12, color: C.textDim }}>📅 {formatDate(session.created_at)}</span>
+        <span style={{ fontSize: 12, color: C.textDim }}>
+          ⏱ {session.estimated_duration_mins} min
+        </span>
+        <span style={{ fontSize: 12, color: C.textDim }}>
+          📅 {formatDate(session.created_at)}
+        </span>
       </div>
 
+      {/* Action */}
       {(isRunnable || isCompleted) && (
         <div style={{ marginTop: 4 }}>
           <button
@@ -235,18 +242,19 @@ function PatientPageInner() {
   const searchParams = useSearchParams();
   const patientId = searchParams.get("id");
 
-  const [status, setStatus]           = useState<"loading" | "ready" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState("");
-  const [patient, setPatient]         = useState<PatientRow | null>(null);
-  const [sessions, setSessions]       = useState<SessionRow[]>([]);
+  const [patient, setPatient] = useState<PatientRow | null>(null);
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
 
-  const supabase  = getSupabaseClient();
+  const supabase = getSupabaseClient();
   const loadedRef = useRef(false);
 
   useEffect(() => {
     if (loadedRef.current) return;
     loadedRef.current = true;
 
+    // No id param — show error immediately
     if (!patientId) {
       setErrorMessage("No patient ID was provided in the link.");
       setStatus("error");
@@ -255,8 +263,9 @@ function PatientPageInner() {
 
     async function load() {
       try {
+        // Fetch patient record
         const { data: pt, error: ptErr } = await supabase
-          .from("patients_mvp")
+          .from("patients")
           .select("id, full_name, patient_type, condition_notes, photo_url")
           .eq("id", patientId)
           .single();
@@ -269,8 +278,9 @@ function PatientPageInner() {
 
         setPatient(pt as PatientRow);
 
+        // Fetch all sessions assigned to this patient
         const { data: sess, error: sessErr } = await supabase
-          .from("session_prescriptions")
+          .from("sessions")
           .select("id, title, objective, status, estimated_duration_mins, created_at")
           .eq("patient_id", patientId)
           .order("created_at", { ascending: false });
@@ -295,6 +305,7 @@ function PatientPageInner() {
   if (status === "loading") return <LoadingScreen />;
   if (status === "error")   return <ErrorScreen message={errorMessage} />;
 
+  // Split sessions into active (pending/in_progress) and past (completed/missed/cancelled)
   const activeSessions = sessions.filter(s => s.status === "pending" || s.status === "in_progress");
   const pastSessions   = sessions.filter(s => s.status === "completed" || s.status === "missed" || s.status === "cancelled");
 
@@ -305,6 +316,7 @@ function PatientPageInner() {
       fontFamily: "'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif",
       color: C.text,
     }}>
+      {/* Top bar */}
       <div style={{
         borderBottom: `1px solid ${C.border}`,
         padding: "16px 32px",
@@ -315,9 +327,13 @@ function PatientPageInner() {
         <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>⚡ AI Physio</span>
       </div>
 
+      {/* Content */}
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "40px 24px" }}>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 36 }}>
+        {/* Patient header */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 16, marginBottom: 36,
+        }}>
           <PatientAvatar name={patient!.full_name} photoUrl={patient!.photo_url} />
           <div>
             <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>
@@ -329,10 +345,12 @@ function PatientPageInner() {
           </div>
         </div>
 
+        {/* Active sessions */}
         <div style={{ marginBottom: 40 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 14 }}>
             Your Sessions ({activeSessions.length})
           </div>
+
           {activeSessions.length === 0 ? (
             <div style={{
               background: C.surface, border: `1px solid ${C.border}`,
@@ -348,6 +366,7 @@ function PatientPageInner() {
           )}
         </div>
 
+        {/* Past sessions */}
         {pastSessions.length > 0 && (
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 14 }}>
