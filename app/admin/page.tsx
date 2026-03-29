@@ -1150,25 +1150,15 @@ export default function AdminPage() {
   const [physioName, setPhysioName] = useState<string | null>(null);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "INITIAL_SESSION") {
-        if (!session) {
-          window.location.href = "/login";
-          return;
-        }
-        supabase.from("profiles").select("full_name, role").eq("id", session.user.id).single()
-          .then(({ data }) => {
-            if (!data || !["physio", "clinic_admin", "super_admin"].includes(data.role)) {
-              window.location.href = "/login";
-              return;
-            }
-            setPhysioName(data.full_name);
-            setAuthChecked(true);
-          });
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        window.location.href = "/login";
+      } else {
+        setPhysioName(session.user.user_metadata?.full_name ?? session.user.email ?? "Physio");
+        setAuthChecked(true);
       }
     });
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
