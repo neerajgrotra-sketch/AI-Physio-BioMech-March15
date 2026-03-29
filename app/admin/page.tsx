@@ -41,7 +41,7 @@ interface SessionTemplateExercise {
 interface PrescribedSession {
   id: string; title: string; objective: string | null; patient_id: string | null;
   status: string; estimated_duration_mins: number; created_at: string;
-  source_template_id: string | null;
+  source_protocol_id: string | null;
   exercises: { display_name: string; reps: number; hold_ms: number; sequence_order: number; }[];
 }
 
@@ -292,12 +292,25 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
 
   useEffect(() => {
     async function load() {
-      const [{ data: res }, { data: pe }] = await Promise.all([
+      const [{ data: res }, { data: blocks }, { data: peOld }] = await Promise.all([
         supabase.from("session_results").select("*, exercise_results(*)").eq("prescription_id", prescriptionId).order("created_at", { ascending: false }).limit(1).single(),
+        supabase.from("session_blocks").select("sequence_order, session_block_exercises(sequence_order, exercise_templates(display_name))").eq("session_id", prescriptionId).order("sequence_order"),
         supabase.from("prescription_exercises").select("sequence_order, exercise_templates(display_name)").eq("prescription_id", prescriptionId).order("sequence_order"),
       ]);
       if (res) setResult(res as SessionResult);
-      if (pe) setPrescriptionExercises((pe as Record<string, unknown>[]).map(e => ({ sequence_order: e.sequence_order as number, display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Exercise" })));
+      const blockExercises = (blocks ?? []).flatMap((b: Record<string, unknown>) =>
+        ((b.session_block_exercises as Record<string, unknown>[]) ?? []).map(e => ({
+          sequence_order: e.sequence_order as number,
+          display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Exercise",
+        }))
+      );
+      const exercises = blockExercises.length > 0
+        ? blockExercises
+        : (peOld ?? []).map((e: Record<string, unknown>) => ({
+            sequence_order: e.sequence_order as number,
+            display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Exercise",
+          }));
+      setPrescriptionExercises(exercises);
       setLoading(false);
     }
     load();
@@ -451,16 +464,38 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
     if (!selectedTemplate) return;
     setSaving(true);
     try {
-      const { data: prescription, error: pErr } = await supabase
-        .from("session_prescriptions")
-        .insert({ title: selectedTemplate.title, objective: selectedTemplate.objective, patient_id: patient.id, physio_id: null, estimated_duration_mins: selectedTemplate.estimated_duration_mins, status: "pending", source_template_id: selectedTemplate.id })
+      // 1. Create the session row
+      const { data: session, error: sErr } = await supabase
+        .from("sessions")
+        .insert({
+          title: selectedTemplate.title,
+          objective: selectedTemplate.objective,
+          patient_id: patient.id,
+          physio_id: null,
+          estimated_duration_mins: selectedTemplate.estimated_duration_mins,
+          status: "pending",
+          source_protocol_id: selectedTemplate.id,
+        })
         .select().single();
-      if (pErr) throw pErr;
+      if (sErr) throw sErr;
 
-      const { error: eErr } = await supabase.from("prescription_exercises").insert(
+      // 2. Create session_block (one block for single-protocol assignment)
+      const { data: block, error: bErr } = await supabase
+        .from("session_blocks")
+        .insert({
+          session_id: session.id,
+          protocol_id: selectedTemplate.id,
+          sequence_order: 0,
+          rest_before_ms: 0,
+        })
+        .select().single();
+      if (bErr) throw bErr;
+
+      // 3. Create session_block_exercises with per-patient overrides
+      const { error: eErr } = await supabase.from("session_block_exercises").insert(
         selectedTemplate.exercises.map((ex, i) => ({
-          prescription_id: prescription.id,
-          template_id: ex.exercise_template_id,
+          session_block_id: block.id,
+          exercise_template_id: ex.exercise_template_id,
           sequence_order: i,
           reps_override: overrides[i]?.reps ?? null,
           hold_ms_override: overrides[i]?.hold_ms ?? null,
@@ -679,7 +714,7 @@ function PatientsTab({ showToast, prescriptions, templates, onRefresh }: { showT
 
   const loadPatients = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("patients_mvp").select("*").order("created_at", { ascending: false });
+    const { data } = await supabase.from("patients").select("*").order("created_at", { ascending: false });
     if (data) setPatients(data.map((p: Record<string, unknown>) => ({ id: p.id as string, first_name: (p.first_name as string) ?? "", last_name: (p.last_name as string) ?? "", full_name: (`${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || (p.full_name as string)) ?? "Unknown", patient_type: p.patient_type as string, condition_notes: p.condition_notes as string | null, goals: p.goals as string | null, date_of_birth: p.date_of_birth as string | null, height_cm: p.height_cm as number | null, weight_kg: p.weight_kg as number | null, photo_url: p.photo_url as string | null, created_at: p.created_at as string })));
     setLoading(false);
   }, [supabase]);
@@ -692,10 +727,10 @@ function PatientsTab({ showToast, prescriptions, templates, onRefresh }: { showT
     try {
       const payload = { first_name: form.first_name.trim(), last_name: form.last_name.trim(), full_name: `${form.first_name.trim()} ${form.last_name.trim()}`.trim(), patient_type: form.patient_type, date_of_birth: form.date_of_birth || null, condition_notes: form.condition_notes || null, goals: form.goals || null, height_cm: parseFloat(form.height_cm) || null, weight_kg: parseFloat(form.weight_kg) || null, photo_url: photoUrl ?? (mode === "edit" ? selectedPatient?.photo_url : null), consent_given_at: new Date().toISOString() };
       if (mode === "edit" && selectedPatient) {
-        const { error } = await supabase.from("patients_mvp").update(payload).eq("id", selectedPatient.id);
+        const { error } = await supabase.from("patients").update(payload).eq("id", selectedPatient.id);
         if (error) throw error; showToast("Patient updated.");
       } else {
-        const { error } = await supabase.from("patients_mvp").insert(payload);
+        const { error } = await supabase.from("patients").insert(payload);
         if (error) throw error; showToast(`Patient "${payload.full_name}" registered.`);
       }
       setMode("list"); setSelectedPatient(null); loadPatients();
@@ -711,7 +746,7 @@ function PatientsTab({ showToast, prescriptions, templates, onRefresh }: { showT
 
   const handleDelete = async (p: Patient) => {
     if (!confirm(`Delete patient "${p.full_name}"?`)) return;
-    await supabase.from("patients_mvp").delete().eq("id", p.id);
+    await supabase.from("patients").delete().eq("id", p.id);
     showToast("Patient deleted."); setViewingPatient(null); loadPatients();
   };
 
@@ -790,14 +825,14 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     setLoading(true);
     const [{ data: et }, { data: st }] = await Promise.all([
       supabase.from("exercise_templates").select("*").order("display_name"),
-      supabase.from("session_templates").select("*, session_template_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
     ]);
     if (et) { setExerciseTemplates(et); if (et.length > 0) setSelectedExTemplateId(et[0].id); }
     if (st) setSavedTemplates(st.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null,
       estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [],
       created_at: t.created_at as string,
-      exercises: ((t.session_template_exercises as Record<string, unknown>[]) ?? []).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({
+      exercises: ((t.protocol_exercises as Record<string, unknown>[]) ?? []).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({
         id: e.id as string, template_id: e.template_id as string, exercise_template_id: e.exercise_template_id as string,
         sequence_order: e.sequence_order as number, default_reps: e.default_reps as number | null, default_hold_ms: e.default_hold_ms as number | null,
         exercise_template: e.exercise_templates as SessionTemplateExercise["exercise_template"],
@@ -828,10 +863,10 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     if (exercises.length === 0) { showToast("Add at least one exercise.", false); return; }
     setSaving(true);
     try {
-      const { data: tmpl, error: tErr } = await supabase.from("session_templates").insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).select().single();
+      const { data: tmpl, error: tErr } = await supabase.from("protocols").insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).select().single();
       if (tErr) throw tErr;
-      const { error: eErr } = await supabase.from("session_template_exercises").insert(
-        exercises.map((e, i) => ({ template_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
+      const { error: eErr } = await supabase.from("protocol_exercises").insert(
+        exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
       );
       if (eErr) throw eErr;
       showToast("Template saved.");
@@ -843,8 +878,8 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
 
   const deleteTemplate = async (id: string) => {
     if (!confirm("Delete this template?")) return;
-    await supabase.from("session_template_exercises").delete().eq("template_id", id);
-    await supabase.from("session_templates").delete().eq("id", id);
+    await supabase.from("protocol_exercises").delete().eq("protocol_id", id);
+    await supabase.from("protocols").delete().eq("id", id);
     showToast("Template deleted."); loadData();
   };
 
@@ -1114,16 +1149,16 @@ export default function AdminPage() {
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("session_prescriptions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
-      supabase.from("session_templates").select("*, session_template_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
+      supabase.from("sessions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
       const pe = (s.prescription_exercises as Record<string, unknown>[]) ?? [];
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_template_id: s.source_template_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
-      exercises: ((t.session_template_exercises as Record<string, unknown>[]) ?? []).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ id: e.id as string, template_id: e.template_id as string, exercise_template_id: e.exercise_template_id as string, sequence_order: e.sequence_order as number, default_reps: e.default_reps as number | null, default_hold_ms: e.default_hold_ms as number | null, exercise_template: e.exercise_templates as SessionTemplateExercise["exercise_template"] })),
+      exercises: ((t.protocol_exercises as Record<string, unknown>[]) ?? []).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ id: e.id as string, template_id: e.template_id as string, exercise_template_id: e.exercise_template_id as string, sequence_order: e.sequence_order as number, default_reps: e.default_reps as number | null, default_hold_ms: e.default_hold_ms as number | null, exercise_template: e.exercise_templates as SessionTemplateExercise["exercise_template"] })),
     })));
   }, [supabase]);
 
