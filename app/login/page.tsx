@@ -1,9 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { getSupabaseClient } from '@/lib/supabase/client'
-import { Suspense } from 'react'
+import { useState, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 
 const C = {
   bg: '#0d1117', surface: '#161b22', surfaceHover: '#1c2230',
@@ -14,7 +13,6 @@ const C = {
 }
 
 function LoginForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get('redirectTo') ?? '/admin'
 
@@ -25,31 +23,25 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-import { createBrowserClient } from '@supabase/ssr'
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
- const handleSignIn = async () => {
-  setLoading(true)
-  setError(null)
-  
-  console.log('1. Starting sign in...')
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-  console.log('2. Sign in response:', { data, error })
-  
-  if (error) {
-    console.log('3. Error path:', error.message)
-    setError(error.message)
-    setLoading(false)
-    return
+  const handleSignIn = async () => {
+    setLoading(true)
+    setError(null)
+    console.log('1. Starting sign in...')
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    console.log('2. Sign in response:', { data, error })
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+    } else {
+      console.log('3. Success - navigating to', redirectTo)
+      window.location.href = redirectTo
+    }
   }
-
-  console.log('4. Success path - session:', data.session?.access_token ? 'EXISTS' : 'NULL')
-  setError('DEBUG: Sign in succeeded. Check console.')
-  setLoading(false)
-}
 
   const handleRegister = async () => {
     if (!fullName.trim()) { setError('Full name is required'); return }
@@ -71,7 +63,7 @@ const supabase = createBrowserClient(
       setError(error.message)
       setLoading(false)
     } else {
-      window.location.href = redirectTo ?? '/admin'
+      window.location.href = redirectTo
     }
   }
 
@@ -96,17 +88,13 @@ const supabase = createBrowserClient(
         width: '100%', maxWidth: 400, background: C.surface,
         border: `1px solid ${C.border}`, borderRadius: 12, padding: 32,
       }}>
-        {/* Logo / title */}
         <div style={{ marginBottom: 28, textAlign: 'center' }}>
-          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 4 }}>
-            AI Physio BioMech
-          </div>
+          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 4 }}>AI Physio BioMech</div>
           <div style={{ fontSize: 22, fontWeight: 600, color: C.text }}>
             {mode === 'signin' ? 'Sign in' : 'Create account'}
           </div>
         </div>
 
-        {/* Mode toggle */}
         <div style={{
           display: 'flex', background: C.bg, borderRadius: 8,
           padding: 3, marginBottom: 24, gap: 3,
@@ -124,7 +112,6 @@ const supabase = createBrowserClient(
           ))}
         </div>
 
-        {/* Fields */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {mode === 'register' && (
             <div>
@@ -138,7 +125,6 @@ const supabase = createBrowserClient(
               />
             </div>
           )}
-
           <div>
             <label style={labelStyle}>Email</label>
             <input
@@ -149,7 +135,6 @@ const supabase = createBrowserClient(
               onBlur={e => e.target.style.borderColor = C.border}
             />
           </div>
-
           <div>
             <label style={labelStyle}>Password</label>
             <input
@@ -162,7 +147,6 @@ const supabase = createBrowserClient(
           </div>
         </div>
 
-        {/* Error */}
         {error && (
           <div style={{
             marginTop: 16, padding: '10px 14px', borderRadius: 6,
@@ -173,7 +157,6 @@ const supabase = createBrowserClient(
           </div>
         )}
 
-        {/* Submit */}
         <button
           onClick={mode === 'signin' ? handleSignIn : handleRegister}
           disabled={loading || !email || !password}
