@@ -1150,7 +1150,12 @@ export default function AdminPage() {
   const [physioName, setPhysioName] = useState<string | null>(null);
 
   useEffect(() => {
+    const timeout = setTimeout(() => {
+      window.location.href = "/login";
+    }, 3000);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(timeout);
       if (!session) {
         window.location.href = "/login";
         return;
