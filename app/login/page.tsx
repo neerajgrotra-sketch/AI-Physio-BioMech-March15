@@ -28,17 +28,20 @@ function LoginForm() {
   const supabase = getSupabaseClient()
 
   const handleSignIn = async () => {
-  setLoading(true)
-  setError(null)
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-  console.log('signIn result:', { data, error })
-  if (error) {
-    setError(error.message)
-    setLoading(false)
-  } else {
-    window.location.href = redirectTo ?? '/admin'
+    setLoading(true)
+    setError(null)
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+    } else {
+      supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          window.location.href = redirectTo ?? '/admin'
+        }
+      })
+    }
   }
-}
 
   const handleRegister = async () => {
     if (!fullName.trim()) { setError('Full name is required'); return }
