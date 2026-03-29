@@ -432,7 +432,7 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
   );
 }
 
-// ─── Assign Session Flow (inside Patient Profile) ─────────────────────────────
+// ─── Assign Protocol Flow (inside Patient Profile) ────────────────────────────
 
 function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patient: Patient; templates: SessionTemplate[]; onAssign: () => void; onCancel: () => void; }) {
   const supabase = getSupabaseClient();
@@ -514,7 +514,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
   if (step === "pick") return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Assign Session to {patient.full_name}</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Assign Protocol to {patient.full_name}</div>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 18, cursor: "pointer" }}>✕</button>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -573,7 +573,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
           </div>
         ))}
       </div>
-      <Btn onClick={assign} variant="primary" disabled={saving} fullWidth>{saving ? "Assigning…" : `Assign to ${patient.full_name}`}</Btn>
+      <Btn onClick={assign} variant="primary" disabled={saving} fullWidth>{saving ? "Assigning…" : `Assign Protocol to ${patient.full_name}`}</Btn>
     </div>
   );
 }
@@ -656,9 +656,9 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
 
               {/* Sessions */}
               <div>
-                <SectionHeader title={`Sessions (${patientSessions.length})`} action={<Btn onClick={() => setAssigning(true)} variant="primary" small>+ Assign Session</Btn>} />
+                <SectionHeader title={`Sessions (${patientSessions.length})`} action={<Btn onClick={() => setAssigning(true)} variant="primary" small>+ Assign Protocol</Btn>} />
                 {patientSessions.length === 0 ? (
-                  <div style={{ fontSize: 13, color: C.textDim, padding: "16px 0", textAlign: "center" }}>No sessions assigned yet. Click "+ Assign Session" to add one.</div>
+                  <div style={{ fontSize: 13, color: C.textDim, padding: "16px 0", textAlign: "center" }}>No sessions assigned yet. Click "+ Assign Protocol" to add one.</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {patientSessions.map(s => (
