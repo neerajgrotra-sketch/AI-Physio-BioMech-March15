@@ -28,16 +28,18 @@ function LoginForm() {
   const supabase = getSupabaseClient()
 
   const handleSignIn = async () => {
-    setLoading(true)
-    setError(null)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setError(error.message)
-      setLoading(false)
-    } else {
-      router.push(redirectTo)
-    }
+  setLoading(true)
+  setError(null)
+  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) {
+    setError(error.message)
+    setLoading(false)
+  } else {
+    // Hard navigate instead of router.push — forces full page reload
+    // so middleware picks up the fresh session cookie
+    window.location.href = redirectTo ?? '/admin'
   }
+}
 
   const handleRegister = async () => {
     if (!fullName.trim()) { setError('Full name is required'); return }
