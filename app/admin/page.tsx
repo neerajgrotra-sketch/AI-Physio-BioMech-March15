@@ -1145,6 +1145,23 @@ export default function AdminPage() {
   const [allPrescriptions, setAllPrescriptions] = useState<PrescribedSession[]>([]);
   const [allTemplates, setAllTemplates] = useState<SessionTemplate[]>([]);
 
+  // ─── Auth ────────────────────────────────────────────────────────────────────
+  const [physioName, setPhysioName] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        supabase.from("profiles").select("full_name").eq("id", user.id).single()
+          .then(({ data }) => setPhysioName(data?.full_name ?? user.email ?? null));
+      }
+    });
+  }, [supabase]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  };
+
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
   const loadShared = useCallback(async () => {
@@ -1173,19 +1190,39 @@ export default function AdminPage() {
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 56, position: "sticky", top: 0, background: C.bg, zIndex: 50 }}>
+
+        {/* Left: logo + tabs */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 32 }}>
           <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚡</div>
           <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>AI Physio</span>
           <span style={{ color: C.border, fontSize: 16, margin: "0 4px" }}>|</span>
           <span style={{ fontSize: 14, color: C.textMuted }}>Admin</span>
         </div>
-        <div style={{ display: "flex", gap: 2 }}>
+        <div style={{ display: "flex", gap: 2, flex: 1 }}>
           {tabs.map(({ key, label, icon }) => (
             <button key={key} onClick={() => { setActiveTab(key); loadShared(); }} style={{ background: activeTab === key ? C.surfaceHover : "transparent", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "0 16px", height: 56, color: activeTab === key ? C.text : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 7, transition: "all 0.15s" }}>
               <span>{icon}</span> {label}
             </button>
           ))}
         </div>
+
+        {/* Right: physio badge + logout */}
+        {physioName && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: "5px 12px 5px 8px" }}>
+              <div style={{ width: 22, height: 22, borderRadius: "50%", background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                {physioName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+              </div>
+              <span style={{ fontSize: 12, color: C.text, fontWeight: 500, whiteSpace: "nowrap" }}>{physioName}</span>
+            </div>
+            <button onClick={handleLogout} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 10px", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+              onMouseEnter={e => { (e.target as HTMLButtonElement).style.borderColor = C.red; (e.target as HTMLButtonElement).style.color = C.red; }}
+              onMouseLeave={e => { (e.target as HTMLButtonElement).style.borderColor = C.border; (e.target as HTMLButtonElement).style.color = C.textMuted; }}
+            >
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px" }}>
