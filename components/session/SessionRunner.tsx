@@ -221,22 +221,213 @@ const LOG_COLORS: Record<LogLevel, { bg: string; color: string; label: string }>
 };
 
 // ============================================================
+// REST SCREEN OVERLAY
+// ============================================================
+// Shown between protocol blocks. Counts down and auto-advances.
+
+function RestScreenOverlay({ restMs, onDone }: { restMs: number; onDone: () => void }) {
+  const [remaining, setRemaining] = useState(Math.ceil(restMs / 1000));
+
+  useEffect(() => {
+    if (remaining <= 0) { onDone(); return; }
+    const t = window.setTimeout(() => setRemaining(r => r - 1), 1000);
+    return () => clearTimeout(t);
+  }, [remaining, onDone]);
+
+  const pct = Math.max(0, remaining / Math.ceil(restMs / 1000));
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(13,17,23,0.97)",
+      zIndex: 500, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", gap: 24,
+      fontFamily: "system-ui, sans-serif",
+    }}>
+      <div style={{ fontSize: 13, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
+        Rest Period
+      </div>
+      {/* Countdown ring */}
+      <div style={{ position: "relative", width: 160, height: 160 }}>
+        <svg width="160" height="160" style={{ transform: "rotate(-90deg)" }}>
+          <circle cx="80" cy="80" r="70" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" />
+          <circle cx="80" cy="80" r="70" fill="none" stroke="#7cc6ff" strokeWidth="8"
+            strokeDasharray={`${2 * Math.PI * 70}`}
+            strokeDashoffset={`${2 * Math.PI * 70 * (1 - pct)}`}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dashoffset 1s linear" }}
+          />
+        </svg>
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{ fontSize: 48, fontWeight: 800, color: "white", lineHeight: 1 }}>{remaining}</div>
+          <div style={{ fontSize: 12, color: "#7d8590", marginTop: 4 }}>seconds</div>
+        </div>
+      </div>
+      <div style={{ fontSize: 15, color: "#e6edf3", fontWeight: 500 }}>
+        Next exercise coming up…
+      </div>
+      <button
+        onClick={onDone}
+        style={{
+          marginTop: 8, padding: "10px 28px",
+          background: "rgba(56,139,253,0.12)", color: "#388bfd",
+          border: "1px solid rgba(56,139,253,0.3)", borderRadius: 8,
+          fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+        }}
+      >
+        Skip Rest →
+      </button>
+    </div>
+  );
+}
+
+// ============================================================
+// POST-SESSION SUMMARY OVERLAY
+// ============================================================
+// Shown when all exercises complete. AI summary + mobility score.
+
+function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone }: {
+  summary: {
+    mobilityScore: number;
+    durationMs: number;
+    aiSummary: string;
+    exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
+  };
+  patientName?: string;
+  sessionTitle?: string;
+  onDone: () => void;
+}) {
+  const scoreColor = summary.mobilityScore >= 80 ? "#3fb950" : summary.mobilityScore >= 60 ? "#d29922" : "#f85149";
+  const mins = Math.floor(summary.durationMs / 60000);
+  const secs = Math.floor((summary.durationMs % 60000) / 1000);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(13,17,23,0.98)",
+      zIndex: 500, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "flex-start",
+      overflowY: "auto", padding: "48px 24px",
+      fontFamily: "system-ui, sans-serif",
+    }}>
+      <div style={{ width: "100%", maxWidth: 520, display: "flex", flexDirection: "column", gap: 24 }}>
+
+        {/* Header */}
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#e6edf3", marginBottom: 6 }}>
+            Session Complete{patientName ? `, ${patientName.split(" ")[0]}!` : "!"}
+          </div>
+          {sessionTitle && (
+            <div style={{ fontSize: 14, color: "#7d8590" }}>{sessionTitle}</div>
+          )}
+        </div>
+
+        {/* Mobility score */}
+        <div style={{
+          background: scoreColor + "12", border: `1px solid ${scoreColor}40`,
+          borderRadius: 16, padding: "28px", textAlign: "center",
+        }}>
+          <div style={{ fontSize: 12, color: "#7d8590", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+            Mobility Score
+          </div>
+          <div style={{ fontSize: 80, fontWeight: 800, color: scoreColor, lineHeight: 1, marginBottom: 4 }}>
+            {summary.mobilityScore}
+          </div>
+          <div style={{ fontSize: 14, color: "#7d8590" }}>out of 100</div>
+          <div style={{ fontSize: 13, color: "#484f58", marginTop: 12 }}>
+            Duration: {mins}m {secs}s · {summary.exerciseResults.length} exercise{summary.exerciseResults.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+
+        {/* AI Summary */}
+        <div style={{
+          background: "#161b22", border: "1px solid #21262d",
+          borderRadius: 12, padding: "20px",
+        }}>
+          <div style={{ fontSize: 11, color: "#7d8590", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10, fontWeight: 700 }}>
+            Your Coach Says
+          </div>
+          <div style={{ fontSize: 15, color: "#e6edf3", lineHeight: 1.7 }}>
+            {summary.aiSummary}
+          </div>
+        </div>
+
+        {/* Exercise breakdown */}
+        <div>
+          <div style={{ fontSize: 11, color: "#7d8590", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12, fontWeight: 700 }}>
+            Exercise Breakdown
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {summary.exerciseResults.map((ex, i) => {
+              const pct = ex.prescribed > 0 ? Math.round(ex.successful / ex.prescribed * 100) : 0;
+              const exColor = pct >= 80 ? "#3fb950" : pct >= 60 ? "#d29922" : "#f85149";
+              return (
+                <div key={i} style={{
+                  background: "#161b22", border: "1px solid #21262d",
+                  borderRadius: 10, padding: "12px 16px",
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: exColor + "20", color: exColor,
+                      fontSize: 12, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>{i + 1}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3" }}>{ex.name}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 12, color: "#7d8590" }}>
+                      {ex.successful}/{ex.prescribed} reps
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: exColor }}>{pct}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Done button */}
+        <button
+          onClick={onDone}
+          style={{
+            padding: "14px 0", width: "100%",
+            background: "#3fb950", color: "#0d1117",
+            border: "none", borderRadius: 10,
+            fontSize: 16, fontWeight: 800, cursor: "pointer",
+            fontFamily: "inherit", letterSpacing: 0.3,
+          }}
+        >
+          Done ✓
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // SESSION RUNNER
 // ============================================================
 
 interface SessionRunnerProps {
   prescriptionQueue?: import("@/lib/types/exercise").ExercisePrescription[];
+  /** Rest periods between protocol blocks. afterIndex = last exercise index before rest. */
+  restBoundaries?: { afterIndex: number; restMs: number }[];
   sessionTitle?: string;
   initialPatientProfile?: import("@/lib/patient/patientTypes").PatientProfile;
-  /** Supabase UUID of the session_prescription — used to write results and update status */
+  /** Supabase UUID of the session — used to write results and update status */
   prescriptionId?: string;
-  /** Supabase UUID of the patient in patients_mvp — written to session_results */
+  /** Supabase UUID of the patient in patients — written to session_results */
   patientId?: string;
   /** Registered patient full name — shown in pre-session card and coaching panel */
   patientName?: string;
 }
 
-export default function SessionRunner({ prescriptionQueue, sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -262,6 +453,15 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
+  // Rest screen state — shown between protocol blocks
+  const [restScreen, setRestScreen] = useState<{ restMs: number; onDone: () => void } | null>(null);
+  // Post-session summary state — shown when all exercises complete
+  const [sessionSummary, setSessionSummary] = useState<{
+    mobilityScore: number;
+    exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
+    aiSummary: string;
+    durationMs: number;
+  } | null>(null);
 
   useEffect(() => {
     globalSetDebugLog = setDebugLog;
@@ -470,35 +670,48 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
       coachingBrain.onExerciseCompleting({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs: Date.now() });
     }
     patientContext.completeExercise();
+
+    // Check if there's a rest boundary after the current exercise index
+    const currentIndex = sessionQueue.queueIndex;
+    const boundary = restBoundaries.find(b => b.afterIndex === currentIndex);
+
     sessionQueue.advanceQueue(
       (nextItem: QueueItem, nextIndex: number) => {
         writeDebugLog("info", "SESSION", "Advancing to: " + nextItem.displayName);
         inferenceLoop.resetTrackingState();
-        framingIntelligence.reset("Position yourself for the next exercise.");
-        patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
-        framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
-        // Fire exercise started coaching for the new exercise
-        // Wait for exercise_completing speech to finish if it's still speaking
-        // This prevents the next exercise intro from cutting off the completion summary
-        const waitForSpeech = () => {
-          if (window.speechSynthesis?.speaking) {
-            window.setTimeout(waitForSpeech, 300);
-          } else {
-            // Add a brief natural pause after speech ends
-            window.setTimeout(() => {
-              stableCoachingCallbacks.onExerciseStarted(Date.now());
-            }, 600);
-          }
+
+        const startNextExercise = () => {
+          framingIntelligence.reset("Position yourself for the next exercise.");
+          patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
+          framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
+          const waitForSpeech = () => {
+            if (window.speechSynthesis?.speaking) {
+              window.setTimeout(waitForSpeech, 300);
+            } else {
+              window.setTimeout(() => {
+                stableCoachingCallbacks.onExerciseStarted(Date.now());
+              }, 600);
+            }
+          };
+          window.setTimeout(waitForSpeech, 300);
         };
-        // Start checking after a minimum delay for state to settle
-        window.setTimeout(waitForSpeech, 300);
+
+        // If there's a rest period before this next block, show rest screen first
+        if (boundary) {
+          writeDebugLog("info", "SESSION", `Rest screen: ${boundary.restMs}ms before next block`);
+          // Stop speech before rest
+          window.speechSynthesis?.cancel();
+          setRestScreen({ restMs: boundary.restMs, onDone: startNextExercise });
+        } else {
+          startNextExercise();
+        }
       },
       () => {
         writeDebugLog("success", "SESSION", "All exercises complete");
         writeSessionResults();
       }
     );
-  }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence]);
+  }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence, restBoundaries]);
 
   // ============================================================
   // SESSION RESULTS WRITER
@@ -524,8 +737,6 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
       ? Date.now() - sessionStartedAtMsRef.current
       : summary.totalDurationMs;
 
-    // Compute mobility score (0–100):
-    // weighted average of rep completion rate (60%) + hold compliance (40%)
     const allEx = summary.exercises;
     const repCompletionRate = allEx.length > 0
       ? allEx.reduce((sum, ex) => sum + (ex.repTarget > 0 ? ex.successfulReps / ex.repTarget : 0), 0) / allEx.length
@@ -534,8 +745,48 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
 
     writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}`);
 
+    // Generate AI summary for the patient
+    let aiSummary = "Great work completing your session!";
     try {
-      // 1. Insert session_results row
+      const exerciseSummaryText = allEx.map(ex =>
+        `${ex.exerciseName}: ${ex.successfulReps}/${ex.repTarget} reps completed`
+      ).join(", ");
+      const summaryPrompt = `You are a warm, encouraging physiotherapy coach. The patient just completed their session. Write a 2-3 sentence summary for the patient (not the physio) that is warm, specific, and motivating. Mention their mobility score and any highlights. Keep it conversational and human — no bullet points, no medical jargon.
+
+Session data:
+- Mobility score: ${mobilityScore}/100
+- Duration: ${Math.round(durationMs / 60000)} minutes
+- Exercises: ${exerciseSummaryText}
+- Patient type: ${patientProfile.type.replace(/_/g, " ")}
+
+Reply with only the summary text, no JSON, no formatting.`;
+
+      const res = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: summaryPrompt, system: "You are a warm physiotherapy coach. Reply with only the summary text requested — no JSON, no formatting, no preamble." }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.text) aiSummary = d.text;
+      }
+    } catch { /* use default */ }
+
+    // Show post-session summary overlay immediately
+    setSessionSummary({
+      mobilityScore,
+      durationMs,
+      aiSummary,
+      exerciseResults: allEx.map(ex => ({
+        name: ex.exerciseName,
+        successful: ex.successfulReps,
+        prescribed: ex.repTarget,
+        failed: ex.failedReps,
+      })),
+    });
+
+    // Write to Supabase in background (don't block summary display)
+    try {
       const { data: sessionResult, error: sessionErr } = await supabase
         .from("session_results")
         .insert({
@@ -545,7 +796,7 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
           completed_at: completedAt,
           duration_ms: durationMs,
           mobility_score: mobilityScore,
-          claude_summary: null,  // future: generate via AI
+          claude_summary: aiSummary,
           physio_reviewed: false,
         })
         .select("id")
@@ -559,56 +810,49 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
       const sessionResultId = sessionResult.id;
       writeDebugLog("success", "RESULTS", "session_results written", `id=${sessionResultId}`);
 
-      // 2. Insert exercise_results rows
       const queue = sessionQueue.getActiveQueue();
       const exerciseRows = allEx.map((ex, i) => {
         const queueItem = queue[i];
         const repTarget = ex.repTarget;
         const attempted = ex.successfulReps + ex.failedReps;
         const holdCompliance = repTarget > 0 ? ex.successfulReps / repTarget : null;
-
         return {
           session_result_id: sessionResultId,
-          template_id: null,           // future: map exercise id → template uuid
-          prescription_exercise_id: null, // future: include in prescriptionQueue items
+          template_id: null,
+          prescription_exercise_id: null,
           sequence_order: i,
           reps_prescribed: repTarget,
           reps_attempted: attempted,
           reps_successful: ex.successfulReps,
           reps_failed: ex.failedReps,
           hold_compliance_rate: holdCompliance,
-          avg_hold_ms: null,            // future: track per-rep hold durations
-          avg_metric_degrees: null,     // future: average from movement timeline
+          avg_hold_ms: null,
+          avg_metric_degrees: null,
           target_metric_degrees: queueItem?.prescription.target?.targetValue ?? null,
           failed_hold_count: ex.failureReasons.hold,
           failed_height_count: ex.failureReasons.height,
           failed_balance_count: ex.failureReasons.balance,
           failed_isolation_count: ex.failureReasons.isolation,
-          movement_timeline: null,      // future: pass from movementTimeline store
+          movement_timeline: null,
         };
       });
 
-      const { error: exErr } = await supabase
-        .from("exercise_results")
-        .insert(exerciseRows);
-
+      const { error: exErr } = await supabase.from("exercise_results").insert(exerciseRows);
       if (exErr) {
         writeDebugLog("error", "RESULTS", "Failed to insert exercise_results", exErr.message);
       } else {
         writeDebugLog("success", "RESULTS", `exercise_results written — ${exerciseRows.length} rows`);
       }
 
-      // 3. Update prescription status → completed
       if (prescriptionId) {
         const { error: statusErr } = await supabase
-          .from("session_prescriptions")
+          .from("sessions")
           .update({ status: "completed" })
           .eq("id", prescriptionId);
-
         if (statusErr) {
-          writeDebugLog("error", "RESULTS", "Failed to update prescription status", statusErr.message);
+          writeDebugLog("error", "RESULTS", "Failed to update session status", statusErr.message);
         } else {
-          writeDebugLog("success", "RESULTS", "Prescription status → completed");
+          writeDebugLog("success", "RESULTS", "Session status → completed");
         }
       }
 
@@ -1165,6 +1409,29 @@ export default function SessionRunner({ prescriptionQueue, sessionTitle, initial
           </div>
         )}
       </div>
+
+      {/* ── REST SCREEN OVERLAY ── */}
+      {restScreen && (
+        <RestScreenOverlay
+          restMs={restScreen.restMs}
+          onDone={() => { setRestScreen(null); restScreen.onDone(); }}
+        />
+      )}
+
+      {/* ── POST-SESSION SUMMARY OVERLAY ── */}
+      {sessionSummary && (
+        <SessionSummaryOverlay
+          summary={sessionSummary}
+          patientName={patientName}
+          sessionTitle={sessionTitle}
+          onDone={() => {
+            setSessionSummary(null);
+            if (prescriptionId) {
+              window.location.href = `/patient?id=${patientId ?? ""}`;
+            }
+          }}
+        />
+      )}
 
       {/* ── MOVEMENT TIMELINE ── */}
       <MovementTimelinePanel defaultOpen={true} />
