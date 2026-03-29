@@ -183,17 +183,34 @@ coaching,
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// Used for backward-compat sessions (pre-module-8) that use prescription_exercises
 interface SupabasePrescriptionExercise {
   sequence_order: number;
   reps_override: number | null;
   hold_ms_override: number | null;
   exercise_templates: {
-    name: string;
-    display_name: string;
-    default_reps: number;
-    default_hold_ms: number;
+    name: string; display_name: string;
+    default_reps: number; default_hold_ms: number;
     coaching_strings: Record<string, unknown>;
   } | null;
+}
+
+// Used for new sessions (module 8+) that use session_blocks → session_block_exercises
+interface SupabaseSessionBlock {
+  id: string;
+  sequence_order: number;
+  rest_before_ms: number;
+  title_override: string | null;
+  session_block_exercises: {
+    sequence_order: number;
+    reps_override: number | null;
+    hold_ms_override: number | null;
+    exercise_templates: {
+      name: string; display_name: string;
+      default_reps: number; default_hold_ms: number;
+      coaching_strings: Record<string, unknown>;
+    } | null;
+  }[];
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
@@ -259,6 +276,8 @@ function SessionPageInner() {
   const [errorMessage, setErrorMessage] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [prescriptions, setPrescriptions] = useState<ExercisePrescription[]>([]);
+  // restBoundaries: index in prescriptions[] where a new block starts, with rest duration
+  const [restBoundaries, setRestBoundaries] = useState<{ afterIndex: number; restMs: number }[]>([]);
   const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(undefined);
   const [patientName, setPatientName] = useState<string | undefined>(undefined);
   const [patientId, setPatientId] = useState<string | undefined>(undefined);
@@ -278,14 +297,32 @@ function SessionPageInner() {
 
     async function load() {
       try {
-        // Fetch the prescription + its exercises from Supabase
+        // Fetch the session + blocks (new) or prescription_exercises (backward compat)
         const { data, error } = await supabase
-          .from("session_prescriptions")
+          .from("sessions")
           .select(`
             id,
             title,
             objective,
             patient_id,
+            session_blocks (
+              id,
+              sequence_order,
+              rest_before_ms,
+              title_override,
+              session_block_exercises (
+                sequence_order,
+                reps_override,
+                hold_ms_override,
+                exercise_templates (
+                  name,
+                  display_name,
+                  default_reps,
+                  default_hold_ms,
+                  coaching_strings
+                )
+              )
+            ),
             prescription_exercises (
               sequence_order,
               reps_override,
@@ -304,7 +341,7 @@ function SessionPageInner() {
 
         if (error || !data) {
           setErrorMessage(
-            error?.message ?? "Prescription not found. It may have been deleted."
+            error?.message ?? "Session not found. It may have been deleted."
           );
           setStatus("error");
           return;
@@ -312,13 +349,11 @@ function SessionPageInner() {
 
         setSessionTitle(data.title);
 
-        // Fetch the patient linked to this prescription so coaching
-        // brain gets the real registered patient type — not the manual
-        // selector default.
+        // Fetch patient record
         if (data.patient_id) {
           setPatientId(data.patient_id);
           const { data: pt } = await supabase
-            .from("patients_mvp")
+            .from("patients")
             .select("full_name, patient_type, condition_notes")
             .eq("id", data.patient_id)
             .single();
@@ -342,49 +377,68 @@ function SessionPageInner() {
           }
         }
 
-        // Sort exercises by sequence order
-        const exercises: SupabasePrescriptionExercise[] = (
-          (data.prescription_exercises as unknown as SupabasePrescriptionExercise[]) ?? []
-        ).sort((a, b) => a.sequence_order - b.sequence_order);
-
-        if (exercises.length === 0) {
-          setErrorMessage("This session has no exercises assigned. Add exercises in the Session Builder.");
-          setStatus("error");
-          return;
-        }
-
-        // Map each exercise to an ExercisePrescription
         const mapped: ExercisePrescription[] = [];
-        for (const ex of exercises) {
-          const tmpl = ex.exercise_templates;
-          if (!tmpl) continue;
+        const boundaries: { afterIndex: number; restMs: number }[] = [];
 
-          const reps = ex.reps_override ?? tmpl.default_reps;
-          const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-          const prescription = buildPrescription(tmpl.name, reps, holdMs, tmpl.coaching_strings);
+        // ── New path: session_blocks → session_block_exercises ──────────────
+        const blocks = (data.session_blocks as unknown as SupabaseSessionBlock[] | null) ?? [];
+        const sortedBlocks = [...blocks].sort((a, b) => a.sequence_order - b.sequence_order);
 
-          if (prescription) {
-            // Apply per-session coaching strings from Supabase
-            mapped.push(prescription);
+        if (sortedBlocks.length > 0) {
+          for (const block of sortedBlocks) {
+            const blockStart = mapped.length;
+
+            // Record rest boundary before this block (except block 0)
+            if (block.sequence_order > 0 && block.rest_before_ms > 0) {
+              boundaries.push({ afterIndex: blockStart - 1, restMs: block.rest_before_ms });
+            }
+
+            const blockExercises = [...block.session_block_exercises]
+              .sort((a, b) => a.sequence_order - b.sequence_order);
+
+            for (const ex of blockExercises) {
+              const tmpl = ex.exercise_templates;
+              if (!tmpl) continue;
+              const reps = ex.reps_override ?? tmpl.default_reps;
+              const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
+              const prescription = buildPrescription(tmpl.name, reps, holdMs, tmpl.coaching_strings);
+              if (prescription) mapped.push(prescription);
+            }
+          }
+        } else {
+          // ── Backward compat: flat prescription_exercises (pre-module-8) ───
+          const exercises: SupabasePrescriptionExercise[] = (
+            (data.prescription_exercises as unknown as SupabasePrescriptionExercise[]) ?? []
+          ).sort((a, b) => a.sequence_order - b.sequence_order);
+
+          for (const ex of exercises) {
+            const tmpl = ex.exercise_templates;
+            if (!tmpl) continue;
+            const reps = ex.reps_override ?? tmpl.default_reps;
+            const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
+            const prescription = buildPrescription(tmpl.name, reps, holdMs, tmpl.coaching_strings);
+            if (prescription) mapped.push(prescription);
           }
         }
 
         if (mapped.length === 0) {
           setErrorMessage(
             "None of the exercises in this session could be loaded. " +
-            "Make sure the exercise template names match: right-arm-raise, left-arm-raise, both-arm-raise, sit-to-stand."
+            "Make sure exercise names match: right-arm-raise, left-arm-raise, both-arm-raise, sit-to-stand."
           );
           setStatus("error");
           return;
         }
 
         setPrescriptions(mapped);
+        setRestBoundaries(boundaries);
         setStatus("ready");
       } catch (err: unknown) {
         setErrorMessage(err instanceof Error ? err.message : "Unknown error loading session.");
         setStatus("error");
       }
     }
+
 
     load();
   }, [prescriptionId, supabase]);
@@ -402,10 +456,11 @@ function SessionPageInner() {
     return <ErrorScreen message={errorMessage} prescriptionId={prescriptionId} />;
   }
 
-  // Prescription loaded — render SessionRunner with injected queue
+  // Session loaded — render SessionRunner with injected queue and rest boundaries
   return (
     <SessionRunner
       prescriptionQueue={prescriptions}
+      restBoundaries={restBoundaries}
       sessionTitle={sessionTitle}
       initialPatientProfile={patientProfile}
       patientName={patientName}
