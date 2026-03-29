@@ -2,6 +2,7 @@ import "./globals.css";
 import React from "react";
 import { PrescriptionLibraryProvider } from "@/components/providers/PrescriptionLibraryProvider";
 import { SessionLibraryProvider } from "@/components/providers/SessionLibraryProvider";
+import { AuthProvider } from "@/components/providers/AuthProvider";
 
 export const metadata = {
   title: "AI Physio BioMech",
@@ -16,9 +17,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <PrescriptionLibraryProvider>
-          <SessionLibraryProvider>{children}</SessionLibraryProvider>
-        </PrescriptionLibraryProvider>
+        <AuthProvider>
+          <PrescriptionLibraryProvider>
+            <SessionLibraryProvider>{children}</SessionLibraryProvider>
+          </PrescriptionLibraryProvider>
+        </AuthProvider>
       </body>
     </html>
   );
