@@ -1145,15 +1145,25 @@ export default function AdminPage() {
   const [allPrescriptions, setAllPrescriptions] = useState<PrescribedSession[]>([]);
   const [allTemplates, setAllTemplates] = useState<SessionTemplate[]>([]);
 
-  // ─── Auth ────────────────────────────────────────────────────────────────────
+  // ─── Auth guard ───────────────────────────────────────────────────────────
+  const [authChecked, setAuthChecked] = useState(false);
   const [physioName, setPhysioName] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
-        supabase.from("profiles").select("full_name").eq("id", user.id).single()
-          .then(({ data }) => setPhysioName(data?.full_name ?? user.email ?? null));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        window.location.href = "/login";
+        return;
       }
+      supabase.from("profiles").select("full_name, role").eq("id", session.user.id).single()
+        .then(({ data }) => {
+          if (!data || !["physio", "clinic_admin", "super_admin"].includes(data.role)) {
+            window.location.href = "/login";
+            return;
+          }
+          setPhysioName(data.full_name);
+          setAuthChecked(true);
+        });
     });
   }, [supabase]);
 
@@ -1161,6 +1171,8 @@ export default function AdminPage() {
     await supabase.auth.signOut();
     window.location.href = "/login";
   };
+
+  if (!authChecked) return null;
 
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
