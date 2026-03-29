@@ -1,7 +1,7 @@
 "use client";
 
 // app/admin/page.tsx — Module 7
-// Three tabs: Exercise Library | Patients | Session Templates
+// Three tabs: Exercise Library | Patients | Protocols
 // Sessions tab → Template Builder (no patient assignment)
 // Patient profile → Assign Session flow (picks template, applies overrides)
 // Patient profile → View Results (completed session drill-down)
@@ -811,7 +811,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const [savedTemplates, setSavedTemplates] = useState<SessionTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [title, setTitle] = useState("New Session Template");
+  const [title, setTitle] = useState("New Protocol");
   const [objective, setObjective] = useState("");
   const [estimatedMins, setEstimatedMins] = useState("10");
   const [tags, setTags] = useState<string[]>([]);
@@ -869,18 +869,18 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
       );
       if (eErr) throw eErr;
-      showToast("Template saved.");
-      setTitle("New Session Template"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
+      showToast("Protocol saved.");
+      setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
       loadData();
     } catch (err: unknown) { showToast(err instanceof Error ? err.message : "Failed.", false); }
     finally { setSaving(false); }
   };
 
   const deleteTemplate = async (id: string) => {
-    if (!confirm("Delete this template?")) return;
+    if (!confirm("Delete this protocol?")) return;
     await supabase.from("protocol_exercises").delete().eq("protocol_id", id);
     await supabase.from("protocols").delete().eq("id", id);
-    showToast("Template deleted."); loadData();
+    showToast("Protocol deleted."); loadData();
   };
 
   const allTags = Array.from(new Set(savedTemplates.flatMap(t => t.tags))).sort();
@@ -896,12 +896,12 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     <div style={{ display: "grid", gridTemplateColumns: "1fr 400px", gap: 24, alignItems: "start" }}>
       {/* Builder form */}
       <div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Session Template Builder</h2>
-        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 20px" }}>Build reusable session templates. Assign them to patients from the patient profile.</p>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Protocol Builder</h2>
+        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 20px" }}>Build reusable clinical protocols. Assign them to patients from the patient profile.</p>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-          <SectionHeader title="Template Details" />
+          <SectionHeader title="Protocol Details" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 14 }}>
-            <Field label="Template Title"><Input value={title} onChange={setTitle} placeholder="Shoulder Mobility Week 1" /></Field>
+            <Field label="Protocol Title"><Input value={title} onChange={setTitle} placeholder="Shoulder Mobility A" /></Field>
             <Field label="Duration (mins)"><Input type="number" value={estimatedMins} onChange={setEstimatedMins} min={1} max={120} /></Field>
           </div>
           <Field label="Objective"><Input value={objective} onChange={setObjective} placeholder="e.g. Build shoulder strength and range of motion" /></Field>
@@ -971,16 +971,16 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
           </div>
 
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, display: "flex", gap: 10 }}>
-            <Btn onClick={() => { setTitle("New Session Template"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); }} variant="danger" small>Clear</Btn>
-            <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : "💾 Save Template"}</Btn>
+            <Btn onClick={() => { setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); }} variant="danger" small>Clear</Btn>
+            <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : "💾 Save Protocol"}</Btn>
           </div>
         </div>
       </div>
 
       {/* Template library */}
       <div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Template Library</h2>
-        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 14px" }}>{savedTemplates.length} template{savedTemplates.length !== 1 ? "s" : ""}</p>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Protocol Library</h2>
+        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 14px" }}>{savedTemplates.length} protocol{savedTemplates.length !== 1 ? "s" : ""}</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
           <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
@@ -991,7 +991,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         {filteredTemplates.length === 0 ? (
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "32px", textAlign: "center" }}>
             <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
-            <div style={{ fontSize: 14, color: C.textMuted }}>No templates yet. Build your first one.</div>
+            <div style={{ fontSize: 14, color: C.textMuted }}>No protocols yet. Build your first one.</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1167,7 +1167,7 @@ export default function AdminPage() {
   const tabs: { key: Tab; label: string; icon: string }[] = [
     { key: "library", label: "Exercise Library", icon: "🏋️" },
     { key: "patients", label: "Patients", icon: "👤" },
-    { key: "sessions", label: "Sessions", icon: "📋" },
+    { key: "sessions", label: "Protocols", icon: "📋" },
   ];
 
   return (
