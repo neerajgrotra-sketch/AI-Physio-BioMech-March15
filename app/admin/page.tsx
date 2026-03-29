@@ -1150,26 +1150,24 @@ export default function AdminPage() {
   const [physioName, setPhysioName] = useState<string | null>(null);
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      window.location.href = "/login";
-    }, 3000);
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      clearTimeout(timeout);
-      if (!session) {
-        window.location.href = "/login";
-        return;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "INITIAL_SESSION") {
+        if (!session) {
+          window.location.href = "/login";
+          return;
+        }
+        supabase.from("profiles").select("full_name, role").eq("id", session.user.id).single()
+          .then(({ data }) => {
+            if (!data || !["physio", "clinic_admin", "super_admin"].includes(data.role)) {
+              window.location.href = "/login";
+              return;
+            }
+            setPhysioName(data.full_name);
+            setAuthChecked(true);
+          });
       }
-      supabase.from("profiles").select("full_name, role").eq("id", session.user.id).single()
-        .then(({ data }) => {
-          if (!data || !["physio", "clinic_admin", "super_admin"].includes(data.role)) {
-            window.location.href = "/login";
-            return;
-          }
-          setPhysioName(data.full_name);
-          setAuthChecked(true);
-        });
     });
+    return () => subscription.unsubscribe();
   }, [supabase]);
 
   const handleLogout = async () => {
