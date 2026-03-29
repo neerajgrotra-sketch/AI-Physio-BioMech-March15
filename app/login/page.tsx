@@ -30,13 +30,12 @@ function LoginForm() {
   const handleSignIn = async () => {
   setLoading(true)
   setError(null)
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  console.log('signIn result:', { data, error })
   if (error) {
     setError(error.message)
     setLoading(false)
   } else {
-    // Hard navigate instead of router.push — forces full page reload
-    // so middleware picks up the fresh session cookie
     window.location.href = redirectTo ?? '/admin'
   }
 }
