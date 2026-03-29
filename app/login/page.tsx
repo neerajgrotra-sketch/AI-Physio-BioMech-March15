@@ -61,7 +61,7 @@ function LoginForm() {
       setError(error.message)
       setLoading(false)
     } else {
-      router.push(redirectTo)
+      window.location.href = redirectTo ?? '/admin'
     }
   }
 
