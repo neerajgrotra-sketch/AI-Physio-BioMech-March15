@@ -581,6 +581,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
 // ─── Patient Profile Panel ────────────────────────────────────────────────────
 
 function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdit, onDelete, onRefresh }: { patient: Patient; prescriptions: PrescribedSession[]; templates: SessionTemplate[]; onClose: () => void; onEdit: () => void; onDelete: () => void; onRefresh: () => void; }) {
+  const supabase = getSupabaseClient();
   const age = patient.date_of_birth ? calcAge(patient.date_of_birth) : null;
   const bmi = patient.height_cm && patient.weight_kg ? calcBMI(patient.height_cm, patient.weight_kg) : null;
   const bmiInfo = bmi ? bmiCategory(bmi) : null;
@@ -589,6 +590,17 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
   const [assigning, setAssigning] = useState(false);
   const [viewingResultsId, setViewingResultsId] = useState<string | null>(null);
   const [viewingResultsTitle, setViewingResultsTitle] = useState<string>("");
+
+  const deleteSession = async (sessionId: string, sessionTitle: string) => {
+    if (!confirm(`Remove session "${sessionTitle}"? This cannot be undone.`)) return;
+    const { data: blocks } = await supabase.from("session_blocks").select("id").eq("session_id", sessionId);
+    if (blocks && blocks.length > 0) {
+      await supabase.from("session_block_exercises").delete().in("session_block_id", blocks.map((b: { id: string }) => b.id));
+    }
+    await supabase.from("session_blocks").delete().eq("session_id", sessionId);
+    await supabase.from("sessions").delete().eq("id", sessionId);
+    onRefresh();
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -673,6 +685,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                         <div style={{ display: "flex", gap: 8 }}>
                           <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>{s.status === "completed" ? "↺ Re-run" : "▶ Run"}</Btn>
                           {s.status === "completed" && <Btn onClick={() => { setViewingResultsId(s.id); setViewingResultsTitle(s.title); }} small variant="ghost">📊 Results</Btn>}
+                          {s.status === "pending" && <Btn onClick={() => deleteSession(s.id, s.title)} small variant="danger">✕ Remove</Btn>}
                         </div>
                       </div>
                     ))}
@@ -885,6 +898,10 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     if (exercises.length === 0) { showToast("Add at least one exercise.", false); return; }
     setSaving(true);
     try {
+      // Ensure session is loaded before chained DB calls — prevents auth.uid()
+      // returning null in RLS policies when client hasn't hydrated yet
+      await supabase.auth.getSession();
+
       if (editingProtocolId) {
         const { error: tErr } = await supabase.from("protocols")
           .update({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags })
@@ -1212,12 +1229,32 @@ export default function AdminPage() {
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("sessions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("sessions").select(`
+        *,
+        session_blocks (
+          sequence_order,
+          session_block_exercises (
+            sequence_order, reps_override, hold_ms_override,
+            exercise_templates ( display_name, default_reps, default_hold_ms )
+          )
+        ),
+        prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
+      `).order("created_at", { ascending: false }),
       supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
-      const pe = (s.prescription_exercises as Record<string, unknown>[]) ?? [];
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
+      const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
+      const blockExercises = blocks
+        .flatMap((b: Record<string, unknown>) =>
+          ((b.session_block_exercises as Record<string, unknown>[]) ?? [])
+        )
+        .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      const pe = blockExercises.length > 0
+        ? blockExercises
+        : ((s.prescription_exercises as Record<string, unknown>[]) ?? [])
+            .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
