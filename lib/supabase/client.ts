@@ -1,7 +1,5 @@
 // lib/supabase/client.ts
-// Browser-side Supabase client — safe to use in React components
-// Uses anon key which is restricted by Row Level Security
-
+// Browser-side Supabase client
 import { createBrowserClient } from '@supabase/ssr'
 
 export function createClient() {
@@ -11,12 +9,11 @@ export function createClient() {
   )
 }
 
-// Singleton for client components
-let client: ReturnType<typeof createClient> | null = null
-
+// Always create a fresh client — no singleton caching
+// This ensures env var changes are always picked up
 export function getSupabaseClient() {
-  if (!client) {
-    client = createClient()
-  }
-  return client
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 }
