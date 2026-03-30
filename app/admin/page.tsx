@@ -1145,6 +1145,11 @@ export default function AdminPage() {
   const [allPrescriptions, setAllPrescriptions] = useState<PrescribedSession[]>([]);
   const [allTemplates, setAllTemplates] = useState<SessionTemplate[]>([]);
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  };
+
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
   const loadShared = useCallback(async () => {
@@ -1181,7 +1186,7 @@ export default function AdminPage() {
           <span style={{ color: C.border, fontSize: 16, margin: "0 4px" }}>|</span>
           <span style={{ fontSize: 14, color: C.textMuted }}>Admin</span>
         </div>
-        <div style={{ display: "flex", gap: 2 }}>
+        <div style={{ display: "flex", gap: 2, flex: 1 }}>
           {tabs.map(({ key, label, icon }) => (
             <button key={key} onClick={() => { setActiveTab(key); loadShared(); }} style={{ background: activeTab === key ? C.surfaceHover : "transparent", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "0 16px", height: 56, color: activeTab === key ? C.text : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 7, transition: "all 0.15s" }}>
               <span>{icon}</span> {label}
@@ -1189,6 +1194,14 @@ export default function AdminPage() {
           ))}
         </div>
 
+        <button
+          onClick={handleLogout}
+          style={{ marginLeft: "auto", background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 14px", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+          onMouseEnter={e => { (e.target as HTMLButtonElement).style.borderColor = C.red; (e.target as HTMLButtonElement).style.color = C.red; }}
+          onMouseLeave={e => { (e.target as HTMLButtonElement).style.borderColor = C.border; (e.target as HTMLButtonElement).style.color = C.textMuted; }}
+        >
+          Sign out
+        </button>
 
       </div>
 
