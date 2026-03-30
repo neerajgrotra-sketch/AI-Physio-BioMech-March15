@@ -110,15 +110,14 @@ export default function TestPage() {
     try {
       const start = Date.now()
       const supabase = createBrowserClient(url, key)
-      const { data, error } = await withTimeout(
-        supabase.from('exercise_templates').select('name').eq('is_vanilla', true).limit(5),
-        8000, 'exercise_templates'
-      )
+      const queryPromise = supabase.from('exercise_templates').select('name').eq('is_vanilla', true).limit(5)
+      const result = await withTimeout(Promise.resolve(queryPromise), 8000, 'exercise_templates')
       const ms = Date.now() - start
+      const { data, error } = result as { data: {name:string}[] | null, error: {message:string, code:string, hint:string} | null }
       if (error) {
         update(4, { status: 'fail', detail: `ERROR ${ms}ms: ${error.message} | code: ${error.code} | hint: ${error.hint}`, ms })
       } else {
-        update(4, { status: 'pass', detail: `${ms}ms — ${data?.length} rows: ${(data as {name:string}[])?.map(d => d.name).join(', ')}`, ms })
+        update(4, { status: 'pass', detail: `${ms}ms — ${data?.length} rows: ${data?.map(d => d.name).join(', ')}`, ms })
       }
     } catch (e: unknown) {
       update(4, { status: 'fail', detail: e instanceof Error ? e.message : String(e) })
@@ -129,15 +128,14 @@ export default function TestPage() {
     try {
       const start = Date.now()
       const supabase = createBrowserClient(url, key)
-      const { data, error } = await withTimeout(
-        supabase.from('clinics').select('id, name').limit(3),
-        8000, 'clinics'
-      )
+      const queryPromise = supabase.from('clinics').select('id, name').limit(3)
+      const result = await withTimeout(Promise.resolve(queryPromise), 8000, 'clinics')
       const ms = Date.now() - start
+      const { data, error } = result as { data: {name:string}[] | null, error: {message:string, code:string, hint:string} | null }
       if (error) {
         update(5, { status: 'fail', detail: `ERROR ${ms}ms: ${error.message} | code: ${error.code} | hint: ${error.hint}`, ms })
       } else {
-        update(5, { status: 'pass', detail: `${ms}ms — ${data?.length} rows: ${(data as {name:string}[])?.map(d => d.name).join(', ')}`, ms })
+        update(5, { status: 'pass', detail: `${ms}ms — ${data?.length} rows: ${data?.map(d => d.name).join(', ')}`, ms })
       }
     } catch (e: unknown) {
       update(5, { status: 'fail', detail: e instanceof Error ? e.message : String(e) })
