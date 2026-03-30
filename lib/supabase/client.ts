@@ -1,19 +1,22 @@
 // lib/supabase/client.ts
-// Browser-side Supabase client
+// Browser-side Supabase client — module-level singleton.
+// createBrowserClient from @supabase/ssr is designed to be created once and
+// reused. Creating a new instance on every call causes session loss mid-request,
+// which makes auth.uid() return null inside RLS policies.
+
 import { createBrowserClient } from '@supabase/ssr'
 
-export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+let client: ReturnType<typeof createBrowserClient> | null = null;
+
+export function getSupabaseClient() {
+  if (!client) {
+    client = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }
+  return client;
 }
 
-// Always create a fresh client — no singleton caching
-// This ensures env var changes are always picked up
-export function getSupabaseClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-}
+// Alias for any code using createClient() directly
+export const createClient = getSupabaseClient;
