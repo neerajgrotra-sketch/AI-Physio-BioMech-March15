@@ -820,6 +820,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const [selectedExTemplateId, setSelectedExTemplateId] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [editingProtocolId, setEditingProtocolId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -858,18 +859,56 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const addTag = (tag: string) => { const t = tag.trim().toLowerCase(); if (t && !tags.includes(t)) setTags(prev => [...prev, t]); setTagInput(""); };
   const removeTag = (tag: string) => setTags(prev => prev.filter(t => t !== tag));
 
+  // Load an existing protocol into the builder form for editing
+  const editProtocol = (t: SessionTemplate) => {
+    setEditingProtocolId(t.id);
+    setTitle(t.title);
+    setObjective(t.objective ?? "");
+    setEstimatedMins(String(t.estimated_duration_mins));
+    setTags([...t.tags]);
+    setExercises(t.exercises.map(ex => ({
+      template_id: ex.exercise_template_id,
+      display_name: ex.exercise_template?.display_name ?? "Unknown",
+      reps: ex.default_reps ?? ex.exercise_template?.default_reps ?? 6,
+      hold_ms: ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 2000,
+    })));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditingProtocolId(null);
+    setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
+  };
+
   const saveTemplate = async () => {
     if (!title.trim()) { showToast("Title is required.", false); return; }
     if (exercises.length === 0) { showToast("Add at least one exercise.", false); return; }
     setSaving(true);
     try {
-      const { data: tmpl, error: tErr } = await supabase.from("protocols").insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).select().single();
-      if (tErr) throw tErr;
-      const { error: eErr } = await supabase.from("protocol_exercises").insert(
-        exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
-      );
-      if (eErr) throw eErr;
-      showToast("Protocol saved.");
+      if (editingProtocolId) {
+        const { error: tErr } = await supabase.from("protocols")
+          .update({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags })
+          .eq("id", editingProtocolId);
+        if (tErr) throw tErr;
+        const { error: dErr } = await supabase.from("protocol_exercises").delete().eq("protocol_id", editingProtocolId);
+        if (dErr) throw dErr;
+        const { error: eErr } = await supabase.from("protocol_exercises").insert(
+          exercises.map((e, i) => ({ protocol_id: editingProtocolId, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
+        );
+        if (eErr) throw eErr;
+        showToast("Protocol updated.");
+        setEditingProtocolId(null);
+      } else {
+        const { data: tmpl, error: tErr } = await supabase.from("protocols")
+          .insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags })
+          .select().single();
+        if (tErr) throw tErr;
+        const { error: eErr } = await supabase.from("protocol_exercises").insert(
+          exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
+        );
+        if (eErr) throw eErr;
+        showToast("Protocol saved.");
+      }
       setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
       loadData();
     } catch (err: unknown) { showToast(err instanceof Error ? err.message : "Failed.", false); }
@@ -896,8 +935,8 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     <div style={{ display: "grid", gridTemplateColumns: "1fr 400px", gap: 24, alignItems: "start" }}>
       {/* Builder form */}
       <div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Protocol Builder</h2>
-        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 20px" }}>Build reusable clinical protocols. Assign them to patients from the patient profile.</p>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>{editingProtocolId ? "Edit Protocol" : "Protocol Builder"}</h2>
+        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 20px" }}>{editingProtocolId ? "Update the protocol details and exercises, then save." : "Build reusable clinical protocols. Assign them to patients from the patient profile."}</p>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
           <SectionHeader title="Protocol Details" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 14 }}>
@@ -971,8 +1010,8 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
           </div>
 
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, display: "flex", gap: 10 }}>
-            <Btn onClick={() => { setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); }} variant="danger" small>Clear</Btn>
-            <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : "💾 Save Protocol"}</Btn>
+            <Btn onClick={editingProtocolId ? cancelEdit : () => { setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); }} variant="danger" small>{editingProtocolId ? "Cancel Edit" : "Clear"}</Btn>
+            <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingProtocolId ? "💾 Update Protocol" : "💾 Save Protocol"}</Btn>
           </div>
         </div>
       </div>
@@ -1015,6 +1054,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                   ))}
                 </div>
                 <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
+                  <Btn onClick={() => editProtocol(t)} variant="ghost" small>✏️ Edit</Btn>
                   <Btn onClick={() => deleteTemplate(t.id)} variant="danger" small>Delete</Btn>
                 </div>
               </div>
@@ -1172,34 +1212,12 @@ export default function AdminPage() {
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("sessions").select(`
-        *,
-        session_blocks (
-          sequence_order,
-          session_block_exercises (
-            sequence_order, reps_override, hold_ms_override,
-            exercise_templates ( display_name, default_reps, default_hold_ms )
-          )
-        ),
-        prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
-      `).order("created_at", { ascending: false }),
+      supabase.from("sessions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
       supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
-      // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
-      const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
-      const blockExercises = blocks
-        .flatMap((b: Record<string, unknown>) =>
-          ((b.session_block_exercises as Record<string, unknown>[]) ?? [])
-        )
-        .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
-
-      const pe = blockExercises.length > 0
-        ? blockExercises
-        : ((s.prescription_exercises as Record<string, unknown>[]) ?? [])
-            .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
-
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      const pe = (s.prescription_exercises as Record<string, unknown>[]) ?? [];
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
