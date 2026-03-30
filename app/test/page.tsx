@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const C = {
@@ -21,7 +21,7 @@ export default function TestPage() {
     { name: 'Env: SUPABASE_URL', status: 'pending', detail: '' },
     { name: 'Env: ANON_KEY format', status: 'pending', detail: '' },
     { name: 'Network: Auth health', status: 'pending', detail: '' },
-    { name: 'Network: REST health', status: 'pending', detail: '' },
+    { name: 'Network: REST direct fetch', status: 'pending', detail: '' },
     { name: 'Query: exercise_templates', status: 'pending', detail: '' },
     { name: 'Query: clinics', status: 'pending', detail: '' },
   ])
@@ -31,11 +31,17 @@ export default function TestPage() {
     setResults(prev => prev.map((r, i) => i === index ? { ...r, ...partial } : r))
   }
 
+  const withTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`TIMEOUT after ${ms}ms — ${label} never responded`)), ms)
+      )
+    ])
+
   const runTests = async () => {
     setRunning(true)
-
-    // Reset
-    setResults(prev => prev.map(r => ({ ...r, status: 'pending', detail: '' })))
+    setResults(prev => prev.map(r => ({ ...r, status: 'pending' as const, detail: '', ms: undefined })))
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -55,87 +61,86 @@ export default function TestPage() {
     } else {
       const parts = key.split('.')
       if (parts.length !== 3) {
-        update(1, { status: 'fail', detail: `INVALID — has ${parts.length} parts (need 3). Key starts: ${key.slice(0, 20)}...` })
+        update(1, { status: 'fail', detail: `INVALID — has ${parts.length} parts (need 3). Key: ${key.slice(0, 30)}...` })
       } else {
         update(1, { status: 'pass', detail: `Valid JWT — ${key.length} chars, starts: ${key.slice(0, 20)}...` })
       }
     }
 
-    if (!url || !key) {
-      setRunning(false)
-      return
-    }
+    if (!url || !key) { setRunning(false); return }
 
     // Test 3: Auth health
     update(2, { status: 'running', detail: 'Fetching...' })
     try {
       const start = Date.now()
-      const res = await fetch(`${url}/auth/v1/health`, {
-        headers: { 'apikey': key },
-        signal: AbortSignal.timeout(8000),
-      })
+      const res = await withTimeout(
+        fetch(`${url}/auth/v1/health`, { headers: { 'apikey': key } }),
+        8000, 'auth health'
+      )
       const ms = Date.now() - start
       const text = await res.text()
-      if (res.ok || res.status === 200) {
-        update(2, { status: 'pass', detail: `${res.status} in ${ms}ms — ${text.slice(0, 50)}`, ms })
-      } else {
-        update(2, { status: 'fail', detail: `${res.status} in ${ms}ms — ${text.slice(0, 100)}`, ms })
-      }
+      update(2, { status: res.ok ? 'pass' : 'fail', detail: `${res.status} in ${ms}ms — ${text.slice(0, 80)}`, ms })
     } catch (e: unknown) {
-      update(2, { status: 'fail', detail: `EXCEPTION: ${e instanceof Error ? e.message : String(e)}` })
+      update(2, { status: 'fail', detail: e instanceof Error ? e.message : String(e) })
     }
 
-    // Test 4: REST health
+    // Test 4: Direct REST fetch
     update(3, { status: 'running', detail: 'Fetching...' })
     try {
       const start = Date.now()
-      const res = await fetch(`${url}/rest/v1/`, {
-        headers: { 'apikey': key, 'Authorization': `Bearer ${key}` },
-        signal: AbortSignal.timeout(8000),
-      })
+      const res = await withTimeout(
+        fetch(`${url}/rest/v1/exercise_templates?limit=1&select=name`, {
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          }
+        }),
+        8000, 'REST fetch'
+      )
       const ms = Date.now() - start
-      update(3, { status: res.ok ? 'pass' : 'fail', detail: `${res.status} in ${ms}ms`, ms })
+      const text = await res.text()
+      update(3, { status: res.ok ? 'pass' : 'fail', detail: `${res.status} in ${ms}ms — ${text.slice(0, 150)}`, ms })
     } catch (e: unknown) {
-      update(3, { status: 'fail', detail: `EXCEPTION: ${e instanceof Error ? e.message : String(e)}` })
+      update(3, { status: 'fail', detail: e instanceof Error ? e.message : String(e) })
     }
 
-    // Test 5: Query exercise_templates
-    update(4, { status: 'running', detail: 'Querying...' })
+    // Test 5: supabase-js query — exercise_templates
+    update(4, { status: 'running', detail: 'Querying via supabase-js...' })
     try {
       const start = Date.now()
       const supabase = createBrowserClient(url, key)
-      const { data, error } = await supabase
-        .from('exercise_templates')
-        .select('name, is_vanilla')
-        .eq('is_vanilla', true)
-        .limit(5)
+      const { data, error } = await withTimeout(
+        supabase.from('exercise_templates').select('name').eq('is_vanilla', true).limit(5),
+        8000, 'exercise_templates'
+      )
       const ms = Date.now() - start
       if (error) {
-        update(4, { status: 'fail', detail: `ERROR in ${ms}ms: ${error.message} (${error.code})`, ms })
+        update(4, { status: 'fail', detail: `ERROR ${ms}ms: ${error.message} | code: ${error.code} | hint: ${error.hint}`, ms })
       } else {
-        update(4, { status: 'pass', detail: `${ms}ms — ${data?.length ?? 0} rows: ${data?.map(d => d.name).join(', ')}`, ms })
+        update(4, { status: 'pass', detail: `${ms}ms — ${data?.length} rows: ${(data as {name:string}[])?.map(d => d.name).join(', ')}`, ms })
       }
     } catch (e: unknown) {
-      update(4, { status: 'fail', detail: `EXCEPTION: ${e instanceof Error ? e.message : String(e)}` })
+      update(4, { status: 'fail', detail: e instanceof Error ? e.message : String(e) })
     }
 
-    // Test 6: Query clinics
-    update(5, { status: 'running', detail: 'Querying...' })
+    // Test 6: clinics
+    update(5, { status: 'running', detail: 'Querying via supabase-js...' })
     try {
       const start = Date.now()
       const supabase = createBrowserClient(url, key)
-      const { data, error } = await supabase
-        .from('clinics')
-        .select('id, name')
-        .limit(3)
+      const { data, error } = await withTimeout(
+        supabase.from('clinics').select('id, name').limit(3),
+        8000, 'clinics'
+      )
       const ms = Date.now() - start
       if (error) {
-        update(5, { status: 'fail', detail: `ERROR in ${ms}ms: ${error.message} (${error.code})`, ms })
+        update(5, { status: 'fail', detail: `ERROR ${ms}ms: ${error.message} | code: ${error.code} | hint: ${error.hint}`, ms })
       } else {
-        update(5, { status: 'pass', detail: `${ms}ms — ${data?.length ?? 0} rows: ${data?.map(d => d.name).join(', ')}`, ms })
+        update(5, { status: 'pass', detail: `${ms}ms — ${data?.length} rows: ${(data as {name:string}[])?.map(d => d.name).join(', ')}`, ms })
       }
     } catch (e: unknown) {
-      update(5, { status: 'fail', detail: `EXCEPTION: ${e instanceof Error ? e.message : String(e)}` })
+      update(5, { status: 'fail', detail: e instanceof Error ? e.message : String(e) })
     }
 
     setRunning(false)
@@ -161,6 +166,7 @@ export default function TestPage() {
         <div style={{ marginBottom: 32 }}>
           <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>AI Physio BioMech</div>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Supabase Connectivity Test</h1>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>Each test times out after 8 seconds</div>
         </div>
 
         <button
@@ -168,7 +174,8 @@ export default function TestPage() {
           disabled={running}
           style={{
             marginBottom: 32, padding: '10px 24px', borderRadius: 6, border: 'none',
-            background: running ? C.surface : C.blue, color: running ? C.textMuted : '#fff',
+            background: running ? C.surface : C.blue,
+            color: running ? C.textMuted : '#fff',
             fontSize: 14, fontWeight: 600, cursor: running ? 'wait' : 'pointer',
           }}
         >
@@ -178,7 +185,8 @@ export default function TestPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {results.map((r, i) => (
             <div key={i} style={{
-              background: C.surface, border: `1px solid ${r.status === 'fail' ? C.red : r.status === 'pass' ? C.green + '40' : C.border}`,
+              background: C.surface,
+              border: `1px solid ${r.status === 'fail' ? C.red : r.status === 'pass' ? C.green + '40' : C.border}`,
               borderRadius: 8, padding: '14px 16px',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: r.detail ? 6 : 0 }}>
@@ -186,10 +194,16 @@ export default function TestPage() {
                   {statusIcon(r.status)}
                 </span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.name}</span>
-                {r.ms && <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 'auto' }}>{r.ms}ms</span>}
+                {r.ms !== undefined && (
+                  <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 'auto' }}>{r.ms}ms</span>
+                )}
               </div>
               {r.detail && (
-                <div style={{ fontSize: 12, color: r.status === 'fail' ? C.red : C.textMuted, paddingLeft: 30, wordBreak: 'break-all' }}>
+                <div style={{
+                  fontSize: 12,
+                  color: r.status === 'fail' ? C.red : C.textMuted,
+                  paddingLeft: 30, wordBreak: 'break-all', lineHeight: 1.5,
+                }}>
                   {r.detail}
                 </div>
               )}
