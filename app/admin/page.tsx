@@ -1144,6 +1144,24 @@ export default function AdminPage() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [allPrescriptions, setAllPrescriptions] = useState<PrescribedSession[]>([]);
   const [allTemplates, setAllTemplates] = useState<SessionTemplate[]>([]);
+  const [physioName, setPhysioName] = useState<string | null>(null);
+
+  // ── Auth guard — redirect to /login if no session; populate physio name ──
+  // Reads from the JWT in localStorage — no network call, safe, won't block queries.
+  // NEVER wrap layout.tsx with AuthProvider — it causes Supabase query hangs.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        window.location.href = "/login";
+        return;
+      }
+      const name =
+        session.user.user_metadata?.full_name ??
+        session.user.email ??
+        null;
+      setPhysioName(name);
+    });
+  }, [supabase]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -1194,14 +1212,27 @@ export default function AdminPage() {
           ))}
         </div>
 
-        <button
-          onClick={handleLogout}
-          style={{ marginLeft: "auto", background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 14px", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
-          onMouseEnter={e => { (e.target as HTMLButtonElement).style.borderColor = C.red; (e.target as HTMLButtonElement).style.color = C.red; }}
-          onMouseLeave={e => { (e.target as HTMLButtonElement).style.borderColor = C.border; (e.target as HTMLButtonElement).style.color = C.textMuted; }}
-        >
-          Sign out
-        </button>
+        {/* Physio name badge + sign out */}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          {physioName && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: "50%", background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                {physioName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
+              </div>
+              <span style={{ fontSize: 13, color: C.textMuted, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                {physioName}
+              </span>
+            </div>
+          )}
+          <button
+            onClick={handleLogout}
+            style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 14px", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+            onMouseEnter={e => { (e.target as HTMLButtonElement).style.borderColor = C.red; (e.target as HTMLButtonElement).style.color = C.red; }}
+            onMouseLeave={e => { (e.target as HTMLButtonElement).style.borderColor = C.border; (e.target as HTMLButtonElement).style.color = C.textMuted; }}
+          >
+            Sign out
+          </button>
+        </div>
 
       </div>
 
