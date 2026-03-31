@@ -821,6 +821,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const [tagFilter, setTagFilter] = useState("");
   const [search, setSearch] = useState("");
   const [editingProtocolId, setEditingProtocolId] = useState<string | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -872,11 +873,18 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
       reps: ex.default_reps ?? ex.exercise_template?.default_reps ?? 6,
       hold_ms: ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 2000,
     })));
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setBuilderOpen(true);
+  };
+
+  const openNewProtocol = () => {
+    setEditingProtocolId(null);
+    setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
+    setBuilderOpen(true);
   };
 
   const cancelEdit = () => {
     setEditingProtocolId(null);
+    setBuilderOpen(false);
     setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
   };
 
@@ -898,6 +906,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         if (eErr) throw eErr;
         showToast("Protocol updated.");
         setEditingProtocolId(null);
+        setBuilderOpen(false);
       } else {
         const { data: tmpl, error: tErr } = await supabase.from("protocols")
           .insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags })
@@ -908,6 +917,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         );
         if (eErr) throw eErr;
         showToast("Protocol saved.");
+        setBuilderOpen(false);
       }
       setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
       loadData();
@@ -932,136 +942,190 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   if (loading) return <div style={{ textAlign: "center", padding: "60px 0", color: C.textMuted }}>Loading…</div>;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 400px", gap: 24, alignItems: "start" }}>
-      {/* Builder form */}
-      <div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>{editingProtocolId ? "Edit Protocol" : "Protocol Builder"}</h2>
-        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 20px" }}>{editingProtocolId ? "Update the protocol details and exercises, then save." : "Build reusable clinical protocols. Assign them to patients from the patient profile."}</p>
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-          <SectionHeader title="Protocol Details" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 14 }}>
-            <Field label="Protocol Title"><Input value={title} onChange={setTitle} placeholder="Shoulder Mobility A" /></Field>
-            <Field label="Duration (mins)"><Input type="number" value={estimatedMins} onChange={setEstimatedMins} min={1} max={120} /></Field>
-          </div>
-          <Field label="Objective"><Input value={objective} onChange={setObjective} placeholder="e.g. Build shoulder strength and range of motion" /></Field>
-
-          {/* Tags */}
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" as const, display: "block", marginBottom: 8 }}>Tags</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 }}>
-              {tags.map(tag => (
-                <span key={tag} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: C.blueDim, border: `1px solid ${C.blue}30`, fontSize: 12, color: C.blue }}>
-                  {tag}
-                  <button onClick={() => removeTag(tag)} style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
-                </span>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput); } }} placeholder="Add tag (Enter to add)…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-              <Btn onClick={() => addTag(tagInput)} small variant="ghost">Add</Btn>
-            </div>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const, marginTop: 8 }}>
-              {SUGGESTED_TAGS.filter(t => !tags.includes(t)).slice(0, 10).map(t => (
-                <button key={t} onClick={() => addTag(t)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 12, padding: "2px 8px", fontSize: 11, color: C.textMuted, cursor: "pointer", fontFamily: "inherit" }}>{t}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Exercises */}
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-            <SectionHeader title="Exercises" />
-            <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-              <div style={{ flex: 1 }}>
-                <Select value={selectedExTemplateId} onChange={setSelectedExTemplateId}>
-                  {exerciseTemplates.map(t => <option key={t.id} value={t.id}>{t.display_name} · {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</option>)}
-                </Select>
-              </div>
-              <Btn onClick={addExercise} variant="primary">+ Add</Btn>
-            </div>
-            {exercises.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "20px 0", color: C.textDim, fontSize: 13, border: `1px dashed ${C.border}`, borderRadius: 8 }}>No exercises added yet.</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {exercises.map((ex, idx) => (
-                  <div key={idx} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <button onClick={() => moveExercise(idx, -1)} disabled={idx === 0} style={{ background: "none", border: "none", color: idx === 0 ? C.textDim : C.textMuted, cursor: idx === 0 ? "default" : "pointer", fontSize: 12, padding: 2 }}>▲</button>
-                      <span style={{ fontSize: 11, color: C.textDim, textAlign: "center" as const }}>{idx + 1}</span>
-                      <button onClick={() => moveExercise(idx, 1)} disabled={idx === exercises.length - 1} style={{ background: "none", border: "none", color: idx === exercises.length - 1 ? C.textDim : C.textMuted, cursor: idx === exercises.length - 1 ? "default" : "pointer", fontSize: 12, padding: 2 }}>▼</button>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 6 }}>{ex.display_name}</div>
-                      <div style={{ display: "flex", gap: 10 }}>
-                        {[["Reps", "reps", ex.reps, 1, 30, 1], ["Hold (s)", "hold_ms", msToSeconds(ex.hold_ms), 0, 10, 0.5]].map(([label, key, val, min, max, step]) => (
-                          <div key={String(key)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ fontSize: 11, color: C.textDim }}>{label}</span>
-                            <input type="number" value={val} min={Number(min)} max={Number(max)} step={Number(step)}
-                              onChange={e => setExercises(prev => prev.map((ex2, i) => i === idx ? { ...ex2, [key as string]: key === "hold_ms" ? secondsToMs(e.target.value) : parseInt(e.target.value) || 1 } : ex2))}
-                              style={{ width: 52, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 6px", color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <button onClick={() => removeExercise(idx)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 16, padding: 4, opacity: 0.7 }}>✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, display: "flex", gap: 10 }}>
-            <Btn onClick={editingProtocolId ? cancelEdit : () => { setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); }} variant="danger" small>{editingProtocolId ? "Cancel Edit" : "Clear"}</Btn>
-            <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingProtocolId ? "💾 Update Protocol" : "💾 Save Protocol"}</Btn>
-          </div>
+    <div>
+      {/* ── Header ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Protocol Library</h2>
+          <p style={{ fontSize: 13, color: C.textMuted, margin: 0 }}>{savedTemplates.length} protocol{savedTemplates.length !== 1 ? "s" : ""} · Assign to patients from their profile</p>
         </div>
+        <Btn variant="primary" onClick={openNewProtocol}>+ New Protocol</Btn>
       </div>
 
-      {/* Template library */}
-      <div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Protocol Library</h2>
-        <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 14px" }}>{savedTemplates.length} protocol{savedTemplates.length !== 1 ? "s" : ""}</p>
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-            <option value="">All tags</option>
-            {allTags.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+      {/* ── Search + filter ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search protocols…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+        <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
+          <option value="">All tags</option>
+          {allTags.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+
+      {/* ── Protocol cards grid ── */}
+      {filteredTemplates.length === 0 ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "64px 32px", textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 6 }}>No protocols yet</div>
+          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>Build your first clinical protocol to assign to patients.</div>
+          <Btn variant="primary" onClick={openNewProtocol}>+ Build First Protocol</Btn>
         </div>
-        {filteredTemplates.length === 0 ? (
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "32px", textAlign: "center" }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
-            <div style={{ fontSize: 14, color: C.textMuted }}>No protocols yet. Build your first one.</div>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filteredTemplates.map(t => (
-              <div key={t.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px" }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.title}</div>
-                  <span style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const }}>{t.exercises.length} ex · {t.estimated_duration_mins}min</span>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
+          {filteredTemplates.map(t => {
+            const visibleExercises = t.exercises.slice(0, 3);
+            const hiddenCount = t.exercises.length - visibleExercises.length;
+            return (
+              <div key={t.id} style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderTop: `3px solid ${C.blue}`,
+                borderRadius: 10, padding: "16px",
+                display: "flex", flexDirection: "column", gap: 12,
+                transition: "box-shadow 0.15s",
+              }}
+                onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${C.blue}15`)}
+                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+              >
+                {/* Card header */}
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 2 }}>{t.title}</div>
+                    {t.objective && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{t.objective}</div>}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const, marginTop: 2 }}>{t.estimated_duration_mins}min</div>
                 </div>
-                {t.objective && <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>{t.objective}</div>}
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const, marginBottom: 10 }}>
-                  {t.tags.map(tag => <span key={tag} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: C.blueDim, color: C.blue, fontWeight: 600 }}>{tag}</span>)}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 10 }}>
-                  {t.exercises.map((ex, i) => (
-                    <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textMuted }}>
-                      <span style={{ color: C.textDim, minWidth: 16 }}>{i + 1}.</span>
-                      <span style={{ flex: 1, color: C.text }}>{ex.exercise_template?.display_name}</span>
-                      <span>{ex.default_reps ?? ex.exercise_template?.default_reps}× · {msToSeconds(ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 0)}s</span>
+
+                {/* Tags */}
+                {t.tags.length > 0 && (
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const }}>
+                    {t.tags.map(tag => <span key={tag} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: C.blueDim, color: C.blue, fontWeight: 600 }}>{tag}</span>)}
+                  </div>
+                )}
+
+                {/* Exercise list — first 3 + overflow count */}
+                <div style={{ background: C.bg, borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
+                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.06em", fontWeight: 700, marginBottom: 4 }}>
+                    {t.exercises.length} exercise{t.exercises.length !== 1 ? "s" : ""}
+                  </div>
+                  {visibleExercises.map((ex, i) => (
+                    <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <span style={{ color: C.textDim, minWidth: 14, fontSize: 11 }}>{i + 1}.</span>
+                      <span style={{ flex: 1, color: C.text, fontWeight: 500 }}>{ex.exercise_template?.display_name}</span>
+                      <span style={{ color: C.textDim, fontSize: 11 }}>{ex.default_reps ?? ex.exercise_template?.default_reps}× · {msToSeconds(ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 0)}s</span>
                     </div>
                   ))}
+                  {hiddenCount > 0 && (
+                    <div style={{ fontSize: 11, color: C.textDim, marginTop: 2 }}>+{hiddenCount} more exercise{hiddenCount !== 1 ? "s" : ""}</div>
+                  )}
                 </div>
-                <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
+
+                {/* Actions */}
+                <div style={{ display: "flex", gap: 8, paddingTop: 4, borderTop: `1px solid ${C.border}` }}>
                   <Btn onClick={() => editProtocol(t)} variant="ghost" small>✏️ Edit</Btn>
                   <Btn onClick={() => deleteTemplate(t.id)} variant="danger" small>Delete</Btn>
                 </div>
               </div>
-            ))}
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Builder side panel (fixed overlay, same pattern as exercise customise) ── */}
+      {builderOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) cancelEdit(); }}>
+          <div style={{ width: "min(640px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+            {/* Panel header */}
+            <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{editingProtocolId ? "Edit Protocol" : "New Protocol"}</div>
+                <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{editingProtocolId ? "Update details and exercises, then save." : "Build a reusable clinical protocol."}</div>
+              </div>
+              <button onClick={cancelEdit} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer", padding: 4 }}>✕</button>
+            </div>
+
+            {/* Scrollable content */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+              <SectionHeader title="Protocol Details" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 14 }}>
+                <Field label="Protocol Title"><Input value={title} onChange={setTitle} placeholder="Shoulder Mobility A" /></Field>
+                <Field label="Duration (mins)"><Input type="number" value={estimatedMins} onChange={setEstimatedMins} min={1} max={120} /></Field>
+              </div>
+              <Field label="Objective"><Input value={objective} onChange={setObjective} placeholder="e.g. Build shoulder strength and range of motion" /></Field>
+
+              {/* Tags */}
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" as const, display: "block", marginBottom: 8 }}>Tags</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 }}>
+                  {tags.map(tag => (
+                    <span key={tag} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: C.blueDim, border: `1px solid ${C.blue}30`, fontSize: 12, color: C.blue }}>
+                      {tag}
+                      <button onClick={() => removeTag(tag)} style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput); } }} placeholder="Add tag (Enter to add)…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                  <Btn onClick={() => addTag(tagInput)} small variant="ghost">Add</Btn>
+                </div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const, marginTop: 8 }}>
+                  {SUGGESTED_TAGS.filter(t => !tags.includes(t)).slice(0, 10).map(t => (
+                    <button key={t} onClick={() => addTag(t)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 12, padding: "2px 8px", fontSize: 11, color: C.textMuted, cursor: "pointer", fontFamily: "inherit" }}>{t}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Exercises */}
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+                <SectionHeader title="Exercises" />
+                <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                  <div style={{ flex: 1 }}>
+                    <Select value={selectedExTemplateId} onChange={setSelectedExTemplateId}>
+                      {exerciseTemplates.map(t => <option key={t.id} value={t.id}>{t.display_name} · {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</option>)}
+                    </Select>
+                  </div>
+                  <Btn onClick={addExercise} variant="primary">+ Add</Btn>
+                </div>
+                {exercises.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "20px 0", color: C.textDim, fontSize: 13, border: `1px dashed ${C.border}`, borderRadius: 8 }}>No exercises added yet.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {exercises.map((ex, idx) => (
+                      <div key={idx} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <button onClick={() => moveExercise(idx, -1)} disabled={idx === 0} style={{ background: "none", border: "none", color: idx === 0 ? C.textDim : C.textMuted, cursor: idx === 0 ? "default" : "pointer", fontSize: 12, padding: 2 }}>▲</button>
+                          <span style={{ fontSize: 11, color: C.textDim, textAlign: "center" as const }}>{idx + 1}</span>
+                          <button onClick={() => moveExercise(idx, 1)} disabled={idx === exercises.length - 1} style={{ background: "none", border: "none", color: idx === exercises.length - 1 ? C.textDim : C.textMuted, cursor: idx === exercises.length - 1 ? "default" : "pointer", fontSize: 12, padding: 2 }}>▼</button>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 6 }}>{ex.display_name}</div>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            {[["Reps", "reps", ex.reps, 1, 30, 1], ["Hold (s)", "hold_ms", msToSeconds(ex.hold_ms), 0, 10, 0.5]].map(([label, key, val, min, max, step]) => (
+                              <div key={String(key)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: 11, color: C.textDim }}>{label}</span>
+                                <input type="number" value={val} min={Number(min)} max={Number(max)} step={Number(step)}
+                                  onChange={e => setExercises(prev => prev.map((ex2, i) => i === idx ? { ...ex2, [key as string]: key === "hold_ms" ? secondsToMs(e.target.value) : parseInt(e.target.value) || 1 } : ex2))}
+                                  style={{ width: 52, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 6px", color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <button onClick={() => removeExercise(idx)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 16, padding: 4, opacity: 0.7 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Sticky footer */}
+            <div style={{ padding: "16px 24px", borderTop: `1px solid ${C.border}`, background: C.surface, display: "flex", gap: 10, flexShrink: 0 }}>
+              <Btn onClick={cancelEdit} variant="ghost">Cancel</Btn>
+              <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingProtocolId ? "💾 Update Protocol" : "💾 Save Protocol"}</Btn>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1133,79 +1197,37 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
       </div>
       {loading ? <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted }}>Loading…</div> : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-          {active.map(t => {
-            // Accent colour per exercise type
-            const accent = t.exercise_type === "arm_raise" ? C.blue
-              : t.exercise_type === "bilateral_arm_raise" ? C.purple
-              : t.exercise_type === "sit_to_stand" ? C.green
-              : C.orange;
-            const accentDim = t.exercise_type === "arm_raise" ? C.blueDim
-              : t.exercise_type === "bilateral_arm_raise" ? C.purpleDim
-              : t.exercise_type === "sit_to_stand" ? C.greenDim
-              : C.orangeDim;
-            const icon = t.exercise_type === "arm_raise" ? "💪"
-              : t.exercise_type === "bilateral_arm_raise" ? "🙌"
-              : t.exercise_type === "sit_to_stand" ? "🦵"
-              : "⚡";
-            return (
-              <div key={t.id} style={{
-                background: C.surface,
-                border: `1px solid ${accent}40`,
-                borderTop: `3px solid ${accent}`,
-                borderRadius: 10, padding: "16px",
-                display: "flex", flexDirection: "column", gap: 10,
-                transition: "box-shadow 0.15s",
-              }}
-                onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${accent}20`)}
-                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-              >
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{
-                      width: 36, height: 36, borderRadius: 8,
-                      background: accentDim, border: `1px solid ${accent}30`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 18, flexShrink: 0,
-                    }}>{icon}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.display_name}</div>
-                  </div>
-                  {t.is_vanilla && <Badge label="System" color={accent} />}
-                </div>
-                {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
-                <div style={{
-                  display: "flex", gap: 8, padding: "6px 10px",
-                  background: accentDim, borderRadius: 6,
-                }}>
-                  <span style={{ fontSize: 11, color: accent, fontWeight: 600 }}>
-                    {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold
-                  </span>
-                </div>
-                <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost">{t.is_vanilla ? "Customise →" : "Edit"}</Btn>
+          {active.map(t => (
+            <div key={t.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.display_name}</div>
+                {t.is_vanilla && <Badge label="System" color={C.textMuted} />}
               </div>
-            );
-          })}
+              {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <span style={{ fontSize: 11, color: C.textDim }}>Default: {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</span>
+              </div>
+              <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost">{t.is_vanilla ? "Customise →" : "Edit"}</Btn>
+            </div>
+          ))}
           {active.length === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: C.textDim }}>No exercises match your filter.</div>}
         </div>
       )}
       {editingTemplate && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) setEditingTemplate(null); }}>
-          <div style={{ width: "min(500px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {/* Scrollable content */}
-            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editingTemplate.is_vanilla ? `Customise: ${editingTemplate.display_name}` : `Edit: ${editingTemplate.display_name}`}</h3>
-                <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
-              </div>
-              <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
-              <Field label="Description"><Textarea value={editingTemplate.description ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, description: v } : t)} /></Field>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <Field label="Default Reps"><Input type="number" value={editingTemplate.default_reps} onChange={v => setEditingTemplate(t => t ? { ...t, default_reps: parseInt(v) || 1 } : t)} min={1} max={30} /></Field>
-                <Field label="Hold (s)"><Input type="number" value={msToSeconds(editingTemplate.default_hold_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_hold_ms: secondsToMs(v) } : t)} min={0} max={10} step={0.5} /></Field>
-                <Field label="Rest (s)"><Input type="number" value={msToSeconds(editingTemplate.default_rest_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_rest_ms: secondsToMs(v) } : t)} min={0} max={30} step={0.5} /></Field>
-              </div>
+          <div style={{ width: "min(500px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editingTemplate.is_vanilla ? `Customise: ${editingTemplate.display_name}` : `Edit: ${editingTemplate.display_name}`}</h3>
+              <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
             </div>
-            {/* Sticky footer — always visible regardless of scroll position */}
-            <div style={{ padding: "16px 24px", borderTop: `1px solid ${C.border}`, background: C.surface, display: "flex", gap: 10, flexShrink: 0 }}>
+            <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
+            <Field label="Description"><Textarea value={editingTemplate.description ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, description: v } : t)} /></Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Default Reps"><Input type="number" value={editingTemplate.default_reps} onChange={v => setEditingTemplate(t => t ? { ...t, default_reps: parseInt(v) || 1 } : t)} min={1} max={30} /></Field>
+              <Field label="Hold (s)"><Input type="number" value={msToSeconds(editingTemplate.default_hold_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_hold_ms: secondsToMs(v) } : t)} min={0} max={10} step={0.5} /></Field>
+              <Field label="Rest (s)"><Input type="number" value={msToSeconds(editingTemplate.default_rest_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_rest_ms: secondsToMs(v) } : t)} min={0} max={30} step={0.5} /></Field>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: "auto", paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
               <Btn onClick={() => setEditingTemplate(null)} variant="ghost">Cancel</Btn>
               <Btn onClick={() => handleSave(editingTemplate)} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingTemplate.is_vanilla ? "Save to My Library" : "Update"}</Btn>
             </div>
@@ -1254,32 +1276,12 @@ export default function AdminPage() {
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("sessions").select(`
-        *,
-        session_blocks (
-          sequence_order,
-          session_block_exercises (
-            sequence_order, reps_override, hold_ms_override,
-            exercise_templates ( display_name, default_reps, default_hold_ms )
-          )
-        ),
-        prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
-      `).order("created_at", { ascending: false }),
+      supabase.from("sessions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
       supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
-      // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
-      const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
-      const blockExercises = blocks
-        .flatMap((b: Record<string, unknown>) =>
-          ((b.session_block_exercises as Record<string, unknown>[]) ?? [])
-        )
-        .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
-      const pe = blockExercises.length > 0
-        ? blockExercises
-        : ((s.prescription_exercises as Record<string, unknown>[]) ?? [])
-            .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      const pe = (s.prescription_exercises as Record<string, unknown>[]) ?? [];
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
@@ -1302,7 +1304,7 @@ export default function AdminPage() {
         {/* Left: logo + tabs */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 32 }}>
           <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚡</div>
-          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Rehably</span>
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>AI Physio</span>
           <span style={{ color: C.border, fontSize: 16, margin: "0 4px" }}>|</span>
           <span style={{ fontSize: 14, color: C.textMuted }}>Admin</span>
         </div>
