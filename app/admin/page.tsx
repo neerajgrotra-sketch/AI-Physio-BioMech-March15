@@ -1254,12 +1254,32 @@ export default function AdminPage() {
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("sessions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("sessions").select(`
+        *,
+        session_blocks (
+          sequence_order,
+          session_block_exercises (
+            sequence_order, reps_override, hold_ms_override,
+            exercise_templates ( display_name, default_reps, default_hold_ms )
+          )
+        ),
+        prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
+      `).order("created_at", { ascending: false }),
       supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
-      const pe = (s.prescription_exercises as Record<string, unknown>[]) ?? [];
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
+      const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
+      const blockExercises = blocks
+        .flatMap((b: Record<string, unknown>) =>
+          ((b.session_block_exercises as Record<string, unknown>[]) ?? [])
+        )
+        .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      const pe = blockExercises.length > 0
+        ? blockExercises
+        : ((s.prescription_exercises as Record<string, unknown>[]) ?? [])
+            .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
