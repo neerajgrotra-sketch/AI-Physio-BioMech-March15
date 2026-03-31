@@ -822,6 +822,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const [search, setSearch] = useState("");
   const [editingProtocolId, setEditingProtocolId] = useState<string | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [expandedProtocolId, setExpandedProtocolId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -972,8 +973,9 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
           {filteredTemplates.map(t => {
-            const visibleExercises = t.exercises.slice(0, 3);
-            const hiddenCount = t.exercises.length - visibleExercises.length;
+            const isExpanded = expandedProtocolId === t.id;
+            const visibleExercises = isExpanded ? t.exercises : t.exercises.slice(0, 3);
+            const hiddenCount = t.exercises.length - 3;
             return (
               <div key={t.id} style={{
                 background: C.surface,
@@ -990,7 +992,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 2 }}>{t.title}</div>
-                    {t.objective && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{t.objective}</div>}
+                    {t.objective && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.4 }}>{t.objective}</div>}
                   </div>
                   <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const, marginTop: 2 }}>{t.estimated_duration_mins}min</div>
                 </div>
@@ -1002,7 +1004,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                   </div>
                 )}
 
-                {/* Exercise list — first 3 + overflow count */}
+                {/* Exercise list — expandable */}
                 <div style={{ background: C.bg, borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
                   <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.06em", fontWeight: 700, marginBottom: 4 }}>
                     {t.exercises.length} exercise{t.exercises.length !== 1 ? "s" : ""}
@@ -1014,8 +1016,14 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                       <span style={{ color: C.textDim, fontSize: 11 }}>{ex.default_reps ?? ex.exercise_template?.default_reps}× · {msToSeconds(ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 0)}s</span>
                     </div>
                   ))}
-                  {hiddenCount > 0 && (
-                    <div style={{ fontSize: 11, color: C.textDim, marginTop: 2 }}>+{hiddenCount} more exercise{hiddenCount !== 1 ? "s" : ""}</div>
+                  {/* Expand / collapse toggle */}
+                  {t.exercises.length > 3 && (
+                    <button
+                      onClick={() => setExpandedProtocolId(isExpanded ? null : t.id)}
+                      style={{ marginTop: 4, background: "none", border: "none", color: C.blue, fontSize: 11, fontWeight: 600, cursor: "pointer", textAlign: "left" as const, padding: 0, fontFamily: "inherit" }}
+                    >
+                      {isExpanded ? "▲ Show less" : `▼ Show ${hiddenCount} more exercise${hiddenCount !== 1 ? "s" : ""}`}
+                    </button>
                   )}
                 </div>
 
@@ -1030,7 +1038,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         </div>
       )}
 
-      {/* ── Builder side panel (fixed overlay, same pattern as exercise customise) ── */}
+      {/* ── Builder side panel ── */}
       {builderOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) cancelEdit(); }}>
           <div style={{ width: "min(640px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -1197,37 +1205,79 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
       </div>
       {loading ? <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted }}>Loading…</div> : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-          {active.map(t => (
-            <div key={t.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.display_name}</div>
-                {t.is_vanilla && <Badge label="System" color={C.textMuted} />}
+          {active.map(t => {
+            // Accent colour per exercise type
+            const accent = t.exercise_type === "arm_raise" ? C.blue
+              : t.exercise_type === "bilateral_arm_raise" ? C.purple
+              : t.exercise_type === "sit_to_stand" ? C.green
+              : C.orange;
+            const accentDim = t.exercise_type === "arm_raise" ? C.blueDim
+              : t.exercise_type === "bilateral_arm_raise" ? C.purpleDim
+              : t.exercise_type === "sit_to_stand" ? C.greenDim
+              : C.orangeDim;
+            const icon = t.exercise_type === "arm_raise" ? "💪"
+              : t.exercise_type === "bilateral_arm_raise" ? "🙌"
+              : t.exercise_type === "sit_to_stand" ? "🦵"
+              : "⚡";
+            return (
+              <div key={t.id} style={{
+                background: C.surface,
+                border: `1px solid ${accent}40`,
+                borderTop: `3px solid ${accent}`,
+                borderRadius: 10, padding: "16px",
+                display: "flex", flexDirection: "column", gap: 10,
+                transition: "box-shadow 0.15s",
+              }}
+                onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${accent}20`)}
+                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 8,
+                      background: accentDim, border: `1px solid ${accent}30`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 18, flexShrink: 0,
+                    }}>{icon}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.display_name}</div>
+                  </div>
+                  {t.is_vanilla && <Badge label="System" color={accent} />}
+                </div>
+                {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
+                <div style={{
+                  display: "flex", gap: 8, padding: "6px 10px",
+                  background: accentDim, borderRadius: 6,
+                }}>
+                  <span style={{ fontSize: 11, color: accent, fontWeight: 600 }}>
+                    {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold
+                  </span>
+                </div>
+                <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost">{t.is_vanilla ? "Customise →" : "Edit"}</Btn>
               </div>
-              {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
-              <div style={{ display: "flex", gap: 8 }}>
-                <span style={{ fontSize: 11, color: C.textDim }}>Default: {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</span>
-              </div>
-              <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost">{t.is_vanilla ? "Customise →" : "Edit"}</Btn>
-            </div>
-          ))}
+            );
+          })}
           {active.length === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: C.textDim }}>No exercises match your filter.</div>}
         </div>
       )}
       {editingTemplate && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) setEditingTemplate(null); }}>
-          <div style={{ width: "min(500px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editingTemplate.is_vanilla ? `Customise: ${editingTemplate.display_name}` : `Edit: ${editingTemplate.display_name}`}</h3>
-              <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
+          <div style={{ width: "min(500px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* Scrollable content */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editingTemplate.is_vanilla ? `Customise: ${editingTemplate.display_name}` : `Edit: ${editingTemplate.display_name}`}</h3>
+                <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
+              </div>
+              <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
+              <Field label="Description"><Textarea value={editingTemplate.description ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, description: v } : t)} /></Field>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <Field label="Default Reps"><Input type="number" value={editingTemplate.default_reps} onChange={v => setEditingTemplate(t => t ? { ...t, default_reps: parseInt(v) || 1 } : t)} min={1} max={30} /></Field>
+                <Field label="Hold (s)"><Input type="number" value={msToSeconds(editingTemplate.default_hold_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_hold_ms: secondsToMs(v) } : t)} min={0} max={10} step={0.5} /></Field>
+                <Field label="Rest (s)"><Input type="number" value={msToSeconds(editingTemplate.default_rest_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_rest_ms: secondsToMs(v) } : t)} min={0} max={30} step={0.5} /></Field>
+              </div>
             </div>
-            <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
-            <Field label="Description"><Textarea value={editingTemplate.description ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, description: v } : t)} /></Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-              <Field label="Default Reps"><Input type="number" value={editingTemplate.default_reps} onChange={v => setEditingTemplate(t => t ? { ...t, default_reps: parseInt(v) || 1 } : t)} min={1} max={30} /></Field>
-              <Field label="Hold (s)"><Input type="number" value={msToSeconds(editingTemplate.default_hold_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_hold_ms: secondsToMs(v) } : t)} min={0} max={10} step={0.5} /></Field>
-              <Field label="Rest (s)"><Input type="number" value={msToSeconds(editingTemplate.default_rest_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_rest_ms: secondsToMs(v) } : t)} min={0} max={30} step={0.5} /></Field>
-            </div>
-            <div style={{ display: "flex", gap: 10, marginTop: "auto", paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+            {/* Sticky footer — always visible regardless of scroll position */}
+            <div style={{ padding: "16px 24px", borderTop: `1px solid ${C.border}`, background: C.surface, display: "flex", gap: 10, flexShrink: 0 }}>
               <Btn onClick={() => setEditingTemplate(null)} variant="ghost">Cancel</Btn>
               <Btn onClick={() => handleSave(editingTemplate)} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingTemplate.is_vanilla ? "Save to My Library" : "Update"}</Btn>
             </div>
@@ -1276,12 +1326,32 @@ export default function AdminPage() {
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("sessions").select("*, prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("sessions").select(`
+        *,
+        session_blocks (
+          sequence_order,
+          session_block_exercises (
+            sequence_order, reps_override, hold_ms_override,
+            exercise_templates ( display_name, default_reps, default_hold_ms )
+          )
+        ),
+        prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
+      `).order("created_at", { ascending: false }),
       supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
-      const pe = (s.prescription_exercises as Record<string, unknown>[]) ?? [];
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number)).map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
+      const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
+      const blockExercises = blocks
+        .flatMap((b: Record<string, unknown>) =>
+          ((b.session_block_exercises as Record<string, unknown>[]) ?? [])
+        )
+        .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      const pe = blockExercises.length > 0
+        ? blockExercises
+        : ((s.prescription_exercises as Record<string, unknown>[]) ?? [])
+            .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
@@ -1304,7 +1374,7 @@ export default function AdminPage() {
         {/* Left: logo + tabs */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 32 }}>
           <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚡</div>
-          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>AI Physio</span>
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Rehably</span>
           <span style={{ color: C.border, fontSize: 16, margin: "0 4px" }}>|</span>
           <span style={{ fontSize: 14, color: C.textMuted }}>Admin</span>
         </div>
