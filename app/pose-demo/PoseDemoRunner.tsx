@@ -505,26 +505,29 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
 // Returns a 0-1 lerp value (rest->target) given elapsed seconds.
 // One demo cycle: 1s at rest, 2s raise, 1.5s hold at top, 2s lower, 0.5s pause
 // Total cycle: 7s. We run 2 cycles then freeze at target.
-const DEMO_CYCLE_S = 7;
-const DEMO_CYCLES  = 2;
-const DEMO_TOTAL_S = DEMO_CYCLE_S * DEMO_CYCLES;
+const DEMO_CYCLE_S       = 7;   // seconds per cycle
+const DEMO_CYCLES_FIRST  = 2;   // full teaching demo: 2 cycles
+const DEMO_CYCLES_REPEAT = 1;   // reminder demo: 1 cycle (quicker)
 
-function demoLerp(elapsedS: number): { t: number; done: boolean } {
-  if (elapsedS >= DEMO_TOTAL_S) return { t: 1, done: true };
-  const cycleT = (elapsedS % DEMO_CYCLE_S) / DEMO_CYCLE_S; // 0-1 within cycle
-  // Timeline within one cycle (fractions of cycle):
-  // 0.00-0.14 = rest (1s)
-  // 0.14-0.43 = raise (2s)
-  // 0.43-0.64 = hold at top (1.5s)
-  // 0.64-0.93 = lower (2s)
-  // 0.93-1.00 = pause at rest (0.5s)
-  let lerpT: number;
-  if      (cycleT < 0.14) lerpT = 0;
-  else if (cycleT < 0.43) lerpT = easeInOut((cycleT - 0.14) / 0.29);
-  else if (cycleT < 0.64) lerpT = 1;
-  else if (cycleT < 0.93) lerpT = 1 - easeInOut((cycleT - 0.64) / 0.29);
-  else                    lerpT = 0;
-  return { t: lerpT, done: false };
+// Intent detection: score must rise by this much over INTENT_WINDOW frames
+const INTENT_DELTA     = 0.10; // 10 percentage point rise = "they're trying"
+const INTENT_MIN_SCORE = 0.20; // must be above noise floor to count as intent
+const INTENT_WINDOW    = 20;   // frames to look back (~0.33s at 60fps)
+
+function cycleT(elapsedS: number): number {
+  const t = (elapsedS % DEMO_CYCLE_S) / DEMO_CYCLE_S;
+  if      (t < 0.14) return 0;
+  else if (t < 0.43) return easeInOut((t - 0.14) / 0.29);
+  else if (t < 0.64) return 1;
+  else if (t < 0.93) return 1 - easeInOut((t - 0.64) / 0.29);
+  else               return 0;
+}
+
+function demoLerp(elapsedS: number, isRepeat: boolean): { t: number; done: boolean } {
+  const cycles = isRepeat ? DEMO_CYCLES_REPEAT : DEMO_CYCLES_FIRST;
+  const totalS = DEMO_CYCLE_S * cycles;
+  if (elapsedS >= totalS) return { t: cycleT(totalS - 0.01), done: true };
+  return { t: cycleT(elapsedS), done: false };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -563,17 +566,21 @@ export default function PoseDemoRunner() {
   const phaseStartRef   = useRef<number>(performance.now());
   const holdRef         = useRef(0);
   const holdTimerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
-  const lowScoreRef     = useRef<number>(0); // ms spent below 55% during attempt
+  const lowScoreRef     = useRef<number>(0);    // seconds below 55% during attempt
+  const isRepeatDemoRef = useRef<boolean>(false); // true = reminder cycle (1x), false = first demo (2x)
+  const scoreHistoryRef = useRef<number[]>([]);   // rolling score buffer for intent detection
 
   useEffect(()=>{ exRef.current = exercise; },[exercise]);
   useEffect(()=>{ autoFrameRef.current = autoFrame; },[autoFrame]);
   useEffect(()=>{ manualZoomRef.current = manualZoom; },[manualZoom]);
 
-  const startPhase = useCallback((p: ExercisePhase) => {
+  const startPhase = useCallback((p: ExercisePhase, repeat = false) => {
     phaseRef.current = p;
     phaseStartRef.current = performance.now();
     lowScoreRef.current = 0;
     holdRef.current = 0;
+    scoreHistoryRef.current = []; // clear intent buffer on phase change
+    if (p === 'demo') isRepeatDemoRef.current = repeat;
     if (holdTimerRef.current) clearInterval(holdTimerRef.current);
     setPhase(p); setHoldSecs(0);
   }, []);
@@ -659,25 +666,47 @@ export default function PoseDemoRunner() {
           const restJoints   = restBuilder(frame);
 
           if (currentPhase === 'demo') {
-            // ── DEMO: animate silhouette through rest→target→rest ─────────────
-            const { t, done } = demoLerp(elapsed);
-            setDemoProgress(Math.min(elapsed / DEMO_TOTAL_S, 1));
-            const ghostJoints = lerpGhost(restJoints, targetJoints, t);
-            // Ghost pulses cyan during demo to signal "watch me"
-            drawGhostDemo(ctx, ghostJoints, t);
+            // ── DEMO: animate silhouette + watch for patient intent ───────────
+            const isRepeat = isRepeatDemoRef.current;
+            const { t, done } = demoLerp(elapsed, isRepeat);
+            const totalS = DEMO_CYCLE_S * (isRepeat ? DEMO_CYCLES_REPEAT : DEMO_CYCLES_FIRST);
+            setDemoProgress(Math.min(elapsed / totalS, 1));
 
-            if (done) {
-              // Demo complete — freeze at target, switch to attempt
-              setPhaseLabel('Your turn — match the pose');
-              setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
-              phaseRef.current = 'attempt';
-              phaseStartRef.current = performance.now();
-              lowScoreRef.current = 0;
+            // ── Intent detection: is score rising? ────────────────────────────
+            // Push current score into rolling history buffer
+            const hist = scoreHistoryRef.current;
+            hist.push(s);
+            if (hist.length > INTENT_WINDOW) hist.shift();
+
+            let patientIsAttempting = false;
+            if (hist.length >= INTENT_WINDOW && s >= INTENT_MIN_SCORE) {
+              const oldest = hist[0];
+              const scoreDelta = s - oldest;
+              // Meaningful rising trend over the window = intent
+              if (scoreDelta >= INTENT_DELTA) patientIsAttempting = true;
+            }
+
+            if (patientIsAttempting) {
+              // Patient started moving to match — pause demo immediately
+              setPhaseLabel('Good — now hold that position!');
+              setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
+              isRepeatDemoRef.current = false; // next repeat will be reminder length
+              startPhase('attempt');
             } else {
-              // Update demo label based on animation position
-              if (t < 0.05)       { setPhaseLabel('Watch carefully…');      setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
-              else if (t < 0.95)  { setPhaseLabel('Follow this movement');     setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
-              else                { setPhaseLabel('Hold at the top');           setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+              // Draw animated ghost
+              const ghostJoints = lerpGhost(restJoints, targetJoints, t);
+              drawGhostDemo(ctx, ghostJoints, t);
+
+              if (done) {
+                // Demo finished naturally — switch to attempt
+                setPhaseLabel('Your turn — match the pose');
+                setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
+                startPhase('attempt');
+              } else {
+                if (t < 0.05)      { setPhaseLabel(isRepeat?'Watch again…':'Watch carefully…');    setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
+                else if (t < 0.95) { setPhaseLabel('Follow this movement');                         setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+                else               { setPhaseLabel('Hold at the top');                              setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+              }
             }
 
           } else if (currentPhase === 'attempt') {
@@ -702,14 +731,12 @@ export default function PoseDemoRunner() {
                 setPhaseLabel('Match the blue silhouette');
                 setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
               }
-              // After 8 seconds struggling → go back to demo
+              // After 8 seconds struggling → repeat demo (shorter reminder cycle)
               if (lowScoreRef.current > 8) {
                 setPhaseLabel('Let me show you again…');
                 setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)');
-                phaseRef.current = 'demo';
-                phaseStartRef.current = performance.now();
-                lowScoreRef.current = 0;
                 setDemoProgress(0);
+                startPhase('demo', true); // true = repeat = 1 cycle only
               }
             }
 
@@ -765,6 +792,7 @@ export default function PoseDemoRunner() {
     setExercise(ex); setShowMenu(false); setReps(0); setScore(0);
     setPhaseLabel('Watch carefully…'); setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
     setDemoProgress(0); setHoldSecs(0);
+    isRepeatDemoRef.current=false; scoreHistoryRef.current=[];
     phaseRef.current='demo'; phaseStartRef.current=performance.now();
     lowScoreRef.current=0;
     if(holdTimerRef.current){ clearInterval(holdTimerRef.current); holdTimerRef.current=null; }
