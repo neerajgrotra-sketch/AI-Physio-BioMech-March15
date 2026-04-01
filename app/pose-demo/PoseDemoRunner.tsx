@@ -395,6 +395,138 @@ function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: 
 // Smoothed viewport state — persists across renders without causing re-renders
 type Viewport = { scale: number; offsetX: number; offsetY: number };
 
+
+// Demo-mode ghost: cyan/purple pulsing to signal "watch me"
+function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number) {
+  // Colour oscillates between cyan and purple to signal active demo
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 350);
+  const r = Math.floor(96  + (167 - 96)  * pulse);
+  const gr= Math.floor(165 + (139 - 165) * pulse);
+  const b = Math.floor(250 + (250 - 250) * pulse);
+  const col = `rgba(${r},${gr},${b},`;
+
+  const torso = [g.lShoulder, g.rShoulder, g.rHip, g.lHip];
+  ctx.beginPath(); ctx.moveTo(torso[0].x,torso[0].y);
+  torso.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+  ctx.fillStyle=col+'0.08)'; ctx.fill();
+
+  const GHOST_SEGS: [keyof GhostJoints, keyof GhostJoints][] = [
+    ['lShoulder','rShoulder'],['rShoulder','rElbow'],['rElbow','rWrist'],
+    ['lShoulder','lElbow'],['lElbow','lWrist'],['rShoulder','rHip'],['lShoulder','lHip'],
+    ['lHip','rHip'],['rHip','rKnee'],['rKnee','rAnkle'],['lHip','lKnee'],['lKnee','lAnkle'],
+  ];
+  ctx.setLineDash([6,4]); ctx.lineWidth=4.5; ctx.lineCap='round';
+  for (const [a,b2] of GHOST_SEGS) {
+    ctx.beginPath(); ctx.moveTo(g[a].x,g[a].y); ctx.lineTo(g[b2].x,g[b2].y);
+    ctx.strokeStyle=col+'0.75)'; ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (const p of Object.values(g) as Vec2[]) {
+    ctx.beginPath(); ctx.arc(p.x,p.y,8,0,Math.PI*2);
+    ctx.fillStyle=col+'0.85)'; ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=2; ctx.stroke();
+  }
+}
+
+// ─── Exercise phase state machine ────────────────────────────────────────────
+type ExercisePhase = 'demo' | 'attempt' | 'rep_complete';
+
+// Ease in-out cubic
+function easeInOut(t: number): number {
+  return t < 0.5 ? 4*t*t*t : 1 - (-2*t+2)**3/2;
+}
+
+// Lerp two Vec2 values
+function lerpV(a: Vec2, b: Vec2, t: number): Vec2 {
+  return { x: a.x + (b.x - a.x)*t, y: a.y + (b.y - a.y)*t };
+}
+
+// Lerp all ghost joints between two poses
+function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
+  const k = Object.keys(a) as (keyof GhostJoints)[];
+  const out = {} as GhostJoints;
+  for (const key of k) out[key] = lerpV(a[key], b[key], t);
+  return out;
+}
+
+// REST pose builders — natural standing/seated position for each exercise
+const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
+  shoulder_abduction_bilateral: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    const base = standingBase(f);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+  },
+  shoulder_abduction: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    const base = standingBase(f);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+  },
+  shoulder_external_rotation: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    // Start: elbow at side, forearm pointing forward/across body
+    const rElbow = limbPoint(f, rShoulder, 1.0, 0.05, f.rUpperArm);
+    const rWrist = limbPoint(f, rElbow, 0.05, -0.8, f.rForeArm); // forearm tucked across
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    const base = standingBase(f);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+  },
+  knee_extension: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    const rHip = framePoint(f, 0.90,  0.38);
+    const lHip = framePoint(f, 0.90, -0.38);
+    // Both legs bent seated — knee below hip, shin down
+    const rKnee  = limbPoint(f, rHip, 0.08, 0.9, f.rThigh);
+    const rAnkle = limbPoint(f, rKnee, 1.0, 0.05, f.rShin);
+    const lKnee  = limbPoint(f, lHip, 0.08, -0.9, f.lThigh);
+    const lAnkle = limbPoint(f, lKnee, 1.0, -0.05, f.lShin);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
+  },
+  knee_flexion: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    const base = standingBase(f);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+  },
+};
+
+// ── Animation timeline for DEMO phase ────────────────────────────────────────
+// Returns a 0-1 lerp value (rest->target) given elapsed seconds.
+// One demo cycle: 1s at rest, 2s raise, 1.5s hold at top, 2s lower, 0.5s pause
+// Total cycle: 7s. We run 2 cycles then freeze at target.
+const DEMO_CYCLE_S = 7;
+const DEMO_CYCLES  = 2;
+const DEMO_TOTAL_S = DEMO_CYCLE_S * DEMO_CYCLES;
+
+function demoLerp(elapsedS: number): { t: number; done: boolean } {
+  if (elapsedS >= DEMO_TOTAL_S) return { t: 1, done: true };
+  const cycleT = (elapsedS % DEMO_CYCLE_S) / DEMO_CYCLE_S; // 0-1 within cycle
+  // Timeline within one cycle (fractions of cycle):
+  // 0.00-0.14 = rest (1s)
+  // 0.14-0.43 = raise (2s)
+  // 0.43-0.64 = hold at top (1.5s)
+  // 0.64-0.93 = lower (2s)
+  // 0.93-1.00 = pause at rest (0.5s)
+  let lerpT: number;
+  if      (cycleT < 0.14) lerpT = 0;
+  else if (cycleT < 0.43) lerpT = easeInOut((cycleT - 0.14) / 0.29);
+  else if (cycleT < 0.64) lerpT = 1;
+  else if (cycleT < 0.93) lerpT = 1 - easeInOut((cycleT - 0.64) / 0.29);
+  else                    lerpT = 0;
+  return { t: lerpT, done: false };
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function PoseDemoRunner() {
   const videoRef     = useRef<HTMLVideoElement>(null);
@@ -408,43 +540,62 @@ export default function PoseDemoRunner() {
   const autoFrameRef     = useRef<boolean>(true);
   const manualZoomRef    = useRef<number>(1.0);
 
-  const [exercise, setExercise]       = useState<Exercise>(EXERCISES[0]);
-  const [score, setScore]             = useState(0);
-  const [matchState, setMatchState]   = useState<'idle'|'tracking'|'close'|'matched'>('idle');
-  const [holdSecs, setHoldSecs]       = useState(0);
-  const [reps, setReps]               = useState(0);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [cameraError, setCameraError] = useState('');
-  const [loading, setLoading]         = useState(true);
-  const [cueIdx, setCueIdx]           = useState(0);
-  const [showMenu, setShowMenu]       = useState(false);
-  const [autoFrame, setAutoFrame]     = useState(true);
-  const [manualZoom, setManualZoom]   = useState(1.0);
+  const [exercise, setExercise]         = useState<Exercise>(EXERCISES[0]);
+  const [score, setScore]               = useState(0);
+  const [phase, setPhase]               = useState<ExercisePhase>('demo');
+  const [holdSecs, setHoldSecs]         = useState(0);
+  const [reps, setReps]                 = useState(0);
+  const [cameraReady, setCameraReady]   = useState(false);
+  const [cameraError, setCameraError]   = useState('');
+  const [loading, setLoading]           = useState(true);
+  const [showMenu, setShowMenu]         = useState(false);
+  const [autoFrame, setAutoFrame]       = useState(true);
+  const [manualZoom, setManualZoom]     = useState(1.0);
   const [showControls, setShowControls] = useState(false);
+  // UI-facing phase info — updated from render loop via refs to avoid stale closures
+  const [phaseLabel, setPhaseLabel]     = useState('Watch carefully…');
+  const [phaseColor, setPhaseColor]     = useState('#60a5fa');
+  const [phaseBg, setPhaseBg]           = useState('rgba(96,165,250,0.12)');
+  const [demoProgress, setDemoProgress] = useState(0); // 0-1 for demo progress bar
 
-  const holdRef      = useRef(0);
-  const holdTimerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  // Phase tracking refs (read in renderLoop without stale closure)
+  const phaseRef        = useRef<ExercisePhase>('demo');
+  const phaseStartRef   = useRef<number>(performance.now());
+  const holdRef         = useRef(0);
+  const holdTimerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
+  const lowScoreRef     = useRef<number>(0); // ms spent below 55% during attempt
 
   useEffect(()=>{ exRef.current = exercise; },[exercise]);
   useEffect(()=>{ autoFrameRef.current = autoFrame; },[autoFrame]);
   useEffect(()=>{ manualZoomRef.current = manualZoom; },[manualZoom]);
 
-  useEffect(()=>{
-    const id = setInterval(()=>setCueIdx(i=>(i+1)%exercise.cues.length),4000);
-    return ()=>clearInterval(id);
-  },[exercise]);
-
-  useEffect(()=>{
+  const startPhase = useCallback((p: ExercisePhase) => {
+    phaseRef.current = p;
+    phaseStartRef.current = performance.now();
+    lowScoreRef.current = 0;
+    holdRef.current = 0;
     if (holdTimerRef.current) clearInterval(holdTimerRef.current);
-    holdRef.current=0; setHoldSecs(0);
-    if (matchState==='matched') {
-      holdTimerRef.current = setInterval(()=>{
-        holdRef.current+=1; setHoldSecs(holdRef.current);
-        if (holdRef.current>=5){ setReps(r=>r+1); holdRef.current=0; setHoldSecs(0); }
-      },1000);
-    }
-    return ()=>{ if(holdTimerRef.current) clearInterval(holdTimerRef.current); };
-  },[matchState]);
+    setPhase(p); setHoldSecs(0);
+  }, []);
+
+  // Hold timer — only runs during attempt when matched
+  const startHoldTimer = useCallback(() => {
+    if (holdTimerRef.current) return;
+    holdTimerRef.current = setInterval(()=>{
+      holdRef.current += 1; setHoldSecs(holdRef.current);
+      if (holdRef.current >= 5) {
+        clearInterval(holdTimerRef.current!); holdTimerRef.current = null;
+        setReps(r => r+1);
+        startPhase('rep_complete');
+        setTimeout(()=>startPhase('attempt'), 1500);
+      }
+    }, 1000);
+  }, [startPhase]);
+
+  const stopHoldTimer = useCallback(() => {
+    if (holdTimerRef.current) { clearInterval(holdTimerRef.current); holdTimerRef.current = null; }
+    holdRef.current = 0; setHoldSecs(0);
+  }, []);
 
   const renderLoop = useCallback(()=>{
     const video=videoRef.current; const canvas=canvasRef.current;
@@ -457,12 +608,10 @@ export default function PoseDemoRunner() {
     const lms=landmarksRef.current;
     const mir = lms.length>0 ? lms.map(lm=>({...lm, x:1-lm.x})) : [];
 
-    // ── Compute target viewport ───────────────────────────────────────────────
+    // ── Viewport auto-frame ───────────────────────────────────────────────────
     let targetScale = manualZoomRef.current;
     let targetOX = 0; let targetOY = 0;
-
     if (autoFrameRef.current && mir.length>0) {
-      // Find bounding box of all visible landmarks in canvas coordinates
       const visLms = mir.filter(lm=>(lm.visibility??1)>0.15);
       if (visLms.length>=2) {
         let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
@@ -470,62 +619,115 @@ export default function PoseDemoRunner() {
           minX=Math.min(minX,lm.x*W); maxX=Math.max(maxX,lm.x*W);
           minY=Math.min(minY,lm.y*H); maxY=Math.max(maxY,lm.y*H);
         }
-        // Add generous padding so body doesn't feel cramped
-        const padX = (maxX-minX)*0.35 + 20;
-        const padY = (maxY-minY)*0.28 + 20;
-        const bx = Math.max(0, minX-padX);
-        const by = Math.max(0, minY-padY);
-        const bw = Math.min(W, maxX+padX) - bx;
-        const bh = Math.min(H, maxY+padY) - by;
-        // Scale to fill canvas while keeping aspect ratio
-        const fitScale = Math.min(W/bw, H/bh);
-        // Apply manual zoom on top of auto-frame scale
-        targetScale = fitScale * manualZoomRef.current;
-        // Clamp: never zoom out beyond 1x, never over 4x
-        targetScale = Math.max(1.0, Math.min(4.0, targetScale));
-        // Centre the bounding box in canvas
-        const centreX = bx + bw/2;
-        const centreY = by + bh/2;
-        targetOX = W/2 - centreX * targetScale;
-        targetOY = H/2 - centreY * targetScale;
+        const padX=(maxX-minX)*0.35+20; const padY=(maxY-minY)*0.28+20;
+        const bx=Math.max(0,minX-padX); const by=Math.max(0,minY-padY);
+        const bw=Math.min(W,maxX+padX)-bx; const bh=Math.min(H,maxY+padY)-by;
+        targetScale=Math.max(1.0,Math.min(4.0,Math.min(W/bw,H/bh)*manualZoomRef.current));
+        targetOX=W/2-(bx+bw/2)*targetScale; targetOY=H/2-(by+bh/2)*targetScale;
       }
     }
+    const LERP=0.07; const vp=viewportRef.current;
+    vp.scale+=( targetScale-vp.scale)*LERP;
+    vp.offsetX+=(targetOX-vp.offsetX)*LERP;
+    vp.offsetY+=(targetOY-vp.offsetY)*LERP;
 
-    // ── Exponential smoothing — feels like a real camera operator ─────────────
-    const LERP = 0.07; // lower = smoother/slower, higher = snappier
-    const vp = viewportRef.current;
-    vp.scale   = vp.scale   + (targetScale - vp.scale)   * LERP;
-    vp.offsetX = vp.offsetX + (targetOX    - vp.offsetX) * LERP;
-    vp.offsetY = vp.offsetY + (targetOY    - vp.offsetY) * LERP;
-
-    // ── Draw video with viewport transform ────────────────────────────────────
+    // ── Draw video ────────────────────────────────────────────────────────────
     ctx.save();
-    ctx.setTransform(vp.scale, 0, 0, vp.scale, vp.offsetX, vp.offsetY);
+    ctx.setTransform(vp.scale,0,0,vp.scale,vp.offsetX,vp.offsetY);
     ctx.save(); ctx.scale(-1,1); ctx.drawImage(video,-W,0,W,H); ctx.restore();
     ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.fillRect(0,0,W,H);
     ctx.restore();
 
-    // ── Draw skeleton overlays using same viewport transform ──────────────────
     if (mir.length>0) {
+      const now = performance.now();
+      const elapsed = (now - phaseStartRef.current) / 1000;
+      const currentPhase = phaseRef.current;
       const s = computeMatch(mir, exRef.current, W, H);
       setScore(s);
-      setMatchState(s>=0.85?'matched':s>=0.55?'close':'tracking');
-
-      ctx.save();
-      ctx.setTransform(vp.scale, 0, 0, vp.scale, vp.offsetX, vp.offsetY);
 
       const frame = getBodyFrame(mir, W, H);
-      if (frame) {
-        const builder = POSE_BUILDERS[exRef.current.id];
-        if (builder) drawGhost(ctx, builder(frame), s);
-      }
-      drawLive(ctx, mir, W, H, s);
 
+      ctx.save();
+      ctx.setTransform(vp.scale,0,0,vp.scale,vp.offsetX,vp.offsetY);
+
+      if (frame) {
+        const targetBuilder = POSE_BUILDERS[exRef.current.id];
+        const restBuilder   = REST_BUILDERS[exRef.current.id];
+
+        if (targetBuilder && restBuilder) {
+          const targetJoints = targetBuilder(frame);
+          const restJoints   = restBuilder(frame);
+
+          if (currentPhase === 'demo') {
+            // ── DEMO: animate silhouette through rest→target→rest ─────────────
+            const { t, done } = demoLerp(elapsed);
+            setDemoProgress(Math.min(elapsed / DEMO_TOTAL_S, 1));
+            const ghostJoints = lerpGhost(restJoints, targetJoints, t);
+            // Ghost pulses cyan during demo to signal "watch me"
+            drawGhostDemo(ctx, ghostJoints, t);
+
+            if (done) {
+              // Demo complete — freeze at target, switch to attempt
+              setPhaseLabel('Your turn — match the pose');
+              setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
+              phaseRef.current = 'attempt';
+              phaseStartRef.current = performance.now();
+              lowScoreRef.current = 0;
+            } else {
+              // Update demo label based on animation position
+              if (t < 0.05)       { setPhaseLabel('Watch carefully…');      setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
+              else if (t < 0.95)  { setPhaseLabel('Follow this movement');     setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+              else                { setPhaseLabel('Hold at the top');           setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+            }
+
+          } else if (currentPhase === 'attempt') {
+            // ── ATTEMPT: ghost frozen at target, score live ───────────────────
+            drawGhost(ctx, targetJoints, s);
+
+            if (s >= 0.85) {
+              lowScoreRef.current = 0;
+              startHoldTimer();
+              const h = holdRef.current;
+              setPhaseLabel(`Great form — hold ${h}s / 5s`);
+              setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
+            } else {
+              stopHoldTimer();
+              // Track time spent too low
+              lowScoreRef.current += (1/60); // ~60fps
+              if (s >= 0.55) {
+                setPhaseLabel('Almost there — keep adjusting');
+                setPhaseColor('#fbbf24'); setPhaseBg('rgba(251,191,36,0.12)');
+                lowScoreRef.current = 0; // reset low-score timer when getting close
+              } else {
+                setPhaseLabel('Match the blue silhouette');
+                setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
+              }
+              // After 8 seconds struggling → go back to demo
+              if (lowScoreRef.current > 8) {
+                setPhaseLabel('Let me show you again…');
+                setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)');
+                phaseRef.current = 'demo';
+                phaseStartRef.current = performance.now();
+                lowScoreRef.current = 0;
+                setDemoProgress(0);
+              }
+            }
+
+          } else if (currentPhase === 'rep_complete') {
+            // ── REP COMPLETE: brief green flash ───────────────────────────────
+            drawGhost(ctx, targetJoints, 1);
+            setPhaseLabel('Rep complete — well done!');
+            setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
+          }
+        }
+      }
+
+      drawLive(ctx, mir, W, H, s);
       ctx.restore();
     }
 
     animRef.current=requestAnimationFrame(renderLoop);
-  },[]);
+  },[startHoldTimer, stopHoldTimer]);
 
   useEffect(()=>{
     let stopped=false;
@@ -558,14 +760,15 @@ export default function PoseDemoRunner() {
   },[renderLoop]);
 
   const pct=Math.round(score*100);
-  const STATE={
-    idle:     {label:'Position yourself in frame',      color:'#94a3b8',bg:'rgba(148,163,184,0.12)'},
-    tracking: {label:'Match the silhouette',            color:'#60a5fa',bg:'rgba(96,165,250,0.12)' },
-    close:    {label:'Almost there \u2014 keep going',  color:'#fbbf24',bg:'rgba(251,191,36,0.12)' },
-    matched:  {label:`Hold \u2014 ${holdSecs}s / 5s`,  color:'#4ade80',bg:'rgba(74,222,128,0.12)' },
-  }[matchState];
 
-  const pick=(ex:Exercise)=>{ setExercise(ex);setShowMenu(false);setReps(0);setScore(0);setMatchState('idle');setCueIdx(0); };
+  const pick=(ex:Exercise)=>{
+    setExercise(ex); setShowMenu(false); setReps(0); setScore(0);
+    setPhaseLabel('Watch carefully…'); setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
+    setDemoProgress(0); setHoldSecs(0);
+    phaseRef.current='demo'; phaseStartRef.current=performance.now();
+    lowScoreRef.current=0;
+    if(holdTimerRef.current){ clearInterval(holdTimerRef.current); holdTimerRef.current=null; }
+  };
 
   return (
     <div style={{minHeight:'100vh',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'}}>
@@ -703,16 +906,16 @@ export default function PoseDemoRunner() {
           )}
 
           {!loading&&!cameraError&&(
-            <div style={{position:'absolute',top:14,left:14,background:'rgba(8,12,20,0.78)',backdropFilter:'blur(8px)',borderRadius:10,padding:'8px 12px',border:`1px solid ${STATE.color}40`,minWidth:80}}>
-              <div style={{fontSize:22,fontWeight:800,color:STATE.color,lineHeight:1}}>{pct}%</div>
+            <div style={{position:'absolute',top:14,left:14,background:'rgba(8,12,20,0.78)',backdropFilter:'blur(8px)',borderRadius:10,padding:'8px 12px',border:`1px solid ${phaseColor}40`,minWidth:80}}>
+              <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
               <div style={{fontSize:10,color:'#64748b',marginTop:2}}>match</div>
               <div style={{marginTop:6,height:3,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
-                <div style={{height:'100%',width:`${pct}%`,background:STATE.color,borderRadius:2,transition:'width 0.2s ease,background 0.3s ease'}}/>
+                <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:2,transition:'width 0.2s ease,background 0.3s ease'}}/>
               </div>
             </div>
           )}
 
-          {matchState==='matched'&&(
+          {phase==='attempt'&&holdSecs>0&&(
             <div style={{position:'absolute',top:14,right:14,background:'rgba(74,222,128,0.1)',border:'1px solid rgba(74,222,128,0.4)',borderRadius:10,padding:'8px 12px',textAlign:'center'}}>
               <div style={{fontSize:22,fontWeight:800,color:'#4ade80',lineHeight:1}}>{holdSecs}s</div>
               <div style={{fontSize:10,color:'#64748b',marginTop:2}}>hold / 5s</div>
@@ -722,21 +925,44 @@ export default function PoseDemoRunner() {
 
         {/* Bottom */}
         <div style={{maxWidth:700,width:'100%',margin:'0 auto',padding:'12px 16px 28px',display:'flex',flexDirection:'column',gap:10}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,background:STATE.bg,border:`1px solid ${STATE.color}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.3s ease'}}>
-            <div style={{width:8,height:8,borderRadius:'50%',background:STATE.color,boxShadow:matchState==='matched'?`0 0 10px ${STATE.color}`:'none',animation:matchState==='matched'?'pulse 1s ease infinite':'none',flexShrink:0}}/>
-            <div style={{fontSize:13,fontWeight:600,color:STATE.color}}>{STATE.label}</div>
+          <div style={{display:'flex',alignItems:'center',gap:8,background:phaseBg,border:`1px solid ${phaseColor}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.4s ease'}}>
+            <div style={{width:8,height:8,borderRadius:'50%',background:phaseColor,boxShadow:`0 0 8px ${phaseColor}`,animation:'pulse 1.5s ease infinite',flexShrink:0}}/>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:phaseColor}}>{phaseLabel}</div>
+              {phase==='attempt'&&holdSecs>0&&(<div style={{fontSize:11,color:'#64748b',marginTop:1}}>Holding {holdSecs}s of 5s</div>)}
+            </div>
+            <div style={{padding:'2px 10px',borderRadius:20,background:'rgba(59,130,246,0.15)',border:'1px solid rgba(59,130,246,0.3)',fontSize:12,fontWeight:700,color:'#60a5fa',flexShrink:0}}>{reps} rep{reps!==1?'s':''}</div>
           </div>
-
-          <div style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:10,padding:'10px 14px'}}>
-            <div style={{fontSize:11,color:'#475569',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em'}}>Current cue</div>
-            <div style={{fontSize:13,color:'#cbd5e1',lineHeight:1.5}}>{exercise.cues[cueIdx]}</div>
-          </div>
-
-          <div style={{display:'flex',gap:16,padding:'4px 0',fontSize:11,color:'#475569'}}>
-            {([['rgba(96,165,250,0.7)','Target pose'],['rgba(255,255,255,0.7)','Your body'],['rgba(74,222,128,0.8)','Matched \u2713']] as const).map(([bg,label])=>(
-              <span key={label} style={{display:'flex',alignItems:'center',gap:5}}>
-                <span style={{display:'inline-block',width:12,height:3,background:bg,borderRadius:2}}/>
-                {label}
+          {phase==='demo'&&(
+            <div style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(167,139,250,0.2)',borderRadius:10,padding:'10px 14px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:11,color:'#a78bfa',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>&#9654; Demo in progress</span>
+                <span style={{fontSize:11,color:'#64748b'}}>{Math.round(demoProgress*100)}%</span>
+              </div>
+              <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${demoProgress*100}%`,background:'linear-gradient(90deg,#60a5fa,#a78bfa)',borderRadius:2,transition:'width 0.3s ease'}}/>
+              </div>
+              <div style={{fontSize:11,color:'#64748b',marginTop:6}}>Watch the silhouette, then match the movement</div>
+            </div>
+          )}
+          {phase==='attempt'&&(
+            <div style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:10,padding:'10px 14px',display:'flex',alignItems:'center',gap:12}}>
+              <div>
+                <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
+                <div style={{fontSize:10,color:'#64748b',marginTop:1}}>match</div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{height:6,borderRadius:3,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
+                  <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:3,transition:'width 0.15s ease,background 0.3s ease'}}/>
+                </div>
+                <div style={{fontSize:11,color:'#64748b',marginTop:5}}>{pct<55?'Keep trying — demo repeats if needed':pct<85?'Getting close!':'Hold this position'}</div>
+              </div>
+            </div>
+          )}
+          <div style={{display:'flex',gap:12,padding:'2px 0',fontSize:11,color:'#475569',flexWrap:'wrap'}}>
+            {([['rgba(167,139,250,0.7)','Demo'],['rgba(96,165,250,0.7)','Target pose'],['rgba(255,255,255,0.7)','Your body'],['rgba(74,222,128,0.8)','Matched ✓']] as const).map(([bg,label])=>(
+              <span key={label} style={{display:'flex',alignItems:'center',gap:4}}>
+                <span style={{display:'inline-block',width:10,height:3,background:bg,borderRadius:2}}/>{label}
               </span>
             ))}
           </div>
