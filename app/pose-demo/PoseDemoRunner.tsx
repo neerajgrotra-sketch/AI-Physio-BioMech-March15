@@ -391,6 +391,10 @@ function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: 
   });
 }
 
+// ─── Viewport smoothing ───────────────────────────────────────────────────────
+// Smoothed viewport state — persists across renders without causing re-renders
+type Viewport = { scale: number; offsetX: number; offsetY: number };
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function PoseDemoRunner() {
   const videoRef     = useRef<HTMLVideoElement>(null);
@@ -398,6 +402,11 @@ export default function PoseDemoRunner() {
   const animRef      = useRef<number>(0);
   const landmarksRef = useRef<Landmark[]>([]);
   const exRef        = useRef<Exercise>(EXERCISES[0]);
+
+  // Viewport state — stored in refs to avoid triggering re-renders each frame
+  const viewportRef      = useRef<Viewport>({ scale:1, offsetX:0, offsetY:0 });
+  const autoFrameRef     = useRef<boolean>(true);
+  const manualZoomRef    = useRef<number>(1.0);
 
   const [exercise, setExercise]       = useState<Exercise>(EXERCISES[0]);
   const [score, setScore]             = useState(0);
@@ -409,11 +418,16 @@ export default function PoseDemoRunner() {
   const [loading, setLoading]         = useState(true);
   const [cueIdx, setCueIdx]           = useState(0);
   const [showMenu, setShowMenu]       = useState(false);
+  const [autoFrame, setAutoFrame]     = useState(true);
+  const [manualZoom, setManualZoom]   = useState(1.0);
+  const [showControls, setShowControls] = useState(false);
 
   const holdRef      = useRef(0);
   const holdTimerRef = useRef<ReturnType<typeof setInterval>|null>(null);
 
   useEffect(()=>{ exRef.current = exercise; },[exercise]);
+  useEffect(()=>{ autoFrameRef.current = autoFrame; },[autoFrame]);
+  useEffect(()=>{ manualZoomRef.current = manualZoom; },[manualZoom]);
 
   useEffect(()=>{
     const id = setInterval(()=>setCueIdx(i=>(i+1)%exercise.cues.length),4000);
@@ -439,28 +453,77 @@ export default function PoseDemoRunner() {
     const W=canvas.width; const H=canvas.height;
 
     ctx.clearRect(0,0,W,H);
-    ctx.save(); ctx.scale(-1,1); ctx.drawImage(video,-W,0,W,H); ctx.restore();
-    ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.fillRect(0,0,W,H);
 
     const lms=landmarksRef.current;
-    if (lms.length>0) {
-      // Mirror landmarks to match mirrored video display
-      const mir = lms.map(lm=>({...lm, x:1-lm.x}));
+    const mir = lms.length>0 ? lms.map(lm=>({...lm, x:1-lm.x})) : [];
 
+    // ── Compute target viewport ───────────────────────────────────────────────
+    let targetScale = manualZoomRef.current;
+    let targetOX = 0; let targetOY = 0;
+
+    if (autoFrameRef.current && mir.length>0) {
+      // Find bounding box of all visible landmarks in canvas coordinates
+      const visLms = mir.filter(lm=>(lm.visibility??1)>0.15);
+      if (visLms.length>=2) {
+        let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+        for (const lm of visLms) {
+          minX=Math.min(minX,lm.x*W); maxX=Math.max(maxX,lm.x*W);
+          minY=Math.min(minY,lm.y*H); maxY=Math.max(maxY,lm.y*H);
+        }
+        // Add generous padding so body doesn't feel cramped
+        const padX = (maxX-minX)*0.35 + 20;
+        const padY = (maxY-minY)*0.28 + 20;
+        const bx = Math.max(0, minX-padX);
+        const by = Math.max(0, minY-padY);
+        const bw = Math.min(W, maxX+padX) - bx;
+        const bh = Math.min(H, maxY+padY) - by;
+        // Scale to fill canvas while keeping aspect ratio
+        const fitScale = Math.min(W/bw, H/bh);
+        // Apply manual zoom on top of auto-frame scale
+        targetScale = fitScale * manualZoomRef.current;
+        // Clamp: never zoom out beyond 1x, never over 4x
+        targetScale = Math.max(1.0, Math.min(4.0, targetScale));
+        // Centre the bounding box in canvas
+        const centreX = bx + bw/2;
+        const centreY = by + bh/2;
+        targetOX = W/2 - centreX * targetScale;
+        targetOY = H/2 - centreY * targetScale;
+      }
+    }
+
+    // ── Exponential smoothing — feels like a real camera operator ─────────────
+    const LERP = 0.07; // lower = smoother/slower, higher = snappier
+    const vp = viewportRef.current;
+    vp.scale   = vp.scale   + (targetScale - vp.scale)   * LERP;
+    vp.offsetX = vp.offsetX + (targetOX    - vp.offsetX) * LERP;
+    vp.offsetY = vp.offsetY + (targetOY    - vp.offsetY) * LERP;
+
+    // ── Draw video with viewport transform ────────────────────────────────────
+    ctx.save();
+    ctx.setTransform(vp.scale, 0, 0, vp.scale, vp.offsetX, vp.offsetY);
+    ctx.save(); ctx.scale(-1,1); ctx.drawImage(video,-W,0,W,H); ctx.restore();
+    ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.fillRect(0,0,W,H);
+    ctx.restore();
+
+    // ── Draw skeleton overlays using same viewport transform ──────────────────
+    if (mir.length>0) {
       const s = computeMatch(mir, exRef.current, W, H);
       setScore(s);
       setMatchState(s>=0.85?'matched':s>=0.55?'close':'tracking');
 
+      ctx.save();
+      ctx.setTransform(vp.scale, 0, 0, vp.scale, vp.offsetX, vp.offsetY);
+
       const frame = getBodyFrame(mir, W, H);
       if (frame) {
         const builder = POSE_BUILDERS[exRef.current.id];
-        if (builder) {
-          const ghostJoints = builder(frame);
-          drawGhost(ctx, ghostJoints, s);
-        }
+        if (builder) drawGhost(ctx, builder(frame), s);
       }
       drawLive(ctx, mir, W, H, s);
+
+      ctx.restore();
     }
+
     animRef.current=requestAnimationFrame(renderLoop);
   },[]);
 
@@ -543,6 +606,86 @@ export default function PoseDemoRunner() {
         <div style={{position:'relative',width:'100%',maxWidth:700,margin:'0 auto',aspectRatio:'4/3'}}>
           <video ref={videoRef} style={{display:'none'}} playsInline muted/>
           <canvas ref={canvasRef} width={640} height={480} style={{width:'100%',height:'100%',borderRadius:16,display:'block',background:'#0a0f1e'}}/>
+
+          {/* ── Camera Controls Overlay ── */}
+          {!loading&&!cameraError&&(
+            <div style={{position:'absolute',bottom:14,right:14,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
+
+              {/* Zoom slider panel — shown when controls open */}
+              {showControls&&(
+                <div style={{background:'rgba(8,12,20,0.88)',backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,padding:'12px 14px',minWidth:200,display:'flex',flexDirection:'column',gap:10}}>
+                  {/* Auto-frame toggle */}
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+                    <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Auto-frame</span>
+                    <button
+                      onClick={()=>setAutoFrame(a=>!a)}
+                      style={{
+                        width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',
+                        background:autoFrame?'#3b82f6':'rgba(255,255,255,0.12)',
+                        position:'relative',transition:'background 0.2s',flexShrink:0,
+                      }}
+                    >
+                      <span style={{
+                        position:'absolute',top:3,left:autoFrame?20:3,
+                        width:16,height:16,borderRadius:'50%',background:'#fff',
+                        transition:'left 0.2s',display:'block',
+                      }}/>
+                    </button>
+                  </div>
+
+                  {/* Zoom slider */}
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Zoom</span>
+                      <span style={{fontSize:12,color:'#60a5fa',fontWeight:600,fontVariantNumeric:'tabular-nums'}}>{manualZoom.toFixed(1)}x</span>
+                    </div>
+                    <input
+                      type="range" min={0.5} max={3} step={0.05}
+                      value={manualZoom}
+                      onChange={e=>setManualZoom(Number(e.target.value))}
+                      style={{width:'100%',accentColor:'#3b82f6',cursor:'pointer'}}
+                    />
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#475569'}}>
+                      <span>0.5x</span><span>3x</span>
+                    </div>
+                  </div>
+
+                  {/* Reset */}
+                  <button
+                    onClick={()=>{ setManualZoom(1.0); setAutoFrame(true); }}
+                    style={{fontSize:11,color:'#64748b',background:'transparent',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'4px 0',cursor:'pointer'}}
+                  >
+                    Reset to default
+                  </button>
+                </div>
+              )}
+
+              {/* Controls toggle button */}
+              <button
+                onClick={()=>setShowControls(s=>!s)}
+                title="Camera controls"
+                style={{
+                  width:36,height:36,borderRadius:10,border:'none',cursor:'pointer',
+                  background:showControls?'rgba(59,130,246,0.3)':'rgba(8,12,20,0.75)',
+                  backdropFilter:'blur(8px)',
+                  color:'#94a3b8',fontSize:16,
+                  display:'flex',alignItems:'center',justifyContent:'center',
+                  boxShadow:'0 2px 8px rgba(0,0,0,0.4)',
+                  outline:showControls?'1px solid rgba(59,130,246,0.5)':'1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                &#9654;&#9650;
+              </button>
+            </div>
+          )}
+
+          {/* Auto-frame indicator pill */}
+          {!loading&&!cameraError&&autoFrame&&(
+            <div style={{position:'absolute',bottom:14,left:14,display:'flex',alignItems:'center',gap:5,background:'rgba(8,12,20,0.72)',backdropFilter:'blur(6px)',borderRadius:20,padding:'4px 10px',border:'1px solid rgba(59,130,246,0.25)'}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',animation:'pulse 2s ease infinite'}}/>
+              <span style={{fontSize:10,color:'#60a5fa',fontWeight:500,letterSpacing:'0.04em'}}>AUTO-FRAME</span>
+            </div>
+          )}
 
           {loading&&(
             <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.85)',borderRadius:16,gap:12}}>
