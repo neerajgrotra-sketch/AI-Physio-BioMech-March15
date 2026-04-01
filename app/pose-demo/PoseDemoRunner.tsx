@@ -5,26 +5,21 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 declare global {
-  interface Window {
-    Pose: any;
-    Camera: any;
-  }
+  interface Window { Pose: any; Camera: any; }
 }
 
-// ─── CDN loader helper ────────────────────────────────────────────────────────
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
     const s = document.createElement('script');
-    s.src = src;
-    s.crossOrigin = 'anonymous';
-    s.onload  = () => resolve();
+    s.src = src; s.crossOrigin = 'anonymous';
+    s.onload = () => resolve();
     s.onerror = () => reject(new Error(`Failed to load ${src}`));
     document.head.appendChild(s);
   });
 }
 
-// ─── BlazePose landmark indices ───────────────────────────────────────────────
+// ─── Landmark indices ─────────────────────────────────────────────────────────
 const LP = {
   LEFT_SHOULDER: 11, RIGHT_SHOULDER: 12,
   LEFT_ELBOW: 13,    RIGHT_ELBOW: 14,
@@ -34,93 +29,279 @@ const LP = {
   LEFT_ANKLE: 27,    RIGHT_ANKLE: 28,
 };
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 type Vec2 = { x: number; y: number };
 type Landmark = { x: number; y: number; z: number; visibility?: number };
 
-type JointTarget = {
+// ─── Body measurements extracted from live landmarks ─────────────────────────
+// All lengths in canvas pixels. Used to scale the ghost to the patient's body.
+type BodyMeasure = {
+  shoulderMid: Vec2;   // midpoint between shoulders
+  hipMid: Vec2;        // midpoint between hips
+  torsoLen: number;    // shoulder-mid to hip-mid distance
+  shoulderWidth: number;
+  rightUpperArm: number;
+  rightForeArm: number;
+  leftUpperArm: number;
+  leftForeArm: number;
+  rightThigh: number;
+  rightShin: number;
+  leftThigh: number;
+  leftShin: number;
+  // Unit vectors along spine (up = toward head)
+  spineUp: Vec2;
+  spineRight: Vec2;
+};
+
+function dist(a: Vec2, b: Vec2): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+function norm(v: Vec2): Vec2 {
+  const m = Math.sqrt(v.x ** 2 + v.y ** 2);
+  return m === 0 ? { x: 0, y: -1 } : { x: v.x / m, y: v.y / m };
+}
+
+function lmToCanvas(lm: Landmark, w: number, h: number): Vec2 {
+  return { x: lm.x * w, y: lm.y * h };
+}
+
+function visible(lm: Landmark | undefined): boolean {
+  return !!lm && (lm.visibility ?? 1) > 0.25;
+}
+
+function measureBody(lms: Landmark[], w: number, h: number): BodyMeasure | null {
+  const ls = lms[LP.LEFT_SHOULDER]; const rs = lms[LP.RIGHT_SHOULDER];
+  const lh = lms[LP.LEFT_HIP];      const rh = lms[LP.RIGHT_HIP];
+  if (!visible(ls) || !visible(rs) || !visible(lh) || !visible(rh)) return null;
+
+  const lsC = lmToCanvas(ls, w, h); const rsC = lmToCanvas(rs, w, h);
+  const lhC = lmToCanvas(lh, w, h); const rhC = lmToCanvas(rh, w, h);
+
+  const shoulderMid: Vec2 = { x: (lsC.x + rsC.x) / 2, y: (lsC.y + rsC.y) / 2 };
+  const hipMid: Vec2      = { x: (lhC.x + rhC.x) / 2, y: (lhC.y + rhC.y) / 2 };
+
+  const spineVec = { x: shoulderMid.x - hipMid.x, y: shoulderMid.y - hipMid.y };
+  const spineUp  = norm(spineVec);
+  const spineRight: Vec2 = { x: -spineUp.y, y: spineUp.x };
+
+  const torsoLen = dist(shoulderMid, hipMid);
+
+  const getLen = (a: number, b: number): number => {
+    if (!visible(lms[a]) || !visible(lms[b])) return torsoLen * 0.4;
+    return dist(lmToCanvas(lms[a], w, h), lmToCanvas(lms[b], w, h));
+  };
+
+  return {
+    shoulderMid, hipMid, torsoLen,
+    shoulderWidth: dist(lsC, rsC),
+    rightUpperArm: getLen(LP.RIGHT_SHOULDER, LP.RIGHT_ELBOW),
+    rightForeArm:  getLen(LP.RIGHT_ELBOW, LP.RIGHT_WRIST),
+    leftUpperArm:  getLen(LP.LEFT_SHOULDER, LP.LEFT_ELBOW),
+    leftForeArm:   getLen(LP.LEFT_ELBOW, LP.LEFT_WRIST),
+    rightThigh:    getLen(LP.RIGHT_HIP, LP.RIGHT_KNEE),
+    rightShin:     getLen(LP.RIGHT_KNEE, LP.RIGHT_ANKLE),
+    leftThigh:     getLen(LP.LEFT_HIP, LP.LEFT_KNEE),
+    leftShin:      getLen(LP.LEFT_KNEE, LP.LEFT_ANKLE),
+    spineUp, spineRight,
+  };
+}
+
+// ─── Ghost pose definition ────────────────────────────────────────────────────
+// Each pose is defined as a set of limb directions (angles in degrees, 0=up, CW+)
+// The ghost is then *constructed* from the patient's own bone lengths, so it
+// always fits their body regardless of camera crop or distance.
+//
+// Angle convention: 0deg = straight up (-Y), 90deg = right (+X), 180 = down, 270 = left
+// All angles are in canvas space (Y increases downward).
+
+type LimbAngle = {
+  // Start landmark, end landmark, angle from vertical (canvas space), length source
+  fromJoint: 'rightShoulder' | 'leftShoulder' | 'rightHip' | 'leftHip' | 'rightElbow' | 'leftElbow' | 'rightKnee' | 'leftKnee';
+  toJoint: 'rightElbow' | 'leftElbow' | 'rightWrist' | 'leftWrist' | 'rightKnee' | 'leftKnee' | 'rightAnkle' | 'leftAnkle';
+  angleDeg: number;      // angle of this limb from vertical (canvas Y-down), 0=up 90=right 180=down 270=left
+  lengthKey: keyof BodyMeasure;
+};
+
+type GhostPose = {
+  id: string;
   name: string;
-  a: number; b: number; c: number;
-  targetDeg: number; toleranceDeg: number; weight: number;
+  description: string;
+  cues: string[];
+  limbs: LimbAngle[];
+  // Joint angle targets for match scoring
+  matchJoints: {
+    name: string;
+    a: number; b: number; c: number;
+    targetDeg: number; toleranceDeg: number; weight: number;
+  }[];
 };
 
-type ExercisePose = {
-  id: string; name: string; description: string; cues: string[];
-  joints: JointTarget[];
-  targetOffsets: Partial<Record<number, Vec2>>;
-};
+// Helper: degrees to radians
+const DEG = Math.PI / 180;
 
-// ─── Pose Library ─────────────────────────────────────────────────────────────
-const POSE_LIBRARY: ExercisePose[] = [
+// ─── Exercise library ─────────────────────────────────────────────────────────
+// Limb angles are in canvas space where Y increases downward.
+// "Arm raised to 90deg abduction" means upper arm points horizontally to the right.
+// Right side is patient's right, but mirrored on canvas so it appears as their right.
+
+const EXERCISES: GhostPose[] = [
   {
-    id: 'shoulder_abduction', name: 'Shoulder Abduction',
-    description: 'Raise your arm out to the side to shoulder height',
-    cues: ['Stand tall, feet shoulder-width apart', 'Keep your elbow straight', 'Raise your arm out to the side', 'Stop when arm is level with your shoulder'],
-    joints: [
-      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW, targetDeg: 90,  toleranceDeg: 15, weight: 0.7 },
-      { name: 'elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
+    id: 'shoulder_abduction',
+    name: 'Shoulder Abduction',
+    description: 'Raise your right arm out to the side to shoulder height',
+    cues: ['Stand tall, feet shoulder-width apart', 'Keep your elbow straight', 'Raise your arm out to the side', 'Stop when arm is level with shoulder'],
+    limbs: [
+      // Right arm: upper arm horizontal (90deg from vertical = pointing right in canvas after mirror)
+      { fromJoint: 'rightShoulder', toJoint: 'rightElbow', angleDeg: 270, lengthKey: 'rightUpperArm' }, // 270 = left in canvas = patient's right after mirror
+      { fromJoint: 'rightElbow',    toJoint: 'rightWrist', angleDeg: 270, lengthKey: 'rightForeArm'  },
+      // Left arm: hanging down naturally
+      { fromJoint: 'leftShoulder',  toJoint: 'leftElbow',  angleDeg: 160, lengthKey: 'leftUpperArm'  },
+      { fromJoint: 'leftElbow',     toJoint: 'leftWrist',  angleDeg: 175, lengthKey: 'leftForeArm'   },
+      // Legs: standing straight
+      { fromJoint: 'rightHip',  toJoint: 'rightKnee',  angleDeg: 175, lengthKey: 'rightThigh' },
+      { fromJoint: 'rightKnee', toJoint: 'rightAnkle', angleDeg: 178, lengthKey: 'rightShin'  },
+      { fromJoint: 'leftHip',   toJoint: 'leftKnee',   angleDeg: 175, lengthKey: 'leftThigh'  },
+      { fromJoint: 'leftKnee',  toJoint: 'leftAnkle',  angleDeg: 178, lengthKey: 'leftShin'   },
     ],
-    targetOffsets: {
-      [LP.RIGHT_SHOULDER]: { x:  0.18, y: -0.25 }, [LP.RIGHT_ELBOW]: { x: 0.38, y: -0.25 }, [LP.RIGHT_WRIST]: { x: 0.55, y: -0.25 },
-      [LP.LEFT_SHOULDER]:  { x: -0.18, y: -0.25 }, [LP.LEFT_ELBOW]:  { x: -0.18, y: -0.05 }, [LP.LEFT_WRIST]: { x: -0.18, y: 0.12 },
-      [LP.RIGHT_HIP]: { x: 0.12, y: 0 }, [LP.LEFT_HIP]: { x: -0.12, y: 0 },
-      [LP.RIGHT_KNEE]: { x: 0.13, y: 0.30 }, [LP.LEFT_KNEE]: { x: -0.13, y: 0.30 },
-      [LP.RIGHT_ANKLE]: { x: 0.13, y: 0.60 }, [LP.LEFT_ANKLE]: { x: -0.13, y: 0.60 },
-    },
+    matchJoints: [
+      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
+    ],
   },
   {
-    id: 'shoulder_external_rotation', name: 'Shoulder External Rotation',
-    description: 'Elbow at your side, rotate your forearm outward',
-    cues: ['Keep your elbow tucked into your side', 'Start with forearm across your body', 'Rotate your forearm outward slowly', 'Hold at maximum comfortable rotation'],
-    joints: [
-      { name: 'elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 90, toleranceDeg: 12, weight: 0.5 },
-      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,   targetDeg: 15, toleranceDeg: 10, weight: 0.5 },
+    id: 'shoulder_external_rotation',
+    name: 'Shoulder External Rotation',
+    description: 'Elbow at side, rotate your forearm outward',
+    cues: ['Keep your elbow tucked into your side', 'Start with forearm across your body', 'Rotate your forearm outward', 'Hold at maximum comfortable rotation'],
+    limbs: [
+      // Right upper arm: pointing straight down (elbow at side)
+      { fromJoint: 'rightShoulder', toJoint: 'rightElbow', angleDeg: 175, lengthKey: 'rightUpperArm' },
+      // Right forearm: pointing outward (horizontal, away from body — toward patient right = canvas left after mirror)
+      { fromJoint: 'rightElbow',    toJoint: 'rightWrist', angleDeg: 270, lengthKey: 'rightForeArm'  },
+      { fromJoint: 'leftShoulder',  toJoint: 'leftElbow',  angleDeg: 165, lengthKey: 'leftUpperArm'  },
+      { fromJoint: 'leftElbow',     toJoint: 'leftWrist',  angleDeg: 175, lengthKey: 'leftForeArm'   },
+      { fromJoint: 'rightHip',  toJoint: 'rightKnee',  angleDeg: 175, lengthKey: 'rightThigh' },
+      { fromJoint: 'rightKnee', toJoint: 'rightAnkle', angleDeg: 178, lengthKey: 'rightShin'  },
+      { fromJoint: 'leftHip',   toJoint: 'leftKnee',   angleDeg: 175, lengthKey: 'leftThigh'  },
+      { fromJoint: 'leftKnee',  toJoint: 'leftAnkle',  angleDeg: 178, lengthKey: 'leftShin'   },
     ],
-    targetOffsets: {
-      [LP.RIGHT_SHOULDER]: { x:  0.18, y: -0.25 }, [LP.RIGHT_ELBOW]: { x: 0.18, y: -0.08 }, [LP.RIGHT_WRIST]: { x: 0.38, y: -0.08 },
-      [LP.LEFT_SHOULDER]:  { x: -0.18, y: -0.25 }, [LP.LEFT_ELBOW]:  { x: -0.18, y: -0.05 }, [LP.LEFT_WRIST]: { x: -0.18, y: 0.12 },
-      [LP.RIGHT_HIP]: { x: 0.12, y: 0 }, [LP.LEFT_HIP]: { x: -0.12, y: 0 },
-      [LP.RIGHT_KNEE]: { x: 0.13, y: 0.30 }, [LP.LEFT_KNEE]: { x: -0.13, y: 0.30 },
-      [LP.RIGHT_ANKLE]: { x: 0.13, y: 0.60 }, [LP.LEFT_ANKLE]: { x: -0.13, y: 0.60 },
-    },
+    matchJoints: [
+      { name: 'elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 90, toleranceDeg: 15, weight: 0.5 },
+      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,   targetDeg: 15, toleranceDeg: 12, weight: 0.5 },
+    ],
   },
   {
-    id: 'knee_extension', name: 'Knee Extension',
+    id: 'knee_extension',
+    name: 'Knee Extension',
     description: 'Seated — straighten your leg fully',
     cues: ['Sit upright in your chair', 'Tighten your quadriceps', 'Slowly straighten your knee', 'Hold with leg fully extended'],
-    joints: [
-      { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,        targetDeg: 170, toleranceDeg: 10, weight: 0.8 },
-      { name: 'hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE,     targetDeg: 95,  toleranceDeg: 15, weight: 0.2 },
+    limbs: [
+      { fromJoint: 'rightShoulder', toJoint: 'rightElbow', angleDeg: 165, lengthKey: 'rightUpperArm' },
+      { fromJoint: 'rightElbow',    toJoint: 'rightWrist', angleDeg: 175, lengthKey: 'rightForeArm'  },
+      { fromJoint: 'leftShoulder',  toJoint: 'leftElbow',  angleDeg: 165, lengthKey: 'leftUpperArm'  },
+      { fromJoint: 'leftElbow',     toJoint: 'leftWrist',  angleDeg: 175, lengthKey: 'leftForeArm'   },
+      // Right leg: extended horizontally forward (seated) — pointing right in canvas = patient left after mirror, so use 90
+      { fromJoint: 'rightHip',  toJoint: 'rightKnee',  angleDeg: 90, lengthKey: 'rightThigh' },
+      { fromJoint: 'rightKnee', toJoint: 'rightAnkle', angleDeg: 90, lengthKey: 'rightShin'  },
+      // Left leg: bent at 90deg (seated natural)
+      { fromJoint: 'leftHip',  toJoint: 'leftKnee',   angleDeg: 90,  lengthKey: 'leftThigh' },
+      { fromJoint: 'leftKnee', toJoint: 'leftAnkle',  angleDeg: 175, lengthKey: 'leftShin'  },
     ],
-    targetOffsets: {
-      [LP.RIGHT_SHOULDER]: { x: 0.18, y: -0.42 }, [LP.LEFT_SHOULDER]: { x: -0.18, y: -0.42 },
-      [LP.RIGHT_ELBOW]: { x: 0.18, y: -0.22 }, [LP.LEFT_ELBOW]: { x: -0.18, y: -0.22 },
-      [LP.RIGHT_WRIST]: { x: 0.18, y: -0.05 }, [LP.LEFT_WRIST]: { x: -0.18, y: -0.05 },
-      [LP.RIGHT_HIP]: { x: 0.12, y: 0 }, [LP.LEFT_HIP]: { x: -0.12, y: 0 },
-      [LP.RIGHT_KNEE]: { x: 0.38, y: 0.02 }, [LP.LEFT_KNEE]: { x: -0.13, y: 0.28 },
-      [LP.RIGHT_ANKLE]: { x: 0.62, y: 0.04 }, [LP.LEFT_ANKLE]: { x: -0.13, y: 0.52 },
-    },
+    matchJoints: [
+      { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,    targetDeg: 170, toleranceDeg: 12, weight: 0.8 },
+      { name: 'hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE, targetDeg: 95,  toleranceDeg: 18, weight: 0.2 },
+    ],
   },
   {
-    id: 'knee_flexion', name: 'Knee Flexion',
-    description: 'Standing — bend your knee to 90° behind you',
-    cues: ['Stand on your left leg', 'Hold a surface if needed for balance', 'Keep your thighs level', 'Bend knee until heel is level with opposite knee'],
-    joints: [
-      { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,     targetDeg: 90,  toleranceDeg: 15, weight: 0.8 },
-      { name: 'hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE,  targetDeg: 175, toleranceDeg: 12, weight: 0.2 },
+    id: 'knee_flexion',
+    name: 'Knee Flexion',
+    description: 'Standing — bend your knee to 90 degrees behind you',
+    cues: ['Stand on your left leg', 'Hold a surface if needed for balance', 'Keep your thighs level', 'Bend right knee to 90 degrees behind you'],
+    limbs: [
+      { fromJoint: 'rightShoulder', toJoint: 'rightElbow', angleDeg: 165, lengthKey: 'rightUpperArm' },
+      { fromJoint: 'rightElbow',    toJoint: 'rightWrist', angleDeg: 175, lengthKey: 'rightForeArm'  },
+      { fromJoint: 'leftShoulder',  toJoint: 'leftElbow',  angleDeg: 165, lengthKey: 'leftUpperArm'  },
+      { fromJoint: 'leftElbow',     toJoint: 'leftWrist',  angleDeg: 175, lengthKey: 'leftForeArm'   },
+      // Right thigh: straight down, right knee: bent backward (shin points up behind)
+      { fromJoint: 'rightHip',  toJoint: 'rightKnee',  angleDeg: 175, lengthKey: 'rightThigh' },
+      { fromJoint: 'rightKnee', toJoint: 'rightAnkle', angleDeg: 5,   lengthKey: 'rightShin'  }, // shin pointing upward = 5deg from vertical
+      // Left leg: straight standing
+      { fromJoint: 'leftHip',   toJoint: 'leftKnee',   angleDeg: 175, lengthKey: 'leftThigh'  },
+      { fromJoint: 'leftKnee',  toJoint: 'leftAnkle',  angleDeg: 178, lengthKey: 'leftShin'   },
     ],
-    targetOffsets: {
-      [LP.RIGHT_SHOULDER]: { x: 0.18, y: -0.42 }, [LP.LEFT_SHOULDER]: { x: -0.18, y: -0.42 },
-      [LP.RIGHT_ELBOW]: { x: 0.18, y: -0.22 }, [LP.LEFT_ELBOW]: { x: -0.18, y: -0.22 },
-      [LP.RIGHT_WRIST]: { x: 0.18, y: -0.05 }, [LP.LEFT_WRIST]: { x: -0.18, y: -0.05 },
-      [LP.RIGHT_HIP]: { x: 0.12, y: 0 }, [LP.LEFT_HIP]: { x: -0.12, y: 0 },
-      [LP.RIGHT_KNEE]: { x: 0.12, y: 0.28 }, [LP.LEFT_KNEE]: { x: -0.13, y: 0.30 },
-      [LP.RIGHT_ANKLE]: { x: 0.28, y: 0.12 }, [LP.LEFT_ANKLE]: { x: -0.13, y: 0.60 },
-    },
+    matchJoints: [
+      { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,    targetDeg: 90,  toleranceDeg: 18, weight: 0.8 },
+      { name: 'hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE, targetDeg: 175, toleranceDeg: 15, weight: 0.2 },
+    ],
   },
 ];
 
-// ─── Geometry ─────────────────────────────────────────────────────────────────
+// ─── Build ghost joint positions from body measurements + limb angles ─────────
+// Returns a map of jointName -> canvas pixel position
+type GhostJoints = {
+  rightShoulder: Vec2; leftShoulder: Vec2;
+  rightElbow: Vec2;    leftElbow: Vec2;
+  rightWrist: Vec2;    leftWrist: Vec2;
+  rightHip: Vec2;      leftHip: Vec2;
+  rightKnee: Vec2;     leftKnee: Vec2;
+  rightAnkle: Vec2;    leftAnkle: Vec2;
+};
+
+function buildGhostJoints(m: BodyMeasure, pose: GhostPose): GhostJoints {
+  // Shoulder and hip positions taken directly from patient's live skeleton
+  const hw = m.shoulderWidth / 2;
+  const rightShoulder: Vec2 = {
+    x: m.shoulderMid.x + m.spineRight.x * hw,
+    y: m.shoulderMid.y + m.spineRight.y * hw,
+  };
+  const leftShoulder: Vec2 = {
+    x: m.shoulderMid.x - m.spineRight.x * hw,
+    y: m.shoulderMid.y - m.spineRight.y * hw,
+  };
+  const rhw = m.shoulderWidth * 0.42;
+  const rightHip: Vec2 = {
+    x: m.hipMid.x + m.spineRight.x * rhw,
+    y: m.hipMid.y + m.spineRight.y * rhw,
+  };
+  const leftHip: Vec2 = {
+    x: m.hipMid.x - m.spineRight.x * rhw,
+    y: m.hipMid.y - m.spineRight.y * rhw,
+  };
+
+  const origins: Record<string, Vec2> = { rightShoulder, leftShoulder, rightHip, leftHip };
+  const joints: Record<string, Vec2> = { rightShoulder, leftShoulder, rightHip, leftHip };
+
+  // Walk each limb: compute end position from start + angle + length
+  for (const limb of pose.limbs) {
+    const origin = origins[limb.fromJoint];
+    if (!origin) continue;
+    const len = m[limb.lengthKey] as number;
+    const rad = limb.angleDeg * DEG;
+    const end: Vec2 = {
+      x: origin.x + Math.sin(rad) * len,
+      y: origin.y - Math.cos(rad) * len, // -cos because Y increases downward
+    };
+    joints[limb.toJoint] = end;
+    origins[limb.toJoint] = end; // allow chaining (elbow -> wrist)
+  }
+
+  return {
+    rightShoulder: joints.rightShoulder ?? rightShoulder,
+    leftShoulder:  joints.leftShoulder  ?? leftShoulder,
+    rightElbow:    joints.rightElbow    ?? rightShoulder,
+    leftElbow:     joints.leftElbow     ?? leftShoulder,
+    rightWrist:    joints.rightWrist    ?? rightShoulder,
+    leftWrist:     joints.leftWrist     ?? leftShoulder,
+    rightHip:      joints.rightHip      ?? rightHip,
+    leftHip:       joints.leftHip       ?? leftHip,
+    rightKnee:     joints.rightKnee     ?? rightHip,
+    leftKnee:      joints.leftKnee      ?? leftHip,
+    rightAnkle:    joints.rightAnkle    ?? rightHip,
+    leftAnkle:     joints.leftAnkle     ?? leftHip,
+  };
+}
+
+// ─── Geometry helpers ─────────────────────────────────────────────────────────
 function angleDeg(a: Vec2, b: Vec2, c: Vec2): number {
   const ba = { x: a.x - b.x, y: a.y - b.y };
   const bc = { x: c.x - b.x, y: c.y - b.y };
@@ -130,12 +311,12 @@ function angleDeg(a: Vec2, b: Vec2, c: Vec2): number {
   return (Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180) / Math.PI;
 }
 
-function computeMatch(landmarks: Landmark[], pose: ExercisePose): number {
+function computeMatch(landmarks: Landmark[], pose: GhostPose): number {
   let totalW = 0; let scored = 0;
-  for (const j of pose.joints) {
+  for (const j of pose.matchJoints) {
     const a = landmarks[j.a]; const b = landmarks[j.b]; const c = landmarks[j.c];
     if (!a || !b || !c) continue;
-    if ((a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3 || (c.visibility ?? 1) < 0.3) continue;
+    if (!visible(a) || !visible(b) || !visible(c)) continue;
     const delta = Math.abs(angleDeg(a, b, c) - j.targetDeg);
     scored += Math.max(0, 1 - delta / (j.toleranceDeg * 2)) * j.weight;
     totalW += j.weight;
@@ -144,64 +325,82 @@ function computeMatch(landmarks: Landmark[], pose: ExercisePose): number {
 }
 
 // ─── Canvas drawing ───────────────────────────────────────────────────────────
-const CONNECTIONS: [number, number][] = [
-  [LP.LEFT_SHOULDER, LP.RIGHT_SHOULDER],
-  [LP.LEFT_SHOULDER, LP.LEFT_ELBOW],   [LP.LEFT_ELBOW, LP.LEFT_WRIST],
-  [LP.RIGHT_SHOULDER, LP.RIGHT_ELBOW], [LP.RIGHT_ELBOW, LP.RIGHT_WRIST],
-  [LP.LEFT_SHOULDER, LP.LEFT_HIP],     [LP.RIGHT_SHOULDER, LP.RIGHT_HIP],
-  [LP.LEFT_HIP, LP.RIGHT_HIP],
-  [LP.LEFT_HIP, LP.LEFT_KNEE],         [LP.LEFT_KNEE, LP.LEFT_ANKLE],
-  [LP.RIGHT_HIP, LP.RIGHT_KNEE],       [LP.RIGHT_KNEE, LP.RIGHT_ANKLE],
+const GHOST_CONNECTIONS: [keyof GhostJoints, keyof GhostJoints][] = [
+  ['leftShoulder',  'rightShoulder'],
+  ['rightShoulder', 'rightElbow'],  ['rightElbow', 'rightWrist'],
+  ['leftShoulder',  'leftElbow'],   ['leftElbow',  'leftWrist'],
+  ['rightShoulder', 'rightHip'],    ['leftShoulder', 'leftHip'],
+  ['rightHip',      'leftHip'],
+  ['rightHip',  'rightKnee'],  ['rightKnee', 'rightAnkle'],
+  ['leftHip',   'leftKnee'],   ['leftKnee',  'leftAnkle'],
 ];
 
-function drawGhost(ctx: CanvasRenderingContext2D, offsets: Partial<Record<number, Vec2>>, anchor: Vec2, scale: number, score: number) {
+const LIVE_CONNECTIONS: [number, number][] = [
+  [LP.LEFT_SHOULDER, LP.RIGHT_SHOULDER],
+  [LP.RIGHT_SHOULDER, LP.RIGHT_ELBOW], [LP.RIGHT_ELBOW, LP.RIGHT_WRIST],
+  [LP.LEFT_SHOULDER,  LP.LEFT_ELBOW],  [LP.LEFT_ELBOW,  LP.LEFT_WRIST],
+  [LP.RIGHT_SHOULDER, LP.RIGHT_HIP],   [LP.LEFT_SHOULDER, LP.LEFT_HIP],
+  [LP.LEFT_HIP, LP.RIGHT_HIP],
+  [LP.RIGHT_HIP, LP.RIGHT_KNEE], [LP.RIGHT_KNEE, LP.RIGHT_ANKLE],
+  [LP.LEFT_HIP,  LP.LEFT_KNEE],  [LP.LEFT_KNEE,  LP.LEFT_ANKLE],
+];
+
+function drawGhost(ctx: CanvasRenderingContext2D, joints: GhostJoints, score: number) {
   const g = Math.floor(score * 255);
-  const b = Math.floor((1 - score) * 200);
-  const pos = (i: number): Vec2 | null => { const o = offsets[i]; return o ? { x: anchor.x + o.x * scale, y: anchor.y + o.y * scale } : null; };
+  const b = Math.floor((1 - score) * 220);
+  const lineAlpha = 0.55;
+  const jointAlpha = 0.70;
 
   // Torso fill
-  const corners = [LP.LEFT_SHOULDER, LP.RIGHT_SHOULDER, LP.RIGHT_HIP, LP.LEFT_HIP].map(pos).filter(Boolean) as Vec2[];
-  if (corners.length === 4) {
-    ctx.beginPath(); ctx.moveTo(corners[0].x, corners[0].y);
-    corners.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
-    ctx.fillStyle = `rgba(${g},${Math.floor(g*0.3)},${b},0.06)`; ctx.fill();
-  }
+  const torso = [joints.leftShoulder, joints.rightShoulder, joints.rightHip, joints.leftHip];
+  ctx.beginPath();
+  ctx.moveTo(torso[0].x, torso[0].y);
+  torso.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+  ctx.closePath();
+  ctx.fillStyle = `rgba(${g},${Math.floor(g * 0.2)},${b},0.07)`;
+  ctx.fill();
 
-  ctx.setLineDash([7, 5]); ctx.lineWidth = 3.5; ctx.lineCap = 'round';
-  for (const [a, bIdx] of CONNECTIONS) {
-    const pA = pos(a); const pB = pos(bIdx);
-    if (!pA || !pB) continue;
+  // Ghost skeleton
+  ctx.setLineDash([8, 5]);
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  for (const [a, b2] of GHOST_CONNECTIONS) {
+    const pA = joints[a]; const pB = joints[b2];
     ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y);
-    ctx.strokeStyle = `rgba(${g},${Math.floor(g*0.5)},${b},0.5)`; ctx.stroke();
+    ctx.strokeStyle = `rgba(${g},${Math.floor(g * 0.4)},${b},${lineAlpha})`;
+    ctx.stroke();
   }
   ctx.setLineDash([]);
 
-  Object.keys(offsets).map(Number).forEach(i => {
-    const p = pos(i); if (!p) return;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${g},${Math.floor(g*0.5)},${b},0.65)`; ctx.fill();
+  // Ghost joint dots
+  (Object.values(joints) as Vec2[]).forEach(p => {
+    ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${g},${Math.floor(g * 0.4)},${b},${jointAlpha})`;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1.5; ctx.stroke();
   });
 }
 
 function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: number, score: number) {
   const matched = score >= 0.85;
-  const col = matched ? 'rgba(74,222,128,0.95)' : 'rgba(255,255,255,0.88)';
-  const p = (lm: Landmark): Vec2 => ({ x: lm.x * w, y: lm.y * h });
+  const col = matched ? 'rgba(74,222,128,0.95)' : 'rgba(255,255,255,0.90)';
+  const toC = (lm: Landmark): Vec2 => ({ x: lm.x * w, y: lm.y * h });
 
-  ctx.setLineDash([]); ctx.lineWidth = 3; ctx.lineCap = 'round';
-  for (const [a, b] of CONNECTIONS) {
+  ctx.setLineDash([]); ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+  for (const [a, b] of LIVE_CONNECTIONS) {
     const lA = lms[a]; const lB = lms[b];
-    if (!lA || !lB || (lA.visibility ?? 1) < 0.2 || (lB.visibility ?? 1) < 0.2) continue;
-    const pA = p(lA); const pB = p(lB);
+    if (!visible(lA) || !visible(lB)) continue;
+    const pA = toC(lA); const pB = toC(lB);
     ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y);
     ctx.strokeStyle = col; ctx.stroke();
   }
   [LP.LEFT_SHOULDER, LP.RIGHT_SHOULDER, LP.LEFT_ELBOW, LP.RIGHT_ELBOW,
    LP.LEFT_WRIST, LP.RIGHT_WRIST, LP.LEFT_HIP, LP.RIGHT_HIP,
    LP.LEFT_KNEE, LP.RIGHT_KNEE, LP.LEFT_ANKLE, LP.RIGHT_ANKLE].forEach(i => {
-    const lm = lms[i]; if (!lm || (lm.visibility ?? 1) < 0.2) return;
-    const pt = p(lm);
-    ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+    const lm = lms[i]; if (!visible(lm)) return;
+    const p = toC(lm);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
     ctx.fillStyle = col; ctx.fill();
   });
 }
@@ -212,18 +411,18 @@ export default function PoseDemoRunner() {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const animRef      = useRef<number>(0);
   const landmarksRef = useRef<Landmark[]>([]);
-  const exerciseRef  = useRef<ExercisePose>(POSE_LIBRARY[0]);
+  const exerciseRef  = useRef<GhostPose>(EXERCISES[0]);
 
-  const [exercise, setExercise]     = useState<ExercisePose>(POSE_LIBRARY[0]);
-  const [score, setScore]           = useState(0);
-  const [matchState, setMatchState] = useState<'idle'|'tracking'|'close'|'matched'>('idle');
-  const [holdSecs, setHoldSecs]     = useState(0);
-  const [reps, setReps]             = useState(0);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [cameraError, setCameraError] = useState('');
-  const [loading, setLoading]       = useState(true);
-  const [cueIdx, setCueIdx]         = useState(0);
-  const [showMenu, setShowMenu]     = useState(false);
+  const [exercise, setExercise]         = useState<GhostPose>(EXERCISES[0]);
+  const [score, setScore]               = useState(0);
+  const [matchState, setMatchState]     = useState<'idle'|'tracking'|'close'|'matched'>('idle');
+  const [holdSecs, setHoldSecs]         = useState(0);
+  const [reps, setReps]                 = useState(0);
+  const [cameraReady, setCameraReady]   = useState(false);
+  const [cameraError, setCameraError]   = useState('');
+  const [loading, setLoading]           = useState(true);
+  const [cueIdx, setCueIdx]             = useState(0);
+  const [showMenu, setShowMenu]         = useState(false);
 
   const holdRef      = useRef(0);
   const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -256,29 +455,32 @@ export default function PoseDemoRunner() {
     const w = canvas.width; const h = canvas.height;
 
     ctx.clearRect(0, 0, w, h);
+    // Mirror video horizontally so it feels like a mirror
     ctx.save(); ctx.scale(-1, 1); ctx.drawImage(video, -w, 0, w, h); ctx.restore();
-    ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(0,0,0,0.26)'; ctx.fillRect(0, 0, w, h);
 
     const lms = landmarksRef.current;
     if (lms.length > 0) {
+      // Mirror landmarks to match mirrored video
       const mirrored = lms.map(lm => ({ ...lm, x: 1 - lm.x }));
+
+      // Compute match score from raw (unmirrored) landmarks
       const s = computeMatch(lms, exerciseRef.current);
       setScore(s);
       setMatchState(s >= 0.85 ? 'matched' : s >= 0.55 ? 'close' : 'tracking');
 
-      const lH = mirrored[LP.LEFT_HIP]; const rH = mirrored[LP.RIGHT_HIP];
-      const anchor: Vec2 = (lH && rH)
-        ? { x: ((lH.x + rH.x) / 2) * w, y: ((lH.y + rH.y) / 2) * h }
-        : { x: w / 2, y: h * 0.55 };
-      const scale = Math.min(w, h) * 0.72;
-
-      drawGhost(ctx, exerciseRef.current.targetOffsets, anchor, scale, s);
+      // Build ghost from mirrored landmarks (so it aligns with mirrored video)
+      const measure = measureBody(mirrored, w, h);
+      if (measure) {
+        const ghostJoints = buildGhostJoints(measure, exerciseRef.current);
+        drawGhost(ctx, ghostJoints, s);
+      }
       drawLive(ctx, mirrored, w, h, s);
     }
     animRef.current = requestAnimationFrame(renderLoop);
   }, []);
 
-  // Init camera + MediaPipe via CDN
+  // Init camera + MediaPipe
   useEffect(() => {
     let stopped = false;
     const init = async () => {
@@ -288,7 +490,6 @@ export default function PoseDemoRunner() {
         if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
         setCameraReady(true);
 
-        // CDN load -- no npm imports, no webpack errors
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
         if (stopped) return;
@@ -319,23 +520,23 @@ export default function PoseDemoRunner() {
 
   const pct = Math.round(score * 100);
   const STATE = {
-    idle:     { label: 'Position yourself in frame', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' },
-    tracking: { label: 'Match the blue silhouette',  color: '#60a5fa', bg: 'rgba(96,165,250,0.12)'  },
-    close:    { label: 'Almost there \u2014 keep going',  color: '#fbbf24', bg: 'rgba(251,191,36,0.12)'  },
+    idle:     { label: 'Position yourself in frame',       color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' },
+    tracking: { label: 'Match the silhouette',             color: '#60a5fa', bg: 'rgba(96,165,250,0.12)'  },
+    close:    { label: 'Almost there \u2014 keep going',   color: '#fbbf24', bg: 'rgba(251,191,36,0.12)'  },
     matched:  { label: `Hold \u2014 ${holdSecs}s / 5s`,   color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
   }[matchState];
 
-  const selectExercise = (ex: ExercisePose) => {
+  const selectExercise = (ex: GhostPose) => {
     setExercise(ex); setShowMenu(false); setReps(0); setScore(0); setMatchState('idle'); setCueIdx(0);
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#080c14', fontFamily: "'DM Sans', 'SF Pro Display', system-ui, sans-serif", display: 'flex', flexDirection: 'column', color: '#f1f5f9' }}>
+    <div style={{ minHeight: '100vh', background: '#080c14', fontFamily: "'DM Sans','SF Pro Display',system-ui,sans-serif", display: 'flex', flexDirection: 'column', color: '#f1f5f9' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(8,12,20,0.95)', backdropFilter: 'blur(12px)', position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #3b82f6, #06b6d4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>&#x2b21;</div>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#3b82f6,#06b6d4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>&#x2b21;</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>Rehably</div>
             <div style={{ fontSize: 10, color: '#64748b', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Movement Guide</div>
@@ -354,7 +555,7 @@ export default function PoseDemoRunner() {
       {/* Exercise menu */}
       {showMenu && (
         <div style={{ position: 'fixed', top: 62, right: 16, zIndex: 100, background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', minWidth: 240 }}>
-          {POSE_LIBRARY.map(ex => (
+          {EXERCISES.map(ex => (
             <button key={ex.id} onClick={() => selectExercise(ex)} style={{ width: '100%', display: 'block', padding: '12px 16px', textAlign: 'left', background: ex.id === exercise.id ? 'rgba(59,130,246,0.15)' : 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.04)', color: ex.id === exercise.id ? '#60a5fa' : '#94a3b8', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
               {ex.name}
               <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{ex.description}</div>
@@ -363,7 +564,7 @@ export default function PoseDemoRunner() {
         </div>
       )}
 
-      {/* Camera area */}
+      {/* Camera */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div style={{ position: 'relative', width: '100%', maxWidth: 700, margin: '0 auto', aspectRatio: '4/3' }}>
           <video ref={videoRef} style={{ display: 'none' }} playsInline muted />
@@ -384,8 +585,9 @@ export default function PoseDemoRunner() {
             </div>
           )}
 
+          {/* Score badge */}
           {!loading && !cameraError && (
-            <div style={{ position: 'absolute', top: 14, left: 14, background: 'rgba(8,12,20,0.75)', backdropFilter: 'blur(8px)', borderRadius: 10, padding: '8px 12px', border: `1px solid ${STATE.color}40`, minWidth: 80 }}>
+            <div style={{ position: 'absolute', top: 14, left: 14, background: 'rgba(8,12,20,0.78)', backdropFilter: 'blur(8px)', borderRadius: 10, padding: '8px 12px', border: `1px solid ${STATE.color}40`, minWidth: 80 }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: STATE.color, lineHeight: 1 }}>{pct}%</div>
               <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>match</div>
               <div style={{ marginTop: 6, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
@@ -394,6 +596,7 @@ export default function PoseDemoRunner() {
             </div>
           )}
 
+          {/* Hold badge */}
           {matchState === 'matched' && (
             <div style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.4)', borderRadius: 10, padding: '8px 12px', textAlign: 'center' }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#4ade80', lineHeight: 1 }}>{holdSecs}s</div>
@@ -415,9 +618,9 @@ export default function PoseDemoRunner() {
           </div>
 
           <div style={{ display: 'flex', gap: 16, padding: '4px 0', fontSize: 11, color: '#475569' }}>
-            {[['rgba(96,165,250,0.6)', 'Target pose'], ['rgba(255,255,255,0.7)', 'Your body'], ['rgba(74,222,128,0.8)', 'Matched \u2713']].map(([bg, label]) => (
-              <span key={label as string} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ display: 'inline-block', width: 12, height: 3, background: bg as string, borderRadius: 2 }} />
+            {([['rgba(96,165,250,0.6)', 'Target pose'], ['rgba(255,255,255,0.7)', 'Your body'], ['rgba(74,222,128,0.8)', 'Matched \u2713']] as const).map(([bg, label]) => (
+              <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ display: 'inline-block', width: 12, height: 3, background: bg, borderRadius: 2 }} />
                 {label}
               </span>
             ))}
