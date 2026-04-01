@@ -16,7 +16,7 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Types \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type Vec2 = { x: number; y: number };
 type Landmark = { x: number; y: number; z: number; visibility?: number };
 
@@ -29,7 +29,7 @@ const LP = {
   LEFT_ANKLE: 27,    RIGHT_ANKLE: 28,
 };
 
-// ─── Body frame ───────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Body frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // We extract a local coordinate frame from the live skeleton.
 // Origin = shoulder midpoint
 // axisDown = unit vector from shoulder-mid toward hip-mid (spine direction)
@@ -124,7 +124,7 @@ function limbPoint(f: BodyFrame, from: Vec2, alongDir: number, acrossDir: number
   };
 }
 
-// ─── Ghost joint positions ────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Ghost joint positions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type GhostJoints = {
   lShoulder: Vec2; rShoulder: Vec2;
   lElbow: Vec2;    rElbow: Vec2;
@@ -238,7 +238,7 @@ const POSE_BUILDERS: Record<string, PoseBuilder> = {
   },
 };
 
-// ─── Exercise definitions ─────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Exercise definitions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type Exercise = {
   id: string; name: string; description: string; cues: string[];
   matchJoints: { name: string; a: number; b: number; c: number; targetDeg: number; toleranceDeg: number; weight: number }[];
@@ -294,7 +294,7 @@ const EXERCISES: Exercise[] = [
   },
 ];
 
-// ─── Match scoring ────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Match scoring \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function angleBetween(a: Vec2, b: Vec2, cc: Vec2): number {
   const ba = { x: a.x-b.x, y: a.y-b.y }; const bc = { x: cc.x-b.x, y: cc.y-b.y };
   const dot = ba.x*bc.x+ba.y*bc.y;
@@ -322,7 +322,7 @@ function computeMatch(lms: Landmark[], ex: Exercise, w: number, h: number): numb
   return tw>0 ? sc/tw : 0;
 }
 
-// ─── Drawing ──────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Drawing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 const GHOST_SEGS: [keyof GhostJoints, keyof GhostJoints][] = [
   ['lShoulder','rShoulder'],
   ['rShoulder','rElbow'],['rElbow','rWrist'],
@@ -391,8 +391,8 @@ function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: 
   });
 }
 
-// ─── Viewport smoothing ───────────────────────────────────────────────────────
-// Smoothed viewport state — persists across renders without causing re-renders
+// \u2500\u2500\u2500 Viewport smoothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Smoothed viewport state \u2014 persists across renders without causing re-renders
 type Viewport = { scale: number; offsetX: number; offsetY: number };
 
 
@@ -428,7 +428,7 @@ function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number)
   }
 }
 
-// ─── Exercise phase state machine ────────────────────────────────────────────
+// \u2500\u2500\u2500 Exercise phase state machine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type ExercisePhase = 'demo' | 'attempt' | 'rep_complete';
 
 // Ease in-out cubic
@@ -449,7 +449,7 @@ function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
   return out;
 }
 
-// REST pose builders — natural standing/seated position for each exercise
+// REST pose builders \u2014 natural standing/seated position for each exercise
 const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
   shoulder_abduction_bilateral: (f) => {
     const rShoulder = framePoint(f, 0,  0.50);
@@ -484,7 +484,7 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
     const rHip = framePoint(f, 0.90,  0.38);
     const lHip = framePoint(f, 0.90, -0.38);
-    // Both legs bent seated — knee below hip, shin down
+    // Both legs bent seated \u2014 knee below hip, shin down
     const rKnee  = limbPoint(f, rHip, 0.08, 0.9, f.rThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0, 0.05, f.rShin);
     const lKnee  = limbPoint(f, lHip, 0.08, -0.9, f.lThigh);
@@ -501,7 +501,7 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
   },
 };
 
-// ── Animation timeline for DEMO phase ────────────────────────────────────────
+// \u2500\u2500 Animation timeline for DEMO phase \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // Returns a 0-1 lerp value (rest->target) given elapsed seconds.
 // One demo cycle: 1s at rest, 2s raise, 1.5s hold at top, 2s lower, 0.5s pause
 // Total cycle: 7s. We run 2 cycles then freeze at target.
@@ -530,7 +530,7 @@ function demoLerp(elapsedS: number, isRepeat: boolean): { t: number; done: boole
   return { t: cycleT(elapsedS), done: false };
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Component \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 export default function PoseDemoRunner() {
   const videoRef     = useRef<HTMLVideoElement>(null);
   const canvasRef    = useRef<HTMLCanvasElement>(null);
@@ -538,7 +538,7 @@ export default function PoseDemoRunner() {
   const landmarksRef = useRef<Landmark[]>([]);
   const exRef        = useRef<Exercise>(EXERCISES[0]);
 
-  // Viewport state — stored in refs to avoid triggering re-renders each frame
+  // Viewport state \u2014 stored in refs to avoid triggering re-renders each frame
   const viewportRef      = useRef<Viewport>({ scale:1, offsetX:0, offsetY:0 });
   const autoFrameRef     = useRef<boolean>(true);
   const manualZoomRef    = useRef<number>(1.0);
@@ -555,8 +555,8 @@ export default function PoseDemoRunner() {
   const [autoFrame, setAutoFrame]       = useState(true);
   const [manualZoom, setManualZoom]     = useState(1.0);
   const [showControls, setShowControls] = useState(false);
-  // UI-facing phase info — updated from render loop via refs to avoid stale closures
-  const [phaseLabel, setPhaseLabel]     = useState('Watch carefully…');
+  // UI-facing phase info \u2014 updated from render loop via refs to avoid stale closures
+  const [phaseLabel, setPhaseLabel]     = useState('Watch carefully\u2026');
   const [phaseColor, setPhaseColor]     = useState('#60a5fa');
   const [phaseBg, setPhaseBg]           = useState('rgba(96,165,250,0.12)');
   const [demoProgress, setDemoProgress] = useState(0); // 0-1 for demo progress bar
@@ -585,7 +585,7 @@ export default function PoseDemoRunner() {
     setPhase(p); setHoldSecs(0);
   }, []);
 
-  // Hold timer — only runs during attempt when matched
+  // Hold timer \u2014 only runs during attempt when matched
   const startHoldTimer = useCallback(() => {
     if (holdTimerRef.current) return;
     holdTimerRef.current = setInterval(()=>{
@@ -615,7 +615,7 @@ export default function PoseDemoRunner() {
     const lms=landmarksRef.current;
     const mir = lms.length>0 ? lms.map(lm=>({...lm, x:1-lm.x})) : [];
 
-    // ── Viewport auto-frame ───────────────────────────────────────────────────
+    // \u2500\u2500 Viewport auto-frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     let targetScale = manualZoomRef.current;
     let targetOX = 0; let targetOY = 0;
     if (autoFrameRef.current && mir.length>0) {
@@ -638,7 +638,7 @@ export default function PoseDemoRunner() {
     vp.offsetX+=(targetOX-vp.offsetX)*LERP;
     vp.offsetY+=(targetOY-vp.offsetY)*LERP;
 
-    // ── Draw video ────────────────────────────────────────────────────────────
+    // \u2500\u2500 Draw video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     ctx.save();
     ctx.setTransform(vp.scale,0,0,vp.scale,vp.offsetX,vp.offsetY);
     ctx.save(); ctx.scale(-1,1); ctx.drawImage(video,-W,0,W,H); ctx.restore();
@@ -666,13 +666,13 @@ export default function PoseDemoRunner() {
           const restJoints   = restBuilder(frame);
 
           if (currentPhase === 'demo') {
-            // ── DEMO: animate silhouette + watch for patient intent ───────────
+            // \u2500\u2500 DEMO: animate silhouette + watch for patient intent \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             const isRepeat = isRepeatDemoRef.current;
             const { t, done } = demoLerp(elapsed, isRepeat);
             const totalS = DEMO_CYCLE_S * (isRepeat ? DEMO_CYCLES_REPEAT : DEMO_CYCLES_FIRST);
             setDemoProgress(Math.min(elapsed / totalS, 1));
 
-            // ── Intent detection: is score rising? ────────────────────────────
+            // \u2500\u2500 Intent detection: is score rising? \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             // Push current score into rolling history buffer
             const hist = scoreHistoryRef.current;
             hist.push(s);
@@ -687,8 +687,8 @@ export default function PoseDemoRunner() {
             }
 
             if (patientIsAttempting) {
-              // Patient started moving to match — pause demo immediately
-              setPhaseLabel('Good — now hold that position!');
+              // Patient started moving to match \u2014 pause demo immediately
+              setPhaseLabel('Good \u2014 now hold that position!');
               setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
               isRepeatDemoRef.current = false; // next repeat will be reminder length
               startPhase('attempt');
@@ -698,33 +698,33 @@ export default function PoseDemoRunner() {
               drawGhostDemo(ctx, ghostJoints, t);
 
               if (done) {
-                // Demo finished naturally — switch to attempt
-                setPhaseLabel('Your turn — match the pose');
+                // Demo finished naturally \u2014 switch to attempt
+                setPhaseLabel('Your turn \u2014 match the pose');
                 setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
                 startPhase('attempt');
               } else {
-                if (t < 0.05)      { setPhaseLabel(isRepeat?'Watch again…':'Watch carefully…');    setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
+                if (t < 0.05)      { setPhaseLabel(isRepeat?'Watch again\u2026':'Watch carefully\u2026');    setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
                 else if (t < 0.95) { setPhaseLabel('Follow this movement');                         setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
                 else               { setPhaseLabel('Hold at the top');                              setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
               }
             }
 
           } else if (currentPhase === 'attempt') {
-            // ── ATTEMPT: ghost frozen at target, score live ───────────────────
+            // \u2500\u2500 ATTEMPT: ghost frozen at target, score live \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             drawGhost(ctx, targetJoints, s);
 
             if (s >= 0.85) {
               lowScoreRef.current = 0;
               startHoldTimer();
               const h = holdRef.current;
-              setPhaseLabel(`Great form — hold ${h}s / 5s`);
+              setPhaseLabel(`Great form \u2014 hold ${h}s / 5s`);
               setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
             } else {
               stopHoldTimer();
               // Track time spent too low
               lowScoreRef.current += (1/60); // ~60fps
               if (s >= 0.55) {
-                setPhaseLabel('Almost there — keep adjusting');
+                setPhaseLabel('Almost there \u2014 keep adjusting');
                 setPhaseColor('#fbbf24'); setPhaseBg('rgba(251,191,36,0.12)');
                 lowScoreRef.current = 0; // reset low-score timer when getting close
               } else {
@@ -733,7 +733,7 @@ export default function PoseDemoRunner() {
               }
               // After 8 seconds struggling → repeat demo (shorter reminder cycle)
               if (lowScoreRef.current > 8) {
-                setPhaseLabel('Let me show you again…');
+                setPhaseLabel('Let me show you again\u2026');
                 setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)');
                 setDemoProgress(0);
                 startPhase('demo', true); // true = repeat = 1 cycle only
@@ -741,9 +741,9 @@ export default function PoseDemoRunner() {
             }
 
           } else if (currentPhase === 'rep_complete') {
-            // ── REP COMPLETE: brief green flash ───────────────────────────────
+            // \u2500\u2500 REP COMPLETE: brief green flash \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             drawGhost(ctx, targetJoints, 1);
-            setPhaseLabel('Rep complete — well done!');
+            setPhaseLabel('Rep complete \u2014 well done!');
             setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
           }
         }
@@ -790,7 +790,7 @@ export default function PoseDemoRunner() {
       display:'flex', flexDirection:'column', color:'#f1f5f9',
     }}>
 
-      {/* ── Header — compact on mobile ── */}
+      {/* \u2500\u2500 Header \u2014 compact on mobile \u2500\u2500 */}
       <div style={{
         display:'flex', alignItems:'center', justifyContent:'space-between',
         padding:'10px 14px',
@@ -820,7 +820,7 @@ export default function PoseDemoRunner() {
         </div>
       </div>
 
-      {/* ── Exercise menu ── */}
+      {/* \u2500\u2500 Exercise menu \u2500\u2500 */}
       {showMenu&&(
         <div style={{position:'fixed',top:56,right:10,left:10,zIndex:100,background:'#0f172a',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,overflow:'hidden',boxShadow:'0 20px 60px rgba(0,0,0,0.7)'}}>
           {EXERCISES.map(ex=>(
@@ -832,7 +832,7 @@ export default function PoseDemoRunner() {
         </div>
       )}
 
-      {/* ── Camera — fills all available vertical space ── */}
+      {/* \u2500\u2500 Camera \u2014 fills all available vertical space \u2500\u2500 */}
       <div style={{flex:1,position:'relative',overflow:'hidden',minHeight:0}}>
         <video ref={videoRef} style={{display:'none'}} playsInline muted/>
         <canvas ref={canvasRef} width={640} height={480} style={{
@@ -845,7 +845,7 @@ export default function PoseDemoRunner() {
         {loading&&(
           <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.88)',gap:12}}>
             <div style={{width:36,height:36,borderRadius:'50%',border:'3px solid rgba(96,165,250,0.2)',borderTop:'3px solid #60a5fa',animation:'spin 0.8s linear infinite'}}/>
-            <div style={{fontSize:13,color:'#64748b'}}>{cameraReady?'Loading pose detection…':'Requesting camera…'}</div>
+            <div style={{fontSize:13,color:'#64748b'}}>{cameraReady?'Loading pose detection\u2026':'Requesting camera\u2026'}</div>
           </div>
         )}
 
@@ -858,7 +858,7 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Score badge — top left */}
+        {/* Score badge \u2014 top left */}
         {!loading&&!cameraError&&(
           <div style={{position:'absolute',top:10,left:10,background:'rgba(8,12,20,0.82)',backdropFilter:'blur(8px)',borderRadius:10,padding:'7px 10px',border:`1px solid ${phaseColor}40`,minWidth:68}}>
             <div style={{fontSize:20,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
@@ -869,7 +869,7 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Hold badge — top right, attempt phase only */}
+        {/* Hold badge \u2014 top right, attempt phase only */}
         {phase==='attempt'&&holdSecs>0&&(
           <div style={{position:'absolute',top:10,right:10,background:'rgba(74,222,128,0.1)',border:'1px solid rgba(74,222,128,0.4)',borderRadius:10,padding:'7px 10px',textAlign:'center'}}>
             <div style={{fontSize:20,fontWeight:800,color:'#4ade80',lineHeight:1}}>{holdSecs}s</div>
@@ -877,7 +877,7 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Camera controls — bottom right */}
+        {/* Camera controls \u2014 bottom right */}
         {!loading&&!cameraError&&(
           <div style={{position:'absolute',bottom:10,right:10,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
             {showControls&&(
@@ -906,7 +906,7 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Auto-frame pill — bottom left */}
+        {/* Auto-frame pill \u2014 bottom left */}
         {!loading&&!cameraError&&autoFrame&&(
           <div style={{position:'absolute',bottom:10,left:10,display:'flex',alignItems:'center',gap:5,background:'rgba(8,12,20,0.72)',backdropFilter:'blur(6px)',borderRadius:20,padding:'4px 9px',border:'1px solid rgba(59,130,246,0.25)'}}>
             <div style={{width:5,height:5,borderRadius:'50%',background:'#3b82f6',animation:'pulse 2s ease infinite'}}/>
@@ -915,7 +915,7 @@ export default function PoseDemoRunner() {
         )}
       </div>
 
-      {/* ── Bottom panel — compact, no wasted space ── */}
+      {/* \u2500\u2500 Bottom panel \u2014 compact, no wasted space \u2500\u2500 */}
       <div style={{flexShrink:0,background:'rgba(8,12,20,0.97)',borderTop:'1px solid rgba(255,255,255,0.06)',padding:'10px 14px 14px',display:'flex',flexDirection:'column',gap:8}}>
 
         {/* Phase status */}
@@ -937,7 +937,7 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Match bar — attempt only */}
+        {/* Match bar \u2014 attempt only */}
         {phase==='attempt'&&(
           <div style={{display:'flex',alignItems:'center',gap:10,background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:8,padding:'8px 12px'}}>
             <div style={{fontSize:18,fontWeight:800,color:phaseColor,lineHeight:1,minWidth:42}}>{pct}%</div>
@@ -946,7 +946,7 @@ export default function PoseDemoRunner() {
                 <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:3,transition:'width 0.15s ease,background 0.3s ease'}}/>
               </div>
               <div style={{fontSize:10,color:'#64748b',marginTop:4}}>
-                {pct<55?'Keep trying — demo repeats if needed':pct<85?'Getting close!':'Hold this position'}
+                {pct<55?'Keep trying \u2014 demo repeats if needed':pct<85?'Getting close!':'Hold this position'}
               </div>
             </div>
           </div>
@@ -954,7 +954,7 @@ export default function PoseDemoRunner() {
 
         {/* Legend */}
         <div style={{display:'flex',gap:10,fontSize:10,color:'#475569',flexWrap:'wrap'}}>
-          {([['rgba(167,139,250,0.7)','Demo'],['rgba(96,165,250,0.7)','Target'],['rgba(255,255,255,0.7)','You'],['rgba(74,222,128,0.8)','✓ Match']] as const).map(([bg,label])=>(
+          {([['rgba(167,139,250,0.7)','Demo'],['rgba(96,165,250,0.7)','Target'],['rgba(255,255,255,0.7)','You'],['rgba(74,222,128,0.8)','\u2713 Match']] as const).map(([bg,label])=>(
             <span key={label} style={{display:'flex',alignItems:'center',gap:3}}>
               <span style={{display:'inline-block',width:10,height:3,background:bg,borderRadius:2}}/>{label}
             </span>
