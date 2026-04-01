@@ -66,32 +66,35 @@ function segLen(lms: Landmark[], a: number, b: number, w: number, h: number, fal
 
 function getBodyFrame(lms: Landmark[], w: number, h: number): BodyFrame | null {
   const ls = lms[LP.LEFT_SHOULDER]; const rs = lms[LP.RIGHT_SHOULDER];
-  const lh = lms[LP.LEFT_HIP];      const rh = lms[LP.RIGHT_HIP];
-  if (!vis(ls)||!vis(rs)||!vis(lh)||!vis(rh)) return null;
+  if (!vis(ls)||!vis(rs)) return null;
 
   const lsC = c(ls,w,h); const rsC = c(rs,w,h);
-  const lhC = c(lh,w,h); const rhC = c(rh,w,h);
-
   const shoulderMid: Vec2 = { x:(lsC.x+rsC.x)/2, y:(lsC.y+rsC.y)/2 };
-  const hipMid: Vec2      = { x:(lhC.x+rhC.x)/2, y:(lhC.y+rhC.y)/2 };
-
-  const axisDown  = norm({ x: hipMid.x-shoulderMid.x, y: hipMid.y-shoulderMid.y });
-  // axisRight = from left shoulder to right shoulder in canvas.
-  // After mirroring the video, the patient's RIGHT shoulder appears on the LEFT side of canvas.
-  // lsC is now visually on the right, rsC is on the left in canvas.
-  // So "patient right" in canvas = direction from rsC toward lsC (after mirror).
-  const axisRight = norm({ x: lsC.x - rsC.x, y: lsC.y - rsC.y });
-
-  const torsoLen = Math.max(dist(shoulderMid, hipMid), 20);
   const shoulderWidth = Math.max(dist(lsC, rsC), 20);
-  const fb = torsoLen * 0.38;
+
+  // axisRight: after mirroring, patient RIGHT = lsC -> rsC is flipped, so right = rsC->lsC direction
+  const axisRight = norm({ x: lsC.x - rsC.x, y: lsC.y - rsC.y });
+  // axisDown: perpendicular, always pointing toward bottom of frame
+  let axisDown: Vec2 = { x: -axisRight.y, y: axisRight.x };
+  if (axisDown.y < 0) axisDown = { x: -axisDown.x, y: -axisDown.y };
+
+  // Use real hips if visible, otherwise estimate (human proportion: torso ~1.4x shoulder width)
+  const lh = lms[LP.LEFT_HIP]; const rh = lms[LP.RIGHT_HIP];
+  let torsoLen: number;
+  if (vis(lh) && vis(rh)) {
+    const lhC = c(lh,w,h); const rhC = c(rh,w,h);
+    const hipMid: Vec2 = { x:(lhC.x+rhC.x)/2, y:(lhC.y+rhC.y)/2 };
+    torsoLen = Math.max(dist(shoulderMid, hipMid), 20);
+  } else {
+    torsoLen = shoulderWidth * 1.4;
+  }
 
   return {
     origin: shoulderMid, axisDown, axisRight, torsoLen, shoulderWidth,
-    rUpperArm: segLen(lms, LP.RIGHT_SHOULDER, LP.RIGHT_ELBOW, w, h, fb),
-    rForeArm:  segLen(lms, LP.RIGHT_ELBOW,    LP.RIGHT_WRIST, w, h, fb*0.85),
-    lUpperArm: segLen(lms, LP.LEFT_SHOULDER,  LP.LEFT_ELBOW,  w, h, fb),
-    lForeArm:  segLen(lms, LP.LEFT_ELBOW,     LP.LEFT_WRIST,  w, h, fb*0.85),
+    rUpperArm: segLen(lms, LP.RIGHT_SHOULDER, LP.RIGHT_ELBOW, w, h, shoulderWidth * 0.8),
+    rForeArm:  segLen(lms, LP.RIGHT_ELBOW,    LP.RIGHT_WRIST, w, h, shoulderWidth * 0.7),
+    lUpperArm: segLen(lms, LP.LEFT_SHOULDER,  LP.LEFT_ELBOW,  w, h, shoulderWidth * 0.8),
+    lForeArm:  segLen(lms, LP.LEFT_ELBOW,     LP.LEFT_WRIST,  w, h, shoulderWidth * 0.7),
     rThigh:    segLen(lms, LP.RIGHT_HIP,      LP.RIGHT_KNEE,  w, h, torsoLen*0.55),
     rShin:     segLen(lms, LP.RIGHT_KNEE,     LP.RIGHT_ANKLE, w, h, torsoLen*0.5),
     lThigh:    segLen(lms, LP.LEFT_HIP,       LP.LEFT_KNEE,   w, h, torsoLen*0.55),
@@ -177,6 +180,18 @@ const POSE_BUILDERS: Record<string, PoseBuilder> = {
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
   },
 
+  shoulder_abduction_bilateral: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    // Both arms abducted 90deg laterally
+    const rElbow = limbPoint(f, rShoulder,  0.05,  1.0, f.rUpperArm);
+    const rWrist = limbPoint(f, rElbow,     0.0,   1.0, f.rForeArm);
+    const lElbow = limbPoint(f, lShoulder,  0.05, -1.0, f.lUpperArm);
+    const lWrist = limbPoint(f, lElbow,     0.0,  -1.0, f.lForeArm);
+    const base = standingBase(f);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+  },
+
   shoulder_external_rotation: (f) => {
     const rShoulder = framePoint(f, 0,  0.50);
     const lShoulder = framePoint(f, 0, -0.50);
@@ -231,7 +246,18 @@ type Exercise = {
 
 const EXERCISES: Exercise[] = [
   {
-    id: 'shoulder_abduction', name: 'Shoulder Abduction',
+    id: 'shoulder_abduction_bilateral', name: 'Bilateral Shoulder Raise',
+    description: 'Raise BOTH arms out to the side to shoulder height',
+    cues: ['Stand or sit tall', 'Keep both elbows straight', 'Raise both arms out to the sides', 'Stop when arms are level with your shoulders'],
+    matchJoints: [
+      { name: 'right shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90, toleranceDeg: 20, weight: 0.4 },
+      { name: 'left shoulder',  a: LP.LEFT_HIP,  b: LP.LEFT_SHOULDER,  c: LP.LEFT_ELBOW,   targetDeg: 90, toleranceDeg: 20, weight: 0.4 },
+      { name: 'right elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 20, weight: 0.1 },
+      { name: 'left elbow',     a: LP.LEFT_SHOULDER,  b: LP.LEFT_ELBOW,  c: LP.LEFT_WRIST,  targetDeg: 170, toleranceDeg: 20, weight: 0.1 },
+    ],
+  },
+  {
+    id: 'shoulder_abduction', name: 'Shoulder Abduction (Right)',
     description: 'Raise your right arm out to the side to shoulder height',
     cues: ['Stand tall, feet shoulder-width apart','Keep your elbow straight','Raise your right arm out to the side','Stop when arm is level with your shoulder'],
     matchJoints: [
@@ -280,8 +306,16 @@ function computeMatch(lms: Landmark[], ex: Exercise, w: number, h: number): numb
   let tw = 0; let sc = 0;
   for (const j of ex.matchJoints) {
     const a = lms[j.a]; const b = lms[j.b]; const cc = lms[j.c];
-    if (!vis(a)||!vis(b)||!vis(cc)) continue;
-    const delta = Math.abs(angleBetween(c(a,w,h), c(b,w,h), c(cc,w,h)) - j.targetDeg);
+    if (!vis(b)||!vis(cc)) continue;
+    // If anchor landmark (a) is not visible (e.g. hips off-screen), estimate from visible joints
+    let pA: Vec2; let pB = c(b,w,h); let pC = c(cc,w,h);
+    if (vis(a)) {
+      pA = c(a,w,h);
+    } else {
+      // Use vertical direction from b as fallback anchor (assumes standing/seated upright)
+      pA = { x: pB.x, y: pB.y + 100 };
+    }
+    const delta = Math.abs(angleBetween(pA, pB, pC) - j.targetDeg);
     sc += Math.max(0, 1-delta/(j.toleranceDeg*2))*j.weight;
     tw += j.weight;
   }
