@@ -72,10 +72,7 @@ function getBodyFrame(lms: Landmark[], w: number, h: number): BodyFrame | null {
   const shoulderMid: Vec2 = { x:(lsC.x+rsC.x)/2, y:(lsC.y+rsC.y)/2 };
   const shoulderWidth = Math.max(dist(lsC, rsC), 20);
 
-  // axisRight: after mirroring, patient's anatomical RIGHT appears on canvas LEFT.
-  // rsC is on canvas-left, lsC is on canvas-right, so patient-right = rsC->lsC direction = rsC - lsC flipped.
-  // Actually: mirrored x = 1-x, so RIGHT_SHOULDER (idx 12) moves to canvas-left.
-  // Patient right = canvas left = direction from lsC toward rsC in mirrored coords.
+  // axisRight: after mirroring, patient RIGHT = lsC -> rsC is flipped, so right = rsC->lsC direction
   const axisRight = norm({ x: rsC.x - lsC.x, y: rsC.y - lsC.y });
   // axisDown: perpendicular, always pointing toward bottom of frame
   let axisDown: Vec2 = { x: -axisRight.y, y: axisRight.x };
@@ -170,79 +167,57 @@ function restingArm(f: BodyFrame, side: 'r'|'l'): { elbow: Vec2; wrist: Vec2 } {
 }
 
 const POSE_BUILDERS: Record<string, PoseBuilder> = {
-
-  // RIGHT arm raise
   shoulder_abduction_right: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    const rElbow = limbPoint(f, rShoulder,  0.05,  1.0, f.rUpperArm);
-    const rWrist = limbPoint(f, rElbow,     0.0,   1.0, f.rForeArm);
+    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rElbow = limbPoint(f, rShoulder, 0.05,  1.0, f.rUpperArm);
+    const rWrist = limbPoint(f, rElbow,    0.0,   1.0, f.rForeArm);
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
-
-  // LEFT arm raise
   shoulder_abduction_left: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const lElbow = limbPoint(f, lShoulder,  0.05, -1.0, f.lUpperArm);
-    const lWrist = limbPoint(f, lElbow,     0.0,  -1.0, f.lForeArm);
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+    const lElbow = limbPoint(f, lShoulder, 0.05, -1.0, f.lUpperArm);
+    const lWrist = limbPoint(f, lElbow,    0.0,  -1.0, f.lForeArm);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
-
-  // Both arms raise
   shoulder_abduction_bilateral: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    const rElbow = limbPoint(f, rShoulder,  0.05,  1.0, f.rUpperArm);
-    const rWrist = limbPoint(f, rElbow,     0.0,   1.0, f.rForeArm);
-    const lElbow = limbPoint(f, lShoulder,  0.05, -1.0, f.lUpperArm);
-    const lWrist = limbPoint(f, lElbow,     0.0,  -1.0, f.lForeArm);
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
+    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rElbow = limbPoint(f, rShoulder, 0.05,  1.0, f.rUpperArm);
+    const rWrist = limbPoint(f, rElbow,    0.0,   1.0, f.rForeArm);
+    const lElbow = limbPoint(f, lShoulder, 0.05, -1.0, f.lUpperArm);
+    const lWrist = limbPoint(f, lElbow,    0.0,  -1.0, f.lForeArm);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
-
-  // Sit to stand: target = fully standing
   sit_to_stand: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
     const rElbow = limbPoint(f, rShoulder, 0.9,  0.2, f.rUpperArm);
     const rWrist = limbPoint(f, rElbow,    0.8,  0.1, f.rForeArm);
     const lElbow = limbPoint(f, lShoulder, 0.9, -0.2, f.lUpperArm);
     const lWrist = limbPoint(f, lElbow,    0.8, -0.1, f.lForeArm);
-    const rHip   = framePoint(f, 1.0,  0.40);
-    const lHip   = framePoint(f, 1.0, -0.40);
+    const rHip = framePoint(f, 1.0,  0.40); const lHip = framePoint(f, 1.0, -0.40);
     const rKnee  = limbPoint(f, rHip,  1.0,  0.05, f.rThigh);
     const lKnee  = limbPoint(f, lHip,  1.0, -0.05, f.lThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0,  0.03, f.rShin);
     const lAnkle = limbPoint(f, lKnee, 1.0, -0.03, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
   },
-
   knee_extension: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip = framePoint(f, 0.90,  0.38);
-    const lHip = framePoint(f, 0.90, -0.38);
+    const rHip = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
     const rKnee  = limbPoint(f, rHip,  0.05,  0.9, f.rThigh);
     const rAnkle = limbPoint(f, rKnee, 0.05,  0.9, f.rShin);
     const lKnee  = limbPoint(f, lHip,  0.08, -0.9, f.lThigh);
     const lAnkle = limbPoint(f, lKnee, 1.0,  -0.05, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
   },
-
   knee_flexion: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip   = framePoint(f, 1.0,  0.40);
-    const lHip   = framePoint(f, 1.0, -0.40);
+    const rHip = framePoint(f, 1.0,  0.40); const lHip = framePoint(f, 1.0, -0.40);
     const rKnee  = limbPoint(f, rHip,  1.0,  0.05, f.rThigh);
     const rAnkle = limbPoint(f, rKnee, -0.9, 0.05, f.rShin);
     const lKnee  = limbPoint(f, lHip,  1.0, -0.05, f.lThigh);
@@ -251,7 +226,6 @@ const POSE_BUILDERS: Record<string, PoseBuilder> = {
   },
 };
 
-// ─── REST pose builders ───────────────────────────────────────────────────────
 const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
   shoulder_abduction_right: (f) => {
     const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
@@ -275,18 +249,18 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
     const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip   = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
+    const rHip = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
     const rKnee  = limbPoint(f, rHip,  0.08,  0.9, f.rThigh);
     const lKnee  = limbPoint(f, lHip,  0.08, -0.9, f.lThigh);
-    const rAnkle = limbPoint(f, rKnee, 1.0,   0.05, f.rShin);
-    const lAnkle = limbPoint(f, lKnee, 1.0,  -0.05, f.lShin);
+    const rAnkle = limbPoint(f, rKnee, 1.0,  0.05, f.rShin);
+    const lAnkle = limbPoint(f, lKnee, 1.0, -0.05, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
   },
   knee_extension: (f) => {
     const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip   = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
+    const rHip = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
     const rKnee  = limbPoint(f, rHip,  0.08,  0.9, f.rThigh);
     const lKnee  = limbPoint(f, lHip,  0.08, -0.9, f.lThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0,  0.05, f.rShin);
@@ -301,7 +275,6 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
   },
 };
 
-// ─── Exercise definitions ─────────────────────────────────────────────────────
 type Exercise = {
   id: string; name: string; description: string; cues: string[];
   matchJoints: { name: string; a: number; b: number; c: number; targetDeg: number; toleranceDeg: number; weight: number }[];
@@ -313,7 +286,7 @@ const EXERCISES: Exercise[] = [
     description: 'Raise your RIGHT arm out to the side',
     cues: ['Stand tall, feet shoulder-width apart', 'Keep your right elbow straight', 'Raise your RIGHT arm out to the side', 'Stop when arm is level with your shoulder'],
     matchJoints: [
-      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
       { name: 'elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
     ],
   },
@@ -322,14 +295,14 @@ const EXERCISES: Exercise[] = [
     description: 'Raise your LEFT arm out to the side',
     cues: ['Stand tall, feet shoulder-width apart', 'Keep your left elbow straight', 'Raise your LEFT arm out to the side', 'Stop when arm is level with your shoulder'],
     matchJoints: [
-      { name: 'shoulder', a: LP.LEFT_HIP, b: LP.LEFT_SHOULDER, c: LP.LEFT_ELBOW,  targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'shoulder', a: LP.LEFT_HIP, b: LP.LEFT_SHOULDER, c: LP.LEFT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
       { name: 'elbow',    a: LP.LEFT_SHOULDER, b: LP.LEFT_ELBOW, c: LP.LEFT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
     ],
   },
   {
     id: 'shoulder_abduction_bilateral', name: 'Bilateral Arm Raise',
     description: 'Raise BOTH arms out to the sides',
-    cues: ['Stand or sit tall', 'Keep both elbows straight', 'Raise both arms out to the sides', 'Stop when arms are level with your shoulders'],
+    cues: ['Stand or sit tall', 'Keep both elbows straight', 'Raise both arms out to the sides', 'Stop when arms are level with shoulders'],
     matchJoints: [
       { name: 'right shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90, toleranceDeg: 20, weight: 0.35 },
       { name: 'left shoulder',  a: LP.LEFT_HIP,  b: LP.LEFT_SHOULDER,  c: LP.LEFT_ELBOW,   targetDeg: 90, toleranceDeg: 20, weight: 0.35 },
@@ -342,15 +315,15 @@ const EXERCISES: Exercise[] = [
     description: 'Rise from seated to fully standing',
     cues: ['Sit at the front edge of your chair', 'Lean slightly forward', 'Push through your feet to stand', 'Stand tall, hips and knees fully extended'],
     matchJoints: [
-      { name: 'right knee', a: LP.RIGHT_HIP,     b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE, targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
-      { name: 'left knee',  a: LP.LEFT_HIP,      b: LP.LEFT_KNEE,  c: LP.LEFT_ANKLE,  targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
-      { name: 'right hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE,  targetDeg: 170, toleranceDeg: 15, weight: 0.2 },
-      { name: 'left hip',   a: LP.LEFT_SHOULDER,  b: LP.LEFT_HIP,  c: LP.LEFT_KNEE,   targetDeg: 170, toleranceDeg: 15, weight: 0.2 },
+      { name: 'right knee', a: LP.RIGHT_HIP,      b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE, targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
+      { name: 'left knee',  a: LP.LEFT_HIP,       b: LP.LEFT_KNEE,  c: LP.LEFT_ANKLE,  targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
+      { name: 'right hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP,  c: LP.RIGHT_KNEE,  targetDeg: 170, toleranceDeg: 15, weight: 0.2 },
+      { name: 'left hip',   a: LP.LEFT_SHOULDER,  b: LP.LEFT_HIP,   c: LP.LEFT_KNEE,   targetDeg: 170, toleranceDeg: 15, weight: 0.2 },
     ],
   },
   {
     id: 'knee_extension', name: 'Knee Extension (Right)',
-    description: 'Seated \u2014 straighten your right leg fully',
+    description: 'Seated - straighten your right leg fully',
     cues: ['Sit upright in your chair', 'Tighten your quadriceps', 'Slowly straighten your right knee', 'Hold with leg fully extended'],
     matchJoints: [
       { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,    targetDeg: 170, toleranceDeg: 12, weight: 0.8 },
@@ -359,7 +332,7 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'knee_flexion', name: 'Knee Flexion (Right)',
-    description: 'Standing \u2014 bend your right knee 90\u00b0 behind you',
+    description: 'Standing - bend your right knee 90 degrees behind you',
     cues: ['Stand on your left leg', 'Hold a surface if needed', 'Keep your thighs level', 'Bend right knee to 90 degrees behind you'],
     matchJoints: [
       { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,    targetDeg: 90,  toleranceDeg: 18, weight: 0.8 },
@@ -367,6 +340,140 @@ const EXERCISES: Exercise[] = [
     ],
   },
 ];
+
+// \u2500\u2500\u2500 Match scoring \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function angleBetween(a: Vec2, b: Vec2, cc: Vec2): number {
+  const ba = { x: a.x-b.x, y: a.y-b.y }; const bc = { x: cc.x-b.x, y: cc.y-b.y };
+  const dot = ba.x*bc.x+ba.y*bc.y;
+  const mag = Math.sqrt(ba.x**2+ba.y**2)*Math.sqrt(bc.x**2+bc.y**2);
+  return mag<0.001 ? 0 : Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI;
+}
+
+function computeMatch(lms: Landmark[], ex: Exercise, w: number, h: number): number {
+  let tw = 0; let sc = 0;
+  for (const j of ex.matchJoints) {
+    const a = lms[j.a]; const b = lms[j.b]; const cc = lms[j.c];
+    if (!vis(b)||!vis(cc)) continue;
+    // If anchor landmark (a) is not visible (e.g. hips off-screen), estimate from visible joints
+    let pA: Vec2; let pB = c(b,w,h); let pC = c(cc,w,h);
+    if (vis(a)) {
+      pA = c(a,w,h);
+    } else {
+      // Use vertical direction from b as fallback anchor (assumes standing/seated upright)
+      pA = { x: pB.x, y: pB.y + 100 };
+    }
+    const delta = Math.abs(angleBetween(pA, pB, pC) - j.targetDeg);
+    sc += Math.max(0, 1-delta/(j.toleranceDeg*2))*j.weight;
+    tw += j.weight;
+  }
+  return tw>0 ? sc/tw : 0;
+}
+
+// \u2500\u2500\u2500 Drawing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+const GHOST_SEGS: [keyof GhostJoints, keyof GhostJoints][] = [
+  ['lShoulder','rShoulder'],
+  ['rShoulder','rElbow'],['rElbow','rWrist'],
+  ['lShoulder','lElbow'],['lElbow','lWrist'],
+  ['rShoulder','rHip'],['lShoulder','lHip'],
+  ['lHip','rHip'],
+  ['rHip','rKnee'],['rKnee','rAnkle'],
+  ['lHip','lKnee'],['lKnee','lAnkle'],
+];
+
+const LIVE_SEGS: [number,number][] = [
+  [LP.LEFT_SHOULDER,LP.RIGHT_SHOULDER],
+  [LP.RIGHT_SHOULDER,LP.RIGHT_ELBOW],[LP.RIGHT_ELBOW,LP.RIGHT_WRIST],
+  [LP.LEFT_SHOULDER,LP.LEFT_ELBOW],[LP.LEFT_ELBOW,LP.LEFT_WRIST],
+  [LP.RIGHT_SHOULDER,LP.RIGHT_HIP],[LP.LEFT_SHOULDER,LP.LEFT_HIP],
+  [LP.LEFT_HIP,LP.RIGHT_HIP],
+  [LP.RIGHT_HIP,LP.RIGHT_KNEE],[LP.RIGHT_KNEE,LP.RIGHT_ANKLE],
+  [LP.LEFT_HIP,LP.LEFT_KNEE],[LP.LEFT_KNEE,LP.LEFT_ANKLE],
+];
+
+function drawGhost(ctx: CanvasRenderingContext2D, g: GhostJoints, score: number) {
+  // Colour interpolates blue -> green as score increases
+  const t = score;
+  const r = Math.floor(96  + (74  - 96)  * t);
+  const gr= Math.floor(165 + (222 - 165) * t);
+  const b = Math.floor(250 + (128 - 250) * t);
+  const col = `rgba(${r},${gr},${b},`;
+
+  // Torso fill
+  ctx.beginPath();
+  ctx.moveTo(g.lShoulder.x,g.lShoulder.y);
+  ctx.lineTo(g.rShoulder.x,g.rShoulder.y);
+  ctx.lineTo(g.rHip.x,g.rHip.y);
+  ctx.lineTo(g.lHip.x,g.lHip.y);
+  ctx.closePath();
+  ctx.fillStyle = col+'0.07)'; ctx.fill();
+
+  ctx.setLineDash([8,5]); ctx.lineWidth=4; ctx.lineCap='round';
+  for (const [a,b2] of GHOST_SEGS) {
+    ctx.beginPath(); ctx.moveTo(g[a].x,g[a].y); ctx.lineTo(g[b2].x,g[b2].y);
+    ctx.strokeStyle = col+'0.6)'; ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  for (const p of Object.values(g) as Vec2[]) {
+    ctx.beginPath(); ctx.arc(p.x,p.y,7,0,Math.PI*2);
+    ctx.fillStyle=col+'0.75)'; ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+}
+
+function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: number, score: number) {
+  const col = score>=0.85 ? 'rgba(74,222,128,0.95)' : 'rgba(255,255,255,0.90)';
+  ctx.setLineDash([]); ctx.lineWidth=3.5; ctx.lineCap='round';
+  for (const [a,b] of LIVE_SEGS) {
+    if (!vis(lms[a])||!vis(lms[b])) continue;
+    ctx.beginPath(); ctx.moveTo(lms[a].x*w,lms[a].y*h); ctx.lineTo(lms[b].x*w,lms[b].y*h);
+    ctx.strokeStyle=col; ctx.stroke();
+  }
+  [LP.LEFT_SHOULDER,LP.RIGHT_SHOULDER,LP.LEFT_ELBOW,LP.RIGHT_ELBOW,
+   LP.LEFT_WRIST,LP.RIGHT_WRIST,LP.LEFT_HIP,LP.RIGHT_HIP,
+   LP.LEFT_KNEE,LP.RIGHT_KNEE,LP.LEFT_ANKLE,LP.RIGHT_ANKLE].forEach(i=>{
+    if (!vis(lms[i])) return;
+    ctx.beginPath(); ctx.arc(lms[i].x*w,lms[i].y*h,6,0,Math.PI*2);
+    ctx.fillStyle=col; ctx.fill();
+  });
+}
+
+// \u2500\u2500\u2500 Viewport smoothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Smoothed viewport state \u2014 persists across renders without causing re-renders
+type Viewport = { scale: number; offsetX: number; offsetY: number };
+
+
+// Demo-mode ghost: cyan/purple pulsing to signal "watch me"
+function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number) {
+  // Colour oscillates between cyan and purple to signal active demo
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 350);
+  const r = Math.floor(96  + (167 - 96)  * pulse);
+  const gr= Math.floor(165 + (139 - 165) * pulse);
+  const b = Math.floor(250 + (250 - 250) * pulse);
+  const col = `rgba(${r},${gr},${b},`;
+
+  const torso = [g.lShoulder, g.rShoulder, g.rHip, g.lHip];
+  ctx.beginPath(); ctx.moveTo(torso[0].x,torso[0].y);
+  torso.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+  ctx.fillStyle=col+'0.08)'; ctx.fill();
+
+  const GHOST_SEGS: [keyof GhostJoints, keyof GhostJoints][] = [
+    ['lShoulder','rShoulder'],['rShoulder','rElbow'],['rElbow','rWrist'],
+    ['lShoulder','lElbow'],['lElbow','lWrist'],['rShoulder','rHip'],['lShoulder','lHip'],
+    ['lHip','rHip'],['rHip','rKnee'],['rKnee','rAnkle'],['lHip','lKnee'],['lKnee','lAnkle'],
+  ];
+  ctx.setLineDash([6,4]); ctx.lineWidth=4.5; ctx.lineCap='round';
+  for (const [a,b2] of GHOST_SEGS) {
+    ctx.beginPath(); ctx.moveTo(g[a].x,g[a].y); ctx.lineTo(g[b2].x,g[b2].y);
+    ctx.strokeStyle=col+'0.75)'; ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (const p of Object.values(g) as Vec2[]) {
+    ctx.beginPath(); ctx.arc(p.x,p.y,8,0,Math.PI*2);
+    ctx.fillStyle=col+'0.85)'; ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=2; ctx.stroke();
+  }
+}
 
 // \u2500\u2500\u2500 Exercise phase state machine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type ExercisePhase = 'demo' | 'attempt' | 'rep_complete';
@@ -388,6 +495,7 @@ function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
   for (const key of k) out[key] = lerpV(a[key], b[key], t);
   return out;
 }
+
 
 // \u2500\u2500 Animation timeline for DEMO phase \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // Returns a 0-1 lerp value (rest->target) given elapsed seconds.
