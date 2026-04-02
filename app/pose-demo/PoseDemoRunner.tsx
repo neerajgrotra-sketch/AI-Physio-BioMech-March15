@@ -389,58 +389,6 @@ function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
   return out;
 }
 
-// REST pose builders \u2014 natural standing/seated position for each exercise
-const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
-  shoulder_abduction_bilateral: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
-  },
-  shoulder_abduction: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
-  },
-  shoulder_external_rotation: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    // Start: elbow at side, forearm pointing forward/across body
-    const rElbow = limbPoint(f, rShoulder, 1.0, 0.05, f.rUpperArm);
-    const rWrist = limbPoint(f, rElbow, 0.05, -0.8, f.rForeArm); // forearm tucked across
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
-  },
-  knee_extension: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip = framePoint(f, 0.90,  0.38);
-    const lHip = framePoint(f, 0.90, -0.38);
-    // Both legs bent seated \u2014 knee below hip, shin down
-    const rKnee  = limbPoint(f, rHip, 0.08, 0.9, f.rThigh);
-    const rAnkle = limbPoint(f, rKnee, 1.0, 0.05, f.rShin);
-    const lKnee  = limbPoint(f, lHip, 0.08, -0.9, f.lThigh);
-    const lAnkle = limbPoint(f, lKnee, 1.0, -0.05, f.lShin);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
-  },
-  knee_flexion: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50);
-    const lShoulder = framePoint(f, 0, -0.50);
-    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const base = standingBase(f);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...base } as GhostJoints;
-  },
-};
-
 // \u2500\u2500 Animation timeline for DEMO phase \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // Returns a 0-1 lerp value (rest->target) given elapsed seconds.
 // One demo cycle: 1s at rest, 2s raise, 1.5s hold at top, 2s lower, 0.5s pause
