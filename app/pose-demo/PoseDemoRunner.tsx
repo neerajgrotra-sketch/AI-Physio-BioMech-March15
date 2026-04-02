@@ -555,6 +555,7 @@ export default function PoseDemoRunner() {
   const [autoFrame, setAutoFrame]       = useState(true);
   const [manualZoom, setManualZoom]     = useState(1.0);
   const [showControls, setShowControls] = useState(false);
+  const [isMobile, setIsMobile]         = useState(false);
   // UI-facing phase info \u2014 updated from render loop via refs to avoid stale closures
   const [phaseLabel, setPhaseLabel]     = useState('Watch carefully\u2026');
   const [phaseColor, setPhaseColor]     = useState('#60a5fa');
@@ -572,6 +573,14 @@ export default function PoseDemoRunner() {
 
   useEffect(()=>{ exRef.current = exercise; },[exercise]);
   useEffect(()=>{ autoFrameRef.current = autoFrame; },[autoFrame]);
+
+  // Responsive: detect mobile vs desktop, update on resize
+  useEffect(()=>{
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  },[]);
   useEffect(()=>{ manualZoomRef.current = manualZoom; },[manualZoom]);
 
   const startPhase = useCallback((p: ExercisePhase, repeat = false) => {
@@ -799,7 +808,7 @@ export default function PoseDemoRunner() {
   };
 
   return (
-    <div style={{height:'100dvh',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9',overflow:'hidden'}}>
+    <div style={{...(isMobile?{height:'100dvh',overflow:'hidden'}:{minHeight:'100vh'}),background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'}}>
 
       {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.06)',background:'rgba(8,12,20,0.97)',backdropFilter:'blur(12px)',flexShrink:0,zIndex:50}}>
@@ -834,8 +843,11 @@ export default function PoseDemoRunner() {
         </div>
       )}
 
-      {/* Camera - fills all available vertical space */}
-      <div style={{flex:1,position:'relative',overflow:'hidden',minHeight:0}}>
+      {/* Camera */}
+      <div style={isMobile
+        ? {flex:1,position:'relative',overflow:'hidden',minHeight:0}
+        : {position:'relative',width:'100%',maxWidth:700,margin:'0 auto',aspectRatio:'4/3'}
+      }>
         <video ref={videoRef} style={{display:'none'}} playsInline muted/>
         <canvas ref={canvasRef} width={640} height={480} style={{width:'100%',height:'100%',display:'block',background:'#0a0f1e'}}/>
 
@@ -917,7 +929,7 @@ export default function PoseDemoRunner() {
       </div>
 
       {/* Bottom panel */}
-      <div style={{flexShrink:0,background:'rgba(8,12,20,0.97)',borderTop:'1px solid rgba(255,255,255,0.06)',padding:'10px 14px 16px',display:'flex',flexDirection:'column',gap:8}}>
+      <div style={{...(isMobile?{flexShrink:0}:{maxWidth:700,width:'100%',margin:'0 auto'}),background:isMobile?'rgba(8,12,20,0.97)':'transparent',borderTop:isMobile?'1px solid rgba(255,255,255,0.06)':'none',padding:isMobile?'10px 14px 16px':'12px 0 24px',display:'flex',flexDirection:'column',gap:8}}}>
 
         {/* Phase status */}
         <div style={{display:'flex',alignItems:'center',gap:8,background:phaseBg,border:`1px solid ${phaseColor}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.4s ease'}}>
