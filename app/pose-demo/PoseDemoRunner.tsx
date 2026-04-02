@@ -16,7 +16,7 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Types \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type Vec2 = { x: number; y: number };
 type Landmark = { x: number; y: number; z: number; visibility?: number };
 
@@ -29,7 +29,7 @@ const LP = {
   LEFT_ANKLE: 27,    RIGHT_ANKLE: 28,
 };
 
-// ─── Body frame ───────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Body frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // We extract a local coordinate frame from the live skeleton.
 // Origin = shoulder midpoint
 // axisDown = unit vector from shoulder-mid toward hip-mid (spine direction)
@@ -124,7 +124,7 @@ function limbPoint(f: BodyFrame, from: Vec2, alongDir: number, acrossDir: number
   };
 }
 
-// ─── Ghost joint positions ────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Ghost joint positions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type GhostJoints = {
   lShoulder: Vec2; rShoulder: Vec2;
   lElbow: Vec2;    rElbow: Vec2;
@@ -238,7 +238,7 @@ const POSE_BUILDERS: Record<string, PoseBuilder> = {
   },
 };
 
-// ─── Exercise definitions ─────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Exercise definitions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type Exercise = {
   id: string; name: string; description: string; cues: string[];
   matchJoints: { name: string; a: number; b: number; c: number; targetDeg: number; toleranceDeg: number; weight: number }[];
@@ -294,7 +294,7 @@ const EXERCISES: Exercise[] = [
   },
 ];
 
-// ─── Match scoring ────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Match scoring \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function angleBetween(a: Vec2, b: Vec2, cc: Vec2): number {
   const ba = { x: a.x-b.x, y: a.y-b.y }; const bc = { x: cc.x-b.x, y: cc.y-b.y };
   const dot = ba.x*bc.x+ba.y*bc.y;
@@ -322,7 +322,7 @@ function computeMatch(lms: Landmark[], ex: Exercise, w: number, h: number): numb
   return tw>0 ? sc/tw : 0;
 }
 
-// ─── Drawing ──────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Drawing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 const GHOST_SEGS: [keyof GhostJoints, keyof GhostJoints][] = [
   ['lShoulder','rShoulder'],
   ['rShoulder','rElbow'],['rElbow','rWrist'],
@@ -391,8 +391,8 @@ function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: 
   });
 }
 
-// ─── Viewport smoothing ───────────────────────────────────────────────────────
-// Smoothed viewport state — persists across renders without causing re-renders
+// \u2500\u2500\u2500 Viewport smoothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Smoothed viewport state \u2014 persists across renders without causing re-renders
 type Viewport = { scale: number; offsetX: number; offsetY: number };
 
 
@@ -428,7 +428,7 @@ function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number)
   }
 }
 
-// ─── Exercise phase state machine ────────────────────────────────────────────
+// \u2500\u2500\u2500 Exercise phase state machine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type ExercisePhase = 'demo' | 'attempt' | 'rep_complete';
 
 // Ease in-out cubic
@@ -449,7 +449,7 @@ function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
   return out;
 }
 
-// REST pose builders — natural standing/seated position for each exercise
+// REST pose builders \u2014 natural standing/seated position for each exercise
 const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
   shoulder_abduction_bilateral: (f) => {
     const rShoulder = framePoint(f, 0,  0.50);
@@ -484,7 +484,7 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
     const rHip = framePoint(f, 0.90,  0.38);
     const lHip = framePoint(f, 0.90, -0.38);
-    // Both legs bent seated — knee below hip, shin down
+    // Both legs bent seated \u2014 knee below hip, shin down
     const rKnee  = limbPoint(f, rHip, 0.08, 0.9, f.rThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0, 0.05, f.rShin);
     const lKnee  = limbPoint(f, lHip, 0.08, -0.9, f.lThigh);
@@ -501,7 +501,7 @@ const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
   },
 };
 
-// ── Animation timeline for DEMO phase ────────────────────────────────────────
+// \u2500\u2500 Animation timeline for DEMO phase \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // Returns a 0-1 lerp value (rest->target) given elapsed seconds.
 // One demo cycle: 1s at rest, 2s raise, 1.5s hold at top, 2s lower, 0.5s pause
 // Total cycle: 7s. We run 2 cycles then freeze at target.
@@ -530,7 +530,7 @@ function demoLerp(elapsedS: number, isRepeat: boolean): { t: number; done: boole
   return { t: cycleT(elapsedS), done: false };
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500 Component \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 export default function PoseDemoRunner() {
   const videoRef     = useRef<HTMLVideoElement>(null);
   const canvasRef    = useRef<HTMLCanvasElement>(null);
@@ -538,7 +538,7 @@ export default function PoseDemoRunner() {
   const landmarksRef = useRef<Landmark[]>([]);
   const exRef        = useRef<Exercise>(EXERCISES[0]);
 
-  // Viewport state — stored in refs to avoid triggering re-renders each frame
+  // Viewport state \u2014 stored in refs to avoid triggering re-renders each frame
   const viewportRef      = useRef<Viewport>({ scale:1, offsetX:0, offsetY:0 });
   const autoFrameRef     = useRef<boolean>(true);
   const manualZoomRef    = useRef<number>(1.0);
@@ -555,8 +555,8 @@ export default function PoseDemoRunner() {
   const [autoFrame, setAutoFrame]       = useState(true);
   const [manualZoom, setManualZoom]     = useState(1.0);
   const [showControls, setShowControls] = useState(false);
-  // UI-facing phase info — updated from render loop via refs to avoid stale closures
-  const [phaseLabel, setPhaseLabel]     = useState('Watch carefully…');
+  // UI-facing phase info \u2014 updated from render loop via refs to avoid stale closures
+  const [phaseLabel, setPhaseLabel]     = useState('Watch carefully\u2026');
   const [phaseColor, setPhaseColor]     = useState('#60a5fa');
   const [phaseBg, setPhaseBg]           = useState('rgba(96,165,250,0.12)');
   const [demoProgress, setDemoProgress] = useState(0); // 0-1 for demo progress bar
@@ -585,7 +585,7 @@ export default function PoseDemoRunner() {
     setPhase(p); setHoldSecs(0);
   }, []);
 
-  // Hold timer — only runs during attempt when matched
+  // Hold timer \u2014 only runs during attempt when matched
   const startHoldTimer = useCallback(() => {
     if (holdTimerRef.current) return;
     holdTimerRef.current = setInterval(()=>{
@@ -615,7 +615,7 @@ export default function PoseDemoRunner() {
     const lms=landmarksRef.current;
     const mir = lms.length>0 ? lms.map(lm=>({...lm, x:1-lm.x})) : [];
 
-    // ── Viewport auto-frame ───────────────────────────────────────────────────
+    // \u2500\u2500 Viewport auto-frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     let targetScale = manualZoomRef.current;
     let targetOX = 0; let targetOY = 0;
     if (autoFrameRef.current && mir.length>0) {
@@ -638,7 +638,7 @@ export default function PoseDemoRunner() {
     vp.offsetX+=(targetOX-vp.offsetX)*LERP;
     vp.offsetY+=(targetOY-vp.offsetY)*LERP;
 
-    // ── Draw video ────────────────────────────────────────────────────────────
+    // \u2500\u2500 Draw video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     ctx.save();
     ctx.setTransform(vp.scale,0,0,vp.scale,vp.offsetX,vp.offsetY);
     ctx.save(); ctx.scale(-1,1); ctx.drawImage(video,-W,0,W,H); ctx.restore();
@@ -666,13 +666,13 @@ export default function PoseDemoRunner() {
           const restJoints   = restBuilder(frame);
 
           if (currentPhase === 'demo') {
-            // ── DEMO: animate silhouette + watch for patient intent ───────────
+            // \u2500\u2500 DEMO: animate silhouette + watch for patient intent \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             const isRepeat = isRepeatDemoRef.current;
             const { t, done } = demoLerp(elapsed, isRepeat);
             const totalS = DEMO_CYCLE_S * (isRepeat ? DEMO_CYCLES_REPEAT : DEMO_CYCLES_FIRST);
             setDemoProgress(Math.min(elapsed / totalS, 1));
 
-            // ── Intent detection: is score rising? ────────────────────────────
+            // \u2500\u2500 Intent detection: is score rising? \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             // Push current score into rolling history buffer
             const hist = scoreHistoryRef.current;
             hist.push(s);
@@ -687,8 +687,8 @@ export default function PoseDemoRunner() {
             }
 
             if (patientIsAttempting) {
-              // Patient started moving to match — pause demo immediately
-              setPhaseLabel('Good — now hold that position!');
+              // Patient started moving to match \u2014 pause demo immediately
+              setPhaseLabel('Good \u2014 now hold that position!');
               setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
               isRepeatDemoRef.current = false; // next repeat will be reminder length
               startPhase('attempt');
@@ -698,33 +698,33 @@ export default function PoseDemoRunner() {
               drawGhostDemo(ctx, ghostJoints, t);
 
               if (done) {
-                // Demo finished naturally — switch to attempt
-                setPhaseLabel('Your turn — match the pose');
+                // Demo finished naturally \u2014 switch to attempt
+                setPhaseLabel('Your turn \u2014 match the pose');
                 setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
                 startPhase('attempt');
               } else {
-                if (t < 0.05)      { setPhaseLabel(isRepeat?'Watch again…':'Watch carefully…');    setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
+                if (t < 0.05)      { setPhaseLabel(isRepeat?'Watch again\u2026':'Watch carefully\u2026');    setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
                 else if (t < 0.95) { setPhaseLabel('Follow this movement');                         setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
                 else               { setPhaseLabel('Hold at the top');                              setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
               }
             }
 
           } else if (currentPhase === 'attempt') {
-            // ── ATTEMPT: ghost frozen at target, score live ───────────────────
+            // \u2500\u2500 ATTEMPT: ghost frozen at target, score live \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             drawGhost(ctx, targetJoints, s);
 
             if (s >= 0.85) {
               lowScoreRef.current = 0;
               startHoldTimer();
               const h = holdRef.current;
-              setPhaseLabel(`Great form — hold ${h}s / 5s`);
+              setPhaseLabel(`Great form \u2014 hold ${h}s / 5s`);
               setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
             } else {
               stopHoldTimer();
               // Track time spent too low
               lowScoreRef.current += (1/60); // ~60fps
               if (s >= 0.55) {
-                setPhaseLabel('Almost there — keep adjusting');
+                setPhaseLabel('Almost there \u2014 keep adjusting');
                 setPhaseColor('#fbbf24'); setPhaseBg('rgba(251,191,36,0.12)');
                 lowScoreRef.current = 0; // reset low-score timer when getting close
               } else {
@@ -733,7 +733,7 @@ export default function PoseDemoRunner() {
               }
               // After 8 seconds struggling → repeat demo (shorter reminder cycle)
               if (lowScoreRef.current > 8) {
-                setPhaseLabel('Let me show you again…');
+                setPhaseLabel('Let me show you again\u2026');
                 setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)');
                 setDemoProgress(0);
                 startPhase('demo', true); // true = repeat = 1 cycle only
@@ -741,9 +741,9 @@ export default function PoseDemoRunner() {
             }
 
           } else if (currentPhase === 'rep_complete') {
-            // ── REP COMPLETE: brief green flash ───────────────────────────────
+            // \u2500\u2500 REP COMPLETE: brief green flash \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             drawGhost(ctx, targetJoints, 1);
-            setPhaseLabel('Rep complete — well done!');
+            setPhaseLabel('Rep complete \u2014 well done!');
             setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
           }
         }
@@ -790,7 +790,7 @@ export default function PoseDemoRunner() {
 
   const pick=(ex:Exercise)=>{
     setExercise(ex); setShowMenu(false); setReps(0); setScore(0);
-    setPhaseLabel('Watch carefully…'); setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
+    setPhaseLabel('Watch carefully\u2026'); setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
     setDemoProgress(0); setHoldSecs(0);
     isRepeatDemoRef.current=false; scoreHistoryRef.current=[];
     phaseRef.current='demo'; phaseStartRef.current=performance.now();
@@ -799,30 +799,32 @@ export default function PoseDemoRunner() {
   };
 
   return (
-    <div style={{minHeight:'100vh',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'}}>
+    <div style={{height:'100dvh',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9',overflow:'hidden'}}>
 
       {/* Header */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:'1px solid rgba(255,255,255,0.06)',background:'rgba(8,12,20,0.95)',backdropFilter:'blur(12px)',position:'sticky',top:0,zIndex:50}}>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <div style={{width:32,height:32,borderRadius:8,background:'linear-gradient(135deg,#3b82f6,#06b6d4)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>&#x2b21;</div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.06)',background:'rgba(8,12,20,0.97)',backdropFilter:'blur(12px)',flexShrink:0,zIndex:50}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:28,height:28,borderRadius:7,background:'linear-gradient(135deg,#3b82f6,#06b6d4)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>
+            &#x2b21;
+          </div>
           <div>
-            <div style={{fontSize:15,fontWeight:700,letterSpacing:'-0.02em'}}>Rehably</div>
-            <div style={{fontSize:10,color:'#64748b',letterSpacing:'0.08em',textTransform:'uppercase'}}>Movement Guide</div>
+            <div style={{fontSize:14,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.2}}>Rehably</div>
+            <div style={{fontSize:9,color:'#64748b',letterSpacing:'0.06em',textTransform:'uppercase'}}>Movement Guide</div>
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <div style={{padding:'4px 12px',borderRadius:20,background:'rgba(59,130,246,0.12)',border:'1px solid rgba(59,130,246,0.25)',fontSize:13,fontWeight:600,color:'#60a5fa'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{padding:'3px 10px',borderRadius:20,background:'rgba(59,130,246,0.12)',border:'1px solid rgba(59,130,246,0.25)',fontSize:12,fontWeight:700,color:'#60a5fa'}}>
             {reps} rep{reps!==1?'s':''}
           </div>
-          <button onClick={()=>setShowMenu(m=>!m)} style={{padding:'6px 14px',borderRadius:8,background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'#cbd5e1',fontSize:12,fontWeight:500,cursor:'pointer'}}>
+          <button onClick={()=>setShowMenu(m=>!m)} style={{padding:'5px 10px',borderRadius:8,background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'#cbd5e1',fontSize:11,fontWeight:500,cursor:'pointer',maxWidth:150,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             {exercise.name} &#9662;
           </button>
         </div>
       </div>
 
-      {/* Menu */}
+      {/* Exercise menu */}
       {showMenu&&(
-        <div style={{position:'fixed',top:62,right:16,zIndex:100,background:'#0f172a',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,overflow:'hidden',boxShadow:'0 20px 60px rgba(0,0,0,0.6)',minWidth:240}}>
+        <div style={{position:'fixed',top:56,right:10,left:10,zIndex:100,background:'#0f172a',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,overflow:'hidden',boxShadow:'0 20px 60px rgba(0,0,0,0.7)'}}>
           {EXERCISES.map(ex=>(
             <button key={ex.id} onClick={()=>pick(ex)} style={{width:'100%',display:'block',padding:'12px 16px',textAlign:'left',background:ex.id===exercise.id?'rgba(59,130,246,0.15)':'transparent',border:'none',borderBottom:'1px solid rgba(255,255,255,0.04)',color:ex.id===exercise.id?'#60a5fa':'#94a3b8',fontSize:13,fontWeight:500,cursor:'pointer'}}>
               {ex.name}
@@ -832,168 +834,144 @@ export default function PoseDemoRunner() {
         </div>
       )}
 
-      {/* Camera */}
-      <div style={{flex:1,display:'flex',flexDirection:'column'}}>
-        <div style={{position:'relative',width:'100%',maxWidth:700,margin:'0 auto',aspectRatio:'4/3'}}>
-          <video ref={videoRef} style={{display:'none'}} playsInline muted/>
-          <canvas ref={canvasRef} width={640} height={480} style={{width:'100%',height:'100%',borderRadius:16,display:'block',background:'#0a0f1e'}}/>
+      {/* Camera - fills all available vertical space */}
+      <div style={{flex:1,position:'relative',overflow:'hidden',minHeight:0}}>
+        <video ref={videoRef} style={{display:'none'}} playsInline muted/>
+        <canvas ref={canvasRef} width={640} height={480} style={{width:'100%',height:'100%',display:'block',background:'#0a0f1e'}}/>
 
-          {/* ── Camera Controls Overlay ── */}
-          {!loading&&!cameraError&&(
-            <div style={{position:'absolute',bottom:14,right:14,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
+        {/* Loading */}
+        {loading&&(
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.85)',borderRadius:0,gap:12}}>
+            <div style={{width:40,height:40,borderRadius:'50%',border:'3px solid rgba(96,165,250,0.2)',borderTop:'3px solid #60a5fa',animation:'spin 0.8s linear infinite'}}/>
+            <div style={{fontSize:13,color:'#64748b'}}>{cameraReady?'Loading pose detection\u2026':'Requesting camera\u2026'}</div>
+          </div>
+        )}
 
-              {/* Zoom slider panel — shown when controls open */}
-              {showControls&&(
-                <div style={{background:'rgba(8,12,20,0.88)',backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,padding:'12px 14px',minWidth:200,display:'flex',flexDirection:'column',gap:10}}>
-                  {/* Auto-frame toggle */}
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-                    <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Auto-frame</span>
-                    <button
-                      onClick={()=>setAutoFrame(a=>!a)}
-                      style={{
-                        width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',
-                        background:autoFrame?'#3b82f6':'rgba(255,255,255,0.12)',
-                        position:'relative',transition:'background 0.2s',flexShrink:0,
-                      }}
-                    >
-                      <span style={{
-                        position:'absolute',top:3,left:autoFrame?20:3,
-                        width:16,height:16,borderRadius:'50%',background:'#fff',
-                        transition:'left 0.2s',display:'block',
-                      }}/>
-                    </button>
-                  </div>
+        {/* Camera error */}
+        {cameraError&&(
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.92)',gap:8,padding:24}}>
+            <div style={{fontSize:32}}>&#128247;</div>
+            <div style={{fontSize:14,fontWeight:600,color:'#f87171'}}>Camera access needed</div>
+            <div style={{fontSize:12,color:'#64748b',textAlign:'center'}}>{cameraError}</div>
+          </div>
+        )}
 
-                  {/* Zoom slider */}
-                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Zoom</span>
-                      <span style={{fontSize:12,color:'#60a5fa',fontWeight:600,fontVariantNumeric:'tabular-nums'}}>{manualZoom.toFixed(1)}x</span>
-                    </div>
-                    <input
-                      type="range" min={0.5} max={3} step={0.05}
-                      value={manualZoom}
-                      onChange={e=>setManualZoom(Number(e.target.value))}
-                      style={{width:'100%',accentColor:'#3b82f6',cursor:'pointer'}}
-                    />
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#475569'}}>
-                      <span>0.5x</span><span>3x</span>
-                    </div>
-                  </div>
+        {/* Score badge - top left */}
+        {!loading&&!cameraError&&(
+          <div style={{position:'absolute',top:14,left:14,background:'rgba(8,12,20,0.78)',backdropFilter:'blur(8px)',borderRadius:10,padding:'8px 12px',border:`1px solid ${phaseColor}40`,minWidth:80}}>
+            <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
+            <div style={{fontSize:10,color:'#64748b',marginTop:2}}>match</div>
+            <div style={{marginTop:6,height:3,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:2,transition:'width 0.2s ease,background 0.3s ease'}}/>
+            </div>
+          </div>
+        )}
 
-                  {/* Reset */}
-                  <button
-                    onClick={()=>{ setManualZoom(1.0); setAutoFrame(true); }}
-                    style={{fontSize:11,color:'#64748b',background:'transparent',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'4px 0',cursor:'pointer'}}
-                  >
-                    Reset to default
+        {/* Hold badge - top right */}
+        {phase==='attempt'&&holdSecs>0&&(
+          <div style={{position:'absolute',top:14,right:14,background:'rgba(74,222,128,0.1)',border:'1px solid rgba(74,222,128,0.4)',borderRadius:10,padding:'8px 12px',textAlign:'center'}}>
+            <div style={{fontSize:22,fontWeight:800,color:'#4ade80',lineHeight:1}}>{holdSecs}s</div>
+            <div style={{fontSize:10,color:'#64748b',marginTop:2}}>hold / 5s</div>
+          </div>
+        )}
+
+        {/* Camera controls - bottom right */}
+        {!loading&&!cameraError&&(
+          <div style={{position:'absolute',bottom:14,right:14,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
+            {showControls&&(
+              <div style={{background:'rgba(8,12,20,0.88)',backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,padding:'12px 14px',minWidth:200,display:'flex',flexDirection:'column',gap:10}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+                  <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Auto-frame</span>
+                  <button onClick={()=>setAutoFrame(a=>!a)} style={{width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',background:autoFrame?'#3b82f6':'rgba(255,255,255,0.12)',position:'relative',transition:'background 0.2s',flexShrink:0}}>
+                    <span style={{position:'absolute',top:3,left:autoFrame?20:3,width:16,height:16,borderRadius:'50%',background:'#fff',transition:'left 0.2s',display:'block'}}/>
                   </button>
                 </div>
-              )}
-
-              {/* Controls toggle button */}
-              <button
-                onClick={()=>setShowControls(s=>!s)}
-                title="Camera controls"
-                style={{
-                  width:36,height:36,borderRadius:10,border:'none',cursor:'pointer',
-                  background:showControls?'rgba(59,130,246,0.3)':'rgba(8,12,20,0.75)',
-                  backdropFilter:'blur(8px)',
-                  color:'#94a3b8',fontSize:16,
-                  display:'flex',alignItems:'center',justifyContent:'center',
-                  boxShadow:'0 2px 8px rgba(0,0,0,0.4)',
-                  outline:showControls?'1px solid rgba(59,130,246,0.5)':'1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                &#9654;&#9650;
-              </button>
-            </div>
-          )}
-
-          {/* Auto-frame indicator pill */}
-          {!loading&&!cameraError&&autoFrame&&(
-            <div style={{position:'absolute',bottom:14,left:14,display:'flex',alignItems:'center',gap:5,background:'rgba(8,12,20,0.72)',backdropFilter:'blur(6px)',borderRadius:20,padding:'4px 10px',border:'1px solid rgba(59,130,246,0.25)'}}>
-              <div style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',animation:'pulse 2s ease infinite'}}/>
-              <span style={{fontSize:10,color:'#60a5fa',fontWeight:500,letterSpacing:'0.04em'}}>AUTO-FRAME</span>
-            </div>
-          )}
-
-          {loading&&(
-            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.85)',borderRadius:16,gap:12}}>
-              <div style={{width:40,height:40,borderRadius:'50%',border:'3px solid rgba(96,165,250,0.2)',borderTop:'3px solid #60a5fa',animation:'spin 0.8s linear infinite'}}/>
-              <div style={{fontSize:13,color:'#64748b'}}>{cameraReady?'Loading pose detection\u2026':'Requesting camera\u2026'}</div>
-            </div>
-          )}
-
-          {cameraError&&(
-            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.92)',borderRadius:16,gap:8,padding:24}}>
-              <div style={{fontSize:32}}>&#128247;</div>
-              <div style={{fontSize:14,fontWeight:600,color:'#f87171'}}>Camera access needed</div>
-              <div style={{fontSize:12,color:'#64748b',textAlign:'center'}}>{cameraError}</div>
-            </div>
-          )}
-
-          {!loading&&!cameraError&&(
-            <div style={{position:'absolute',top:14,left:14,background:'rgba(8,12,20,0.78)',backdropFilter:'blur(8px)',borderRadius:10,padding:'8px 12px',border:`1px solid ${phaseColor}40`,minWidth:80}}>
-              <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
-              <div style={{fontSize:10,color:'#64748b',marginTop:2}}>match</div>
-              <div style={{marginTop:6,height:3,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
-                <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:2,transition:'width 0.2s ease,background 0.3s ease'}}/>
+                <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Zoom</span>
+                    <span style={{fontSize:12,color:'#60a5fa',fontWeight:600}}>{manualZoom.toFixed(1)}x</span>
+                  </div>
+                  <input type="range" min={0.5} max={3} step={0.05} value={manualZoom} onChange={e=>setManualZoom(Number(e.target.value))} style={{width:'100%',accentColor:'#3b82f6',cursor:'pointer'}}/>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#475569'}}>
+                    <span>0.5x</span><span>3x</span>
+                  </div>
+                </div>
+                <button onClick={()=>{ setManualZoom(1.0); setAutoFrame(true); }} style={{fontSize:11,color:'#64748b',background:'transparent',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'4px 0',cursor:'pointer'}}>
+                  Reset to default
+                </button>
               </div>
-            </div>
-          )}
+            )}
+            <button onClick={()=>setShowControls(s=>!s)} style={{width:36,height:36,borderRadius:10,border:'none',cursor:'pointer',background:showControls?'rgba(59,130,246,0.3)':'rgba(8,12,20,0.75)',backdropFilter:'blur(8px)',color:'#94a3b8',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',outline:showControls?'1px solid rgba(59,130,246,0.5)':'1px solid rgba(255,255,255,0.08)'}}>
+              &#9654;&#9650;
+            </button>
+          </div>
+        )}
 
-          {phase==='attempt'&&holdSecs>0&&(
-            <div style={{position:'absolute',top:14,right:14,background:'rgba(74,222,128,0.1)',border:'1px solid rgba(74,222,128,0.4)',borderRadius:10,padding:'8px 12px',textAlign:'center'}}>
-              <div style={{fontSize:22,fontWeight:800,color:'#4ade80',lineHeight:1}}>{holdSecs}s</div>
-              <div style={{fontSize:10,color:'#64748b',marginTop:2}}>hold / 5s</div>
-            </div>
-          )}
+        {/* Auto-frame indicator - bottom left */}
+        {!loading&&!cameraError&&autoFrame&&(
+          <div style={{position:'absolute',bottom:14,left:14,display:'flex',alignItems:'center',gap:5,background:'rgba(8,12,20,0.72)',backdropFilter:'blur(6px)',borderRadius:20,padding:'4px 10px',border:'1px solid rgba(59,130,246,0.25)'}}>
+            <div style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',animation:'pulse 2s ease infinite'}}/>
+            <span style={{fontSize:10,color:'#60a5fa',fontWeight:500,letterSpacing:'0.04em'}}>AUTO-FRAME</span>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom panel */}
+      <div style={{flexShrink:0,background:'rgba(8,12,20,0.97)',borderTop:'1px solid rgba(255,255,255,0.06)',padding:'10px 14px 16px',display:'flex',flexDirection:'column',gap:8}}>
+
+        {/* Phase status */}
+        <div style={{display:'flex',alignItems:'center',gap:8,background:phaseBg,border:`1px solid ${phaseColor}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.4s ease'}}>
+          <div style={{width:8,height:8,borderRadius:'50%',background:phaseColor,boxShadow:`0 0 8px ${phaseColor}`,animation:'pulse 1.5s ease infinite',flexShrink:0}}/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:phaseColor}}>{phaseLabel}</div>
+            {phase==='attempt'&&holdSecs>0&&(
+              <div style={{fontSize:11,color:'#64748b',marginTop:1}}>Holding {holdSecs}s of 5s</div>
+            )}
+          </div>
+          <div style={{padding:'2px 10px',borderRadius:20,background:'rgba(59,130,246,0.15)',border:'1px solid rgba(59,130,246,0.3)',fontSize:12,fontWeight:700,color:'#60a5fa',flexShrink:0}}>
+            {reps} rep{reps!==1?'s':''}
+          </div>
         </div>
 
-        {/* Bottom */}
-        <div style={{maxWidth:700,width:'100%',margin:'0 auto',padding:'12px 16px 28px',display:'flex',flexDirection:'column',gap:10}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,background:phaseBg,border:`1px solid ${phaseColor}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.4s ease'}}>
-            <div style={{width:8,height:8,borderRadius:'50%',background:phaseColor,boxShadow:`0 0 8px ${phaseColor}`,animation:'pulse 1.5s ease infinite',flexShrink:0}}/>
+        {/* Demo progress bar */}
+        {phase==='demo'&&(
+          <div style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(167,139,250,0.2)',borderRadius:10,padding:'10px 14px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <span style={{fontSize:11,color:'#a78bfa',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>&#9654; Demo in progress</span>
+              <span style={{fontSize:11,color:'#64748b'}}>{Math.round(demoProgress*100)}%</span>
+            </div>
+            <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${demoProgress*100}%`,background:'linear-gradient(90deg,#60a5fa,#a78bfa)',borderRadius:2,transition:'width 0.3s ease'}}/>
+            </div>
+            <div style={{fontSize:11,color:'#64748b',marginTop:6}}>Watch the silhouette, then match the movement</div>
+          </div>
+        )}
+
+        {/* Match score - attempt phase */}
+        {phase==='attempt'&&(
+          <div style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:10,padding:'10px 14px',display:'flex',alignItems:'center',gap:12}}>
+            <div>
+              <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
+              <div style={{fontSize:10,color:'#64748b',marginTop:1}}>match</div>
+            </div>
             <div style={{flex:1}}>
-              <div style={{fontSize:13,fontWeight:600,color:phaseColor}}>{phaseLabel}</div>
-              {phase==='attempt'&&holdSecs>0&&(<div style={{fontSize:11,color:'#64748b',marginTop:1}}>Holding {holdSecs}s of 5s</div>)}
+              <div style={{height:6,borderRadius:3,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:3,transition:'width 0.15s ease,background 0.3s ease'}}/>
+              </div>
+              <div style={{fontSize:11,color:'#64748b',marginTop:5}}>
+                {pct<55?'Keep trying \u2014 demo repeats if needed':pct<85?'Getting close!':'Hold this position'}
+              </div>
             </div>
-            <div style={{padding:'2px 10px',borderRadius:20,background:'rgba(59,130,246,0.15)',border:'1px solid rgba(59,130,246,0.3)',fontSize:12,fontWeight:700,color:'#60a5fa',flexShrink:0}}>{reps} rep{reps!==1?'s':''}</div>
           </div>
-          {phase==='demo'&&(
-            <div style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(167,139,250,0.2)',borderRadius:10,padding:'10px 14px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                <span style={{fontSize:11,color:'#a78bfa',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>&#9654; Demo in progress</span>
-                <span style={{fontSize:11,color:'#64748b'}}>{Math.round(demoProgress*100)}%</span>
-              </div>
-              <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
-                <div style={{height:'100%',width:`${demoProgress*100}%`,background:'linear-gradient(90deg,#60a5fa,#a78bfa)',borderRadius:2,transition:'width 0.3s ease'}}/>
-              </div>
-              <div style={{fontSize:11,color:'#64748b',marginTop:6}}>Watch the silhouette, then match the movement</div>
-            </div>
-          )}
-          {phase==='attempt'&&(
-            <div style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:10,padding:'10px 14px',display:'flex',alignItems:'center',gap:12}}>
-              <div>
-                <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
-                <div style={{fontSize:10,color:'#64748b',marginTop:1}}>match</div>
-              </div>
-              <div style={{flex:1}}>
-                <div style={{height:6,borderRadius:3,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}>
-                  <div style={{height:'100%',width:`${pct}%`,background:phaseColor,borderRadius:3,transition:'width 0.15s ease,background 0.3s ease'}}/>
-                </div>
-                <div style={{fontSize:11,color:'#64748b',marginTop:5}}>{pct<55?'Keep trying — demo repeats if needed':pct<85?'Getting close!':'Hold this position'}</div>
-              </div>
-            </div>
-          )}
-          <div style={{display:'flex',gap:12,padding:'2px 0',fontSize:11,color:'#475569',flexWrap:'wrap'}}>
-            {([['rgba(167,139,250,0.7)','Demo'],['rgba(96,165,250,0.7)','Target pose'],['rgba(255,255,255,0.7)','Your body'],['rgba(74,222,128,0.8)','Matched ✓']] as const).map(([bg,label])=>(
-              <span key={label} style={{display:'flex',alignItems:'center',gap:4}}>
-                <span style={{display:'inline-block',width:10,height:3,background:bg,borderRadius:2}}/>{label}
-              </span>
-            ))}
-          </div>
+        )}
+
+        {/* Legend */}
+        <div style={{display:'flex',gap:12,padding:'2px 0',fontSize:11,color:'#475569',flexWrap:'wrap'}}>
+          {([['rgba(167,139,250,0.7)','Demo'],['rgba(96,165,250,0.7)','Target'],['rgba(255,255,255,0.7)','You'],['rgba(74,222,128,0.8)','\u2713 Match']] as const).map(([bg,label])=>(
+            <span key={label} style={{display:'flex',alignItems:'center',gap:4}}>
+              <span style={{display:'inline-block',width:10,height:3,background:bg,borderRadius:2}}/>{label}
+            </span>
+          ))}
         </div>
       </div>
 
