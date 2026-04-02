@@ -1,7 +1,7 @@
 'use client';
 
 // MediaPipe loaded via CDN. NO @mediapipe npm imports (webpack build failure).
-import { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 declare global { interface Window { Pose: any; Camera: any; } }
 
@@ -807,8 +807,21 @@ export default function PoseDemoRunner() {
     if(holdTimerRef.current){ clearInterval(holdTimerRef.current); holdTimerRef.current=null; }
   };
 
+  // Pre-compute responsive styles (avoids SWC spread+ternary parse issues)
+  const wrapStyle: React.CSSProperties = isMobile
+    ? {height:'100dvh',overflow:'hidden',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'}
+    : {minHeight:'100vh',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'};
+
+  const cameraStyle: React.CSSProperties = isMobile
+    ? {flex:1,position:'relative',overflow:'hidden',minHeight:0}
+    : {position:'relative',width:'100%',maxWidth:700,margin:'0 auto',aspectRatio:'4/3'};
+
+  const bottomStyle: React.CSSProperties = isMobile
+    ? {flexShrink:0,background:'rgba(8,12,20,0.97)',borderTop:'1px solid rgba(255,255,255,0.06)',padding:'10px 14px 16px',display:'flex',flexDirection:'column',gap:8}
+    : {maxWidth:700,width:'100%',margin:'0 auto',padding:'12px 0 24px',display:'flex',flexDirection:'column',gap:8};
+
   return (
-    <div style={{...(isMobile?{height:'100dvh',overflow:'hidden'}:{minHeight:'100vh'}),background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'}}>
+    <div style={wrapStyle}>
 
       {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.06)',background:'rgba(8,12,20,0.97)',backdropFilter:'blur(12px)',flexShrink:0,zIndex:50}}>
@@ -844,10 +857,7 @@ export default function PoseDemoRunner() {
       )}
 
       {/* Camera */}
-      <div style={isMobile
-        ? {flex:1,position:'relative',overflow:'hidden',minHeight:0}
-        : {position:'relative',width:'100%',maxWidth:700,margin:'0 auto',aspectRatio:'4/3'}
-      }>
+      <div style={cameraStyle}>
         <video ref={videoRef} style={{display:'none'}} playsInline muted/>
         <canvas ref={canvasRef} width={640} height={480} style={{width:'100%',height:'100%',display:'block',background:'#0a0f1e'}}/>
 
@@ -929,7 +939,7 @@ export default function PoseDemoRunner() {
       </div>
 
       {/* Bottom panel */}
-      <div style={{...(isMobile?{flexShrink:0}:{maxWidth:700,width:'100%',margin:'0 auto'}),background:isMobile?'rgba(8,12,20,0.97)':'transparent',borderTop:isMobile?'1px solid rgba(255,255,255,0.06)':'none',padding:isMobile?'10px 14px 16px':'12px 0 24px',display:'flex',flexDirection:'column',gap:8}}}>
+      <div style={bottomStyle}>
 
         {/* Phase status */}
         <div style={{display:'flex',alignItems:'center',gap:8,background:phaseBg,border:`1px solid ${phaseColor}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.4s ease'}}>
