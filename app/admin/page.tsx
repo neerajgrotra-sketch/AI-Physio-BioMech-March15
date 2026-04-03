@@ -1200,24 +1200,28 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search exercises…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-          <option value="all">All types</option><option value="arm_raise">Arm Raise</option><option value="bilateral_arm_raise">Bilateral Arm Raise</option><option value="sit_to_stand">Sit to Stand</option><option value="custom">Custom</option>
+          <option value="all">All types</option><option value="shoulder_flexion">Shoulder Flexion</option><option value="shoulder_abduction">Shoulder Abduction</option><option value="sit_to_stand">Sit to Stand</option><option value="knee_extension">Knee Extension</option><option value="knee_flexion">Knee Flexion</option><option value="custom">Custom</option>
         </select>
       </div>
       {loading ? <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted }}>Loading…</div> : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
           {active.map(t => {
             // Accent colour per exercise type
-            const accent = t.exercise_type === "arm_raise" ? C.blue
-              : t.exercise_type === "bilateral_arm_raise" ? C.purple
+            const accent = t.exercise_type === "shoulder_flexion" ? C.blue
+              : t.exercise_type === "shoulder_abduction" ? C.purple
               : t.exercise_type === "sit_to_stand" ? C.green
-              : C.orange;
-            const accentDim = t.exercise_type === "arm_raise" ? C.blueDim
-              : t.exercise_type === "bilateral_arm_raise" ? C.purpleDim
+              : t.exercise_type === "knee_extension" ? C.orange
+              : t.exercise_type === "knee_flexion" ? C.orange
+              : C.blue;
+            const accentDim = t.exercise_type === "shoulder_flexion" ? C.blueDim
+              : t.exercise_type === "shoulder_abduction" ? C.purpleDim
               : t.exercise_type === "sit_to_stand" ? C.greenDim
-              : C.orangeDim;
-            const icon = t.exercise_type === "arm_raise" ? "💪"
-              : t.exercise_type === "bilateral_arm_raise" ? "🙌"
-              : t.exercise_type === "sit_to_stand" ? "🦵"
+              : t.exercise_type === "knee_extension" ? C.orangeDim
+              : t.exercise_type === "knee_flexion" ? C.orangeDim
+              : C.blueDim;
+            const icon = t.exercise_type === "shoulder_flexion" ? "\u{1F4AA}"
+              : t.exercise_type === "shoulder_abduction" ? "\u{1F64C}"
+              : t.exercise_type === "sit_to_stand" ? "\u{1F9B5}"
               : "⚡";
             return (
               <div key={t.id} style={{
@@ -1239,7 +1243,12 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 18, flexShrink: 0,
                     }}>{icon}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.display_name}</div>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.clinical_name ?? t.display_name}</div>
+                      {t.clinical_name && t.clinical_name !== t.display_name && (
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Patient: {t.display_name}</div>
+                      )}
+                    </div>
                   </div>
                   {t.is_vanilla && <Badge label="System" color={accent} />}
                 </div>
