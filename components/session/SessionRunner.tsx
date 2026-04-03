@@ -40,6 +40,10 @@ import { useCoachingBrain } from "@/lib/coaching/useCoachingBrain";
 import { usePatientContext } from "@/lib/patient/usePatientContext";
 import { createDefaultPatientProfile } from "@/lib/patient/patientTypes";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { getBodyFrame } from "@/lib/pose/bodyFrame";
+import { POSE_BUILDERS, REST_BUILDERS, lerpGhost, computeMatchScore } from "@/lib/pose/poseBuilders";
+import { drawGhost, drawGhostDemo, drawLive, drawHoldRing } from "@/lib/pose/ghostRenderer";
+import { poseFrameToLandmarkArray, mirrorLandmarks } from "@/lib/pose/poseFrameBridge";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
 import MovementTimelinePanel from "@/components/debug/MovementTimelinePanel";
@@ -193,20 +197,28 @@ function formatPhase(phase: string): string {
 
 function getExerciseRequirement(id: string | undefined): string {
   switch (id) {
-    case "right-arm-raise": return "Lift your right arm to shoulder height, hold, then lower slowly.";
-    case "left-arm-raise": return "Lift your left arm to shoulder height, hold, then lower slowly.";
-    case "both-arm-raise": return "Lift both arms evenly to shoulder height, hold, then lower slowly.";
-    case "sit-to-stand": return "Stand up fully, hold briefly, then lower back to the seat slowly.";
+    case "shoulder_flexion_right":     return "Raise your right arm forward and up. Hold at the target position, then lower slowly.";
+    case "shoulder_flexion_left":      return "Raise your left arm forward and up. Hold at the target position, then lower slowly.";
+    case "shoulder_flexion_bilateral": return "Raise both arms forward and up together. Hold at the target, then lower slowly.";
+    case "shoulder_abduction_right":   return "Raise your right arm out to the side. Hold level with your shoulder, then lower slowly.";
+    case "shoulder_abduction_left":    return "Raise your left arm out to the side. Hold level with your shoulder, then lower slowly.";
+    case "shoulder_abduction_bilateral": return "Raise both arms out to the sides. Hold level with shoulders, then lower slowly.";
+    case "sit_to_stand":               return "Rise to standing fully, hold briefly at full extension, then sit back down with control.";
+    case "knee_extension_right":       return "Seated: straighten your right knee fully, hold at full extension, then lower slowly.";
     default: return "Perform the exercise with slow, controlled movement.";
   }
 }
 
 function getPositionRequirement(id: string | undefined): string {
   switch (id) {
-    case "sit-to-stand": return "Start seated, then stand fully and return to seated.";
-    case "right-arm-raise":
-    case "left-arm-raise":
-    case "both-arm-raise": return "Remain upright. Seated or standing is acceptable.";
+    case "sit_to_stand": return "Start seated. Rise to full standing, then sit back down with control.";
+    case "knee_extension_right": return "Remain seated throughout. Keep your hips level.";
+    case "shoulder_flexion_right":
+    case "shoulder_flexion_left":
+    case "shoulder_flexion_bilateral": return "Remain upright. Seated or standing is fine.";
+    case "shoulder_abduction_right":
+    case "shoulder_abduction_left":
+    case "shoulder_abduction_bilateral": return "Face the camera directly. Seated or standing is fine.";
     default: return "Remain upright and centered in view.";
   }
 }
@@ -432,6 +444,19 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
   const sessionStartedAtMsRef = useRef<number | null>(null);
+  // Ghost silhouette refs
+  const ghostCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ghostAnimRef   = useRef<number>(0);
+  const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
+  const ghostStartRef  = useRef<number>(performance.now());
+  const ghostHoldRef   = useRef<number|null>(null);
+  const ghostLowRef    = useRef<number>(0);
+  const ghostRepRef    = useRef<boolean>(false);
+  const ghostHistRef   = useRef<number[]>([]);
+  const [ghostScore, setGhostScore]         = useState(0);
+  const [ghostHoldMs, setGhostHoldMs]       = useState(0);
+  const [ghostPhase, setGhostPhase]         = useState<"demo"|"attempt"|"holding"|"rep_complete">("demo");
+  const [ghostDemoProgress, setGhostDemoProgress] = useState(0);
 
   useEffect(() => { patchFetch(); }, []);
 
@@ -682,6 +707,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
         const startNextExercise = () => {
           framingIntelligence.reset("Position yourself for the next exercise.");
+          // Reset ghost to demo phase for new exercise
+          ghostPhaseRef.current="demo"; ghostStartRef.current=performance.now();
+          ghostHoldRef.current=null; ghostLowRef.current=0; ghostRepRef.current=false; ghostHistRef.current=[];
+          setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
           framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
           const waitForSpeech = () => {
@@ -893,14 +922,112 @@ Reply with only the summary text, no JSON, no formatting.`;
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
     framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
+    // Start ghost render loop
+    ghostPhaseRef.current = "demo";
+    ghostStartRef.current = performance.now();
+    ghostHoldRef.current = null;
+    ghostLowRef.current = 0;
+    ghostRepRef.current = false;
+    ghostHistRef.current = [];
+    startGhostLoop();
+  }
+
+  function startGhostLoop() {
+    cancelAnimationFrame(ghostAnimRef.current);
+    const DEMO_CYCLE_S = 7;
+    const INTENT_DELTA = 0.10; const INTENT_MIN = 0.20; const INTENT_WIN = 20;
+    const MATCH_THRESHOLD = 0.85; const FAIL_THRESHOLD = 0.55; const LOW_TIMEOUT = 8;
+    let lastT = performance.now();
+
+    function easeInOut(t: number) { return t<0.5?4*t*t*t:1-(-2*t+2)**3/2; }
+    function cycleT(e: number) {
+      const t=(e%DEMO_CYCLE_S)/DEMO_CYCLE_S;
+      if(t<0.14)return 0; if(t<0.43)return easeInOut((t-0.14)/0.29);
+      if(t<0.64)return 1; if(t<0.93)return 1-easeInOut((t-0.64)/0.29); return 0;
+    }
+
+    function tick() {
+      const canvas = ghostCanvasRef.current; if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      const ctx = canvas.getContext("2d"); if (!ctx) return;
+      const W = canvas.width; const H = canvas.height;
+      const now = performance.now();
+      const deltaS = Math.min((now - lastT) / 1000, 0.1); lastT = now;
+      ctx.clearRect(0, 0, W, H);
+
+      const frame = inferenceLoop.frame;
+      if (!frame || !frame.personDetected) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+
+      const rawLms = poseFrameToLandmarkArray(frame);
+      const lms = mirrorLandmarks(rawLms);
+      const slug = sessionQueue.getActivePrescription()?.id ?? "";
+      if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+
+      const bodyFrame = getBodyFrame(lms as any, W, H);
+      if (!bodyFrame) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+
+      const tb = POSE_BUILDERS[slug]; const rb = REST_BUILDERS[slug];
+      if (!tb || !rb) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+
+      const tgt = tb(bodyFrame);
+      const rst = rb(bodyFrame);
+      const score = computeMatchScore(lms, slug, W, H);
+      setGhostScore(score);
+
+      const p = ghostPhaseRef.current;
+      const elapsed = (now - ghostStartRef.current) / 1000;
+
+      if (p === "demo") {
+        const isRep = ghostRepRef.current;
+        const cycles = isRep ? 1 : 2;
+        const totalS = DEMO_CYCLE_S * cycles;
+        const t = elapsed >= totalS ? cycleT(totalS-0.01) : cycleT(elapsed);
+        const done = elapsed >= totalS;
+        setGhostDemoProgress(Math.min(elapsed/totalS,1));
+        const hist = ghostHistRef.current; hist.push(score); if(hist.length>INTENT_WIN)hist.shift();
+        const intent = hist.length>=INTENT_WIN && score>=INTENT_MIN && (score-hist[0])>=INTENT_DELTA;
+        if (intent || done) {
+          ghostPhaseRef.current="attempt"; ghostStartRef.current=now;
+          ghostLowRef.current=0; ghostHoldRef.current=null; ghostHistRef.current=[];
+          setGhostPhase("attempt");
+        } else {
+          drawGhostDemo(ctx, lerpGhost(rst,tgt,t), t);
+        }
+      } else if (p === "attempt" || p === "holding") {
+        drawGhost(ctx, tgt, score);
+        if (score >= MATCH_THRESHOLD) {
+          ghostLowRef.current = 0;
+          if (!ghostHoldRef.current) { ghostHoldRef.current=now; ghostPhaseRef.current="holding"; setGhostPhase("holding"); }
+          const holdMs = now - (ghostHoldRef.current??now);
+          setGhostHoldMs(holdMs);
+          const holdTarget = (sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000);
+          drawHoldRing(ctx, W, H, holdMs, holdTarget, score);
+        } else {
+          ghostHoldRef.current=null; if(p==="holding"){ghostPhaseRef.current="attempt";setGhostPhase("attempt");}
+          setGhostHoldMs(0); ghostLowRef.current+=deltaS;
+          if (ghostLowRef.current > LOW_TIMEOUT) {
+            ghostPhaseRef.current="demo"; ghostStartRef.current=now;
+            ghostRepRef.current=true; ghostHistRef.current=[]; ghostLowRef.current=0;
+            setGhostPhase("demo"); setGhostDemoProgress(0);
+          }
+        }
+      } else if (p === "rep_complete") {
+        drawGhost(ctx, tgt, 1);
+      }
+
+      drawLive(ctx, lms, W, H, score);
+      ghostAnimRef.current = requestAnimationFrame(tick);
+    }
+    ghostAnimRef.current = requestAnimationFrame(tick);
   }
 
   function handleCameraStop() {
     writeDebugLog("info", "CAMERA", "Camera stopped");
     inferenceLoop.stopLoop();
+    cancelAnimationFrame(ghostAnimRef.current);
     sessionQueue.endSession();
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
+    setGhostScore(0); setGhostHoldMs(0);
   }
 
   function endSession() { cameraRef.current?.stopCamera(); }
@@ -952,10 +1079,10 @@ Reply with only the summary text, no JSON, no formatting.`;
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
-            AI Physio BioMech
+            Rehably
           </h1>
           <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
-            Movement Intelligence Platform
+            AI Rehabilitation Intelligence
           </div>
         </div>
 
@@ -1021,7 +1148,7 @@ Reply with only the summary text, no JSON, no formatting.`;
       </div>
 
       {/* ── MAIN GRID ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start", marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start", marginBottom: 16 }}>
 
         {/* CAMERA */}
         <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -1043,6 +1170,22 @@ Reply with only the summary text, no JSON, no formatting.`;
             <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
               <PoseCanvasOverlay frame={inferenceLoop.frame} />
             </div>
+            {/* Ghost silhouette canvas — layered on top of pose skeleton */}
+            <canvas
+              ref={ghostCanvasRef}
+              width={640} height={480}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
+            />
+            {/* Match score badge — top left, hidden during hold (ring takes over) */}
+            {sessionQueue.sessionStarted && ghostPhase !== "holding" && (
+              <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(13,17,23,0.78)", backdropFilter: "blur(8px)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(124,198,255,0.3)", minWidth: 72 }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: ghostScore >= 0.85 ? "#4ade80" : "#7cc6ff", lineHeight: 1 }}>{Math.round(ghostScore*100)}%</div>
+                <div style={{ fontSize: 10, color: "#7d8590", marginTop: 2 }}>match</div>
+                <div style={{ marginTop: 5, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.round(ghostScore*100)}%`, background: ghostScore >= 0.85 ? "#4ade80" : "#7cc6ff", borderRadius: 2, transition: "width 0.2s ease" }} />
+                </div>
+              </div>
+            )}
           </div>
 
           {inferenceLoop.engineError && (
