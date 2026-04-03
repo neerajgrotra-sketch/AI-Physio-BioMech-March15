@@ -96,6 +96,7 @@ export interface ExerciseTemplate {
   // Module 11: coaching customisation
   coaching_persona: string
   coaching_focus: string
+  media_url: string | null
   created_at: string; updated_at: string
 }
 
