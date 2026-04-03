@@ -34,21 +34,25 @@ const LP = {
 // Origin = shoulder midpoint
 // axisDown = unit vector from shoulder-mid toward hip-mid (spine direction)
 // axisRight = unit vector pointing toward patient's RIGHT shoulder
-//   (we compute this from actual shoulder positions, so it survives any tilt/rotation)
+//   (computed from actual shoulder positions, survives any tilt/rotation)
 //
 // All ghost positions are expressed as:
 //   pos = origin + axisDown * (along * torsoLen) + axisRight * (across * shoulderWidth)
+//
+// along  > 0 = toward feet (hips, knees)
+// along  < 0 = above shoulders (overhead arm positions)
+// across > 0 = patient's RIGHT side
+// across < 0 = patient's LEFT side
 //
 // This means ghost joints are always in the correct body-relative position
 // regardless of camera angle, distance, or mirroring.
 
 type BodyFrame = {
-  origin: Vec2;       // shoulder midpoint in canvas px
-  axisDown: Vec2;     // unit vector pointing down spine
-  axisRight: Vec2;    // unit vector pointing toward patient RIGHT shoulder (in canvas)
-  torsoLen: number;   // shoulder-mid to hip-mid in canvas px
+  origin: Vec2;
+  axisDown: Vec2;
+  axisRight: Vec2;
+  torsoLen: number;
   shoulderWidth: number;
-  // Per-limb lengths in canvas px
   rUpperArm: number; rForeArm: number;
   lUpperArm: number; lForeArm: number;
   rThigh: number;    rShin: number;
@@ -72,13 +76,12 @@ function getBodyFrame(lms: Landmark[], w: number, h: number): BodyFrame | null {
   const shoulderMid: Vec2 = { x:(lsC.x+rsC.x)/2, y:(lsC.y+rsC.y)/2 };
   const shoulderWidth = Math.max(dist(lsC, rsC), 20);
 
-  // axisRight: after mirroring, patient RIGHT = lsC -> rsC is flipped, so right = rsC->lsC direction
+  // axisRight: after mirroring, right = rsC -> lsC direction
   const axisRight = norm({ x: rsC.x - lsC.x, y: rsC.y - lsC.y });
   // axisDown: perpendicular, always pointing toward bottom of frame
   let axisDown: Vec2 = { x: -axisRight.y, y: axisRight.x };
   if (axisDown.y < 0) axisDown = { x: -axisDown.x, y: -axisDown.y };
 
-  // Use real hips if visible, otherwise estimate (human proportion: torso ~1.4x shoulder width)
   const lh = lms[LP.LEFT_HIP]; const rh = lms[LP.RIGHT_HIP];
   let torsoLen: number;
   if (vis(lh) && vis(rh)) {
@@ -103,8 +106,8 @@ function getBodyFrame(lms: Landmark[], w: number, h: number): BodyFrame | null {
 }
 
 // Place a point using the body frame:
-// along  = fraction along axisDown  (positive = toward hips)
-// across = fraction of shoulderWidth along axisRight (positive = patient right in canvas)
+// along  = fraction along axisDown  (positive = toward hips, negative = above shoulders)
+// across = fraction of shoulderWidth along axisRight (positive = patient right)
 function framePoint(f: BodyFrame, along: number, across: number): Vec2 {
   return {
     x: f.origin.x + f.axisDown.x * along * f.torsoLen + f.axisRight.x * across * f.shoulderWidth,
@@ -112,9 +115,7 @@ function framePoint(f: BodyFrame, along: number, across: number): Vec2 {
   };
 }
 
-// Place a point as a specific limb direction from a given origin.
-// dir is a unit-vector in the body frame: {along, across}
-// We convert to canvas space using axisDown and axisRight.
+// Place a limb endpoint given a start point, direction, and length
 function limbPoint(f: BodyFrame, from: Vec2, alongDir: number, acrossDir: number, len: number): Vec2 {
   const mag = Math.sqrt(alongDir**2 + acrossDir**2) || 1;
   const ad = alongDir/mag; const ac = acrossDir/mag;
@@ -134,25 +135,13 @@ type GhostJoints = {
   lAnkle: Vec2;    rAnkle: Vec2;
 };
 
-// Each exercise defines a function that builds ghost joints from the body frame.
-// Directions are in body-frame coordinates:
-//   along = spine direction (positive = toward feet)
-//   across = lateral (positive = patient's RIGHT side, which is canvas left after mirror)
-//
-// Key reference values:
-//   Shoulder positions: along=0, across=+/-0.5 (half of shoulderWidth)
-//   Hip positions: along=1.0 (torsoLen down), across=+/-0.4
-//   "Arm at side" upper arm: along=+1 (pointing down), across=0
-//   "Arm abducted 90deg" upper arm: along=0, across=+/-1 (pointing laterally)
-
 type PoseBuilder = (f: BodyFrame) => GhostJoints;
 
 function standingBase(f: BodyFrame): Partial<GhostJoints> {
-  // Shared standing lower body
-  const rHip  = framePoint(f, 1.0,  0.40);
-  const lHip  = framePoint(f, 1.0, -0.40);
-  const rKnee = limbPoint(f, rHip,  1, 0.05, f.rThigh);
-  const lKnee = limbPoint(f, lHip,  1, -0.05, f.lThigh);
+  const rHip   = framePoint(f, 1.0,  0.40);
+  const lHip   = framePoint(f, 1.0, -0.40);
+  const rKnee  = limbPoint(f, rHip,  1, 0.05, f.rThigh);
+  const lKnee  = limbPoint(f, lHip,  1, -0.05, f.lThigh);
   const rAnkle = limbPoint(f, rKnee, 1, 0.03, f.rShin);
   const lAnkle = limbPoint(f, lKnee, 1, -0.03, f.lShin);
   return { rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
@@ -166,184 +155,349 @@ function restingArm(f: BodyFrame, side: 'r'|'l'): { elbow: Vec2; wrist: Vec2 } {
   return { elbow, wrist };
 }
 
+// \u2500\u2500\u2500 Ghost builders \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+//
+// SHOULDER FLEXION (sagittal plane, arm forward and up):
+//   Target = arm raised to 90 deg in front of body.
+//   In frontal camera view this looks like arm pointing straight up.
+//   along = -0.9 (well above shoulder), across stays near 0 (sagittal = forward, no lateral spread).
+//   We use a small lateral offset (0.15) to keep the ghost arm visually distinct from the torso.
+//
+// SHOULDER ABDUCTION (frontal plane, arm out to the side and up):
+//   Target = arm raised to 90 deg out to the side.
+//   along = 0.05 (just above horizontal), across = +/-1.0 (fully lateral).
+//   Full overhead (180 deg) would be along = -1.0, across = 0.
+
 const POSE_BUILDERS: Record<string, PoseBuilder> = {
+
+  // \u2500\u2500 Shoulder Flexion \u2014 sagittal plane, arm forward and overhead \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  shoulder_flexion_right: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    // Right arm: raised forward to 90 deg (appears upward in frontal view)
+    // along = -0.9 (above shoulder), across = 0.15 (slight lateral for visibility)
+    const rElbow = limbPoint(f, rShoulder, -0.9, 0.15, f.rUpperArm);
+    const rWrist = limbPoint(f, rElbow,    -0.9, 0.10, f.rForeArm);
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
+  },
+
+  shoulder_flexion_left: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    // Left arm: raised forward to 90 deg
+    const lElbow = limbPoint(f, lShoulder, -0.9, -0.15, f.lUpperArm);
+    const lWrist = limbPoint(f, lElbow,    -0.9, -0.10, f.lForeArm);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
+  },
+
+  shoulder_flexion_bilateral: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const rElbow = limbPoint(f, rShoulder, -0.9,  0.15, f.rUpperArm);
+    const rWrist = limbPoint(f, rElbow,    -0.9,  0.10, f.rForeArm);
+    const lElbow = limbPoint(f, lShoulder, -0.9, -0.15, f.lUpperArm);
+    const lWrist = limbPoint(f, lElbow,    -0.9, -0.10, f.lForeArm);
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
+  },
+
+  // \u2500\u2500 Shoulder Abduction \u2014 frontal plane, arm out to side at 90 deg \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   shoulder_abduction_right: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    // Right arm: abducted 90 deg laterally (horizontal out to the side)
     const rElbow = limbPoint(f, rShoulder, 0.05,  1.0, f.rUpperArm);
     const rWrist = limbPoint(f, rElbow,    0.0,   1.0, f.rForeArm);
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
+
   shoulder_abduction_left: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    // Left arm: abducted 90 deg laterally
     const lElbow = limbPoint(f, lShoulder, 0.05, -1.0, f.lUpperArm);
     const lWrist = limbPoint(f, lElbow,    0.0,  -1.0, f.lForeArm);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
+
   shoulder_abduction_bilateral: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const rElbow = limbPoint(f, rShoulder, 0.05,  1.0, f.rUpperArm);
     const rWrist = limbPoint(f, rElbow,    0.0,   1.0, f.rForeArm);
     const lElbow = limbPoint(f, lShoulder, 0.05, -1.0, f.lUpperArm);
     const lWrist = limbPoint(f, lElbow,    0.0,  -1.0, f.lForeArm);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
+
+  // \u2500\u2500 Sit to Stand \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   sit_to_stand: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const rElbow = limbPoint(f, rShoulder, 0.9,  0.2, f.rUpperArm);
     const rWrist = limbPoint(f, rElbow,    0.8,  0.1, f.rForeArm);
     const lElbow = limbPoint(f, lShoulder, 0.9, -0.2, f.lUpperArm);
     const lWrist = limbPoint(f, lElbow,    0.8, -0.1, f.lForeArm);
-    const rHip = framePoint(f, 1.0,  0.40); const lHip = framePoint(f, 1.0, -0.40);
+    const rHip   = framePoint(f, 1.0,  0.40);
+    const lHip   = framePoint(f, 1.0, -0.40);
     const rKnee  = limbPoint(f, rHip,  1.0,  0.05, f.rThigh);
     const lKnee  = limbPoint(f, lHip,  1.0, -0.05, f.lThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0,  0.03, f.rShin);
     const lAnkle = limbPoint(f, lKnee, 1.0, -0.03, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
   },
-  knee_extension: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+
+  // \u2500\u2500 Knee Extension \u2014 seated, right leg extended \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  knee_extension_right: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
+    const rHip   = framePoint(f, 0.90,  0.38);
+    const lHip   = framePoint(f, 0.90, -0.38);
     const rKnee  = limbPoint(f, rHip,  0.05,  0.9, f.rThigh);
     const rAnkle = limbPoint(f, rKnee, 0.05,  0.9, f.rShin);
     const lKnee  = limbPoint(f, lHip,  0.08, -0.9, f.lThigh);
     const lAnkle = limbPoint(f, lKnee, 1.0,  -0.05, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
   },
-  knee_flexion: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
-    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip = framePoint(f, 1.0,  0.40); const lHip = framePoint(f, 1.0, -0.40);
-    const rKnee  = limbPoint(f, rHip,  1.0,  0.05, f.rThigh);
-    const rAnkle = limbPoint(f, rKnee, -0.9, 0.05, f.rShin);
-    const lKnee  = limbPoint(f, lHip,  1.0, -0.05, f.lThigh);
-    const lAnkle = limbPoint(f, lKnee, 1.0, -0.03, f.lShin);
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
-  },
 };
 
-const REST_BUILDERS: Record<string, (f: BodyFrame) => GhostJoints> = {
+// \u2500\u2500\u2500 Rest positions (starting pose before each exercise) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+const REST_BUILDERS: Record<string, PoseBuilder> = {
+  shoulder_flexion_right: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
+  },
+  shoulder_flexion_left: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
+  },
+  shoulder_flexion_bilateral: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
+    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
+    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
+    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
+  },
   shoulder_abduction_right: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
   shoulder_abduction_left: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
   shoulder_abduction_bilateral: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
   sit_to_stand: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
+    const rHip   = framePoint(f, 0.90,  0.38);
+    const lHip   = framePoint(f, 0.90, -0.38);
     const rKnee  = limbPoint(f, rHip,  0.08,  0.9, f.rThigh);
     const lKnee  = limbPoint(f, lHip,  0.08, -0.9, f.lThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0,  0.05, f.rShin);
     const lAnkle = limbPoint(f, lKnee, 1.0, -0.05, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
   },
-  knee_extension: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
+  knee_extension_right: (f) => {
+    const rShoulder = framePoint(f, 0,  0.50);
+    const lShoulder = framePoint(f, 0, -0.50);
     const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
     const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    const rHip = framePoint(f, 0.90,  0.38); const lHip = framePoint(f, 0.90, -0.38);
+    const rHip   = framePoint(f, 0.90,  0.38);
+    const lHip   = framePoint(f, 0.90, -0.38);
     const rKnee  = limbPoint(f, rHip,  0.08,  0.9, f.rThigh);
     const lKnee  = limbPoint(f, lHip,  0.08, -0.9, f.lThigh);
     const rAnkle = limbPoint(f, rKnee, 1.0,  0.05, f.rShin);
     const lAnkle = limbPoint(f, lKnee, 1.0, -0.05, f.lShin);
     return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, rHip, lHip, rKnee, lKnee, rAnkle, lAnkle };
-  },
-  knee_flexion: (f) => {
-    const rShoulder = framePoint(f, 0,  0.50); const lShoulder = framePoint(f, 0, -0.50);
-    const { elbow: rElbow, wrist: rWrist } = restingArm(f, 'r');
-    const { elbow: lElbow, wrist: lWrist } = restingArm(f, 'l');
-    return { lShoulder, rShoulder, rElbow, rWrist, lElbow, lWrist, ...standingBase(f) } as GhostJoints;
   },
 };
 
+// \u2500\u2500\u2500 Exercise library \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// id matches exercise_templates.slug in Supabase.
+// clinicalName shown to physios; name (display_name) shown to patients.
 type Exercise = {
-  id: string; name: string; description: string; cues: string[];
-  matchJoints: { name: string; a: number; b: number; c: number; targetDeg: number; toleranceDeg: number; weight: number }[];
+  id: string;
+  clinicalName: string;
+  name: string;
+  description: string;
+  cues: string[];
+  matchJoints: {
+    name: string;
+    a: number; b: number; c: number;
+    targetDeg: number; toleranceDeg: number; weight: number;
+  }[];
 };
 
 const EXERCISES: Exercise[] = [
+  // \u2500\u2500 Shoulder Flexion \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   {
-    id: 'shoulder_abduction_right', name: 'Right Arm Raise',
-    description: 'Raise your RIGHT arm out to the side',
-    cues: ['Stand tall, feet shoulder-width apart', 'Keep your right elbow straight', 'Raise your RIGHT arm out to the side', 'Stop when arm is level with your shoulder'],
+    id: 'shoulder_flexion_right',
+    clinicalName: 'Shoulder Flexion \u2014 Unilateral Right',
+    name: 'Right Arm Raise',
+    description: 'Raise your RIGHT arm forward and up (sagittal plane)',
+    cues: [
+      'Stand or sit tall, facing the camera',
+      'Keep your right elbow straight',
+      'Raise your RIGHT arm forward and up in front of you',
+      'Bring your arm to shoulder height or above',
+    ],
     matchJoints: [
-      { name: 'shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
-      { name: 'elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
+      { name: 'shoulder flexion', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'elbow extension',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
     ],
   },
   {
-    id: 'shoulder_abduction_left', name: 'Left Arm Raise',
-    description: 'Raise your LEFT arm out to the side',
-    cues: ['Stand tall, feet shoulder-width apart', 'Keep your left elbow straight', 'Raise your LEFT arm out to the side', 'Stop when arm is level with your shoulder'],
+    id: 'shoulder_flexion_left',
+    clinicalName: 'Shoulder Flexion \u2014 Unilateral Left',
+    name: 'Left Arm Raise',
+    description: 'Raise your LEFT arm forward and up (sagittal plane)',
+    cues: [
+      'Stand or sit tall, facing the camera',
+      'Keep your left elbow straight',
+      'Raise your LEFT arm forward and up in front of you',
+      'Bring your arm to shoulder height or above',
+    ],
     matchJoints: [
-      { name: 'shoulder', a: LP.LEFT_HIP, b: LP.LEFT_SHOULDER, c: LP.LEFT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
-      { name: 'elbow',    a: LP.LEFT_SHOULDER, b: LP.LEFT_ELBOW, c: LP.LEFT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
+      { name: 'shoulder flexion', a: LP.LEFT_HIP, b: LP.LEFT_SHOULDER, c: LP.LEFT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'elbow extension',  a: LP.LEFT_SHOULDER, b: LP.LEFT_ELBOW, c: LP.LEFT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
     ],
   },
   {
-    id: 'shoulder_abduction_bilateral', name: 'Bilateral Arm Raise',
-    description: 'Raise BOTH arms out to the sides',
-    cues: ['Stand or sit tall', 'Keep both elbows straight', 'Raise both arms out to the sides', 'Stop when arms are level with shoulders'],
+    id: 'shoulder_flexion_bilateral',
+    clinicalName: 'Shoulder Flexion \u2014 Bilateral',
+    name: 'Both Arms Raise',
+    description: 'Raise BOTH arms forward and up simultaneously (sagittal plane)',
+    cues: [
+      'Stand or sit tall, facing the camera',
+      'Keep both elbows straight',
+      'Raise both arms forward and up together',
+      'Bring both arms to shoulder height or above',
+    ],
     matchJoints: [
-      { name: 'right shoulder', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90, toleranceDeg: 20, weight: 0.35 },
-      { name: 'left shoulder',  a: LP.LEFT_HIP,  b: LP.LEFT_SHOULDER,  c: LP.LEFT_ELBOW,   targetDeg: 90, toleranceDeg: 20, weight: 0.35 },
-      { name: 'right elbow',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 20, weight: 0.15 },
-      { name: 'left elbow',     a: LP.LEFT_SHOULDER,  b: LP.LEFT_ELBOW,  c: LP.LEFT_WRIST,  targetDeg: 170, toleranceDeg: 20, weight: 0.15 },
+      { name: 'right shoulder flexion', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90,  toleranceDeg: 20, weight: 0.30 },
+      { name: 'left shoulder flexion',  a: LP.LEFT_HIP,  b: LP.LEFT_SHOULDER,  c: LP.LEFT_ELBOW,   targetDeg: 90,  toleranceDeg: 20, weight: 0.30 },
+      { name: 'right elbow extension',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 20, weight: 0.20 },
+      { name: 'left elbow extension',   a: LP.LEFT_SHOULDER,  b: LP.LEFT_ELBOW,  c: LP.LEFT_WRIST,  targetDeg: 170, toleranceDeg: 20, weight: 0.20 },
+    ],
+  },
+  // \u2500\u2500 Shoulder Abduction \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  {
+    id: 'shoulder_abduction_right',
+    clinicalName: 'Shoulder Abduction \u2014 Unilateral Right',
+    name: 'Right Arm Out',
+    description: 'Raise your RIGHT arm out to the side (frontal plane)',
+    cues: [
+      'Stand or sit tall, facing the camera',
+      'Keep your right elbow straight',
+      'Raise your RIGHT arm out to the side \u2014 away from your body',
+      'Bring your arm level with your shoulder',
+    ],
+    matchJoints: [
+      { name: 'shoulder abduction', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'elbow extension',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
     ],
   },
   {
-    id: 'sit_to_stand', name: 'Sit to Stand',
+    id: 'shoulder_abduction_left',
+    clinicalName: 'Shoulder Abduction \u2014 Unilateral Left',
+    name: 'Left Arm Out',
+    description: 'Raise your LEFT arm out to the side (frontal plane)',
+    cues: [
+      'Stand or sit tall, facing the camera',
+      'Keep your left elbow straight',
+      'Raise your LEFT arm out to the side \u2014 away from your body',
+      'Bring your arm level with your shoulder',
+    ],
+    matchJoints: [
+      { name: 'shoulder abduction', a: LP.LEFT_HIP, b: LP.LEFT_SHOULDER, c: LP.LEFT_ELBOW,   targetDeg: 90,  toleranceDeg: 18, weight: 0.7 },
+      { name: 'elbow extension',    a: LP.LEFT_SHOULDER, b: LP.LEFT_ELBOW, c: LP.LEFT_WRIST, targetDeg: 170, toleranceDeg: 18, weight: 0.3 },
+    ],
+  },
+  {
+    id: 'shoulder_abduction_bilateral',
+    clinicalName: 'Shoulder Abduction \u2014 Bilateral',
+    name: 'Both Arms Out',
+    description: 'Raise BOTH arms out to the sides simultaneously (frontal plane)',
+    cues: [
+      'Stand or sit tall, facing the camera',
+      'Keep both elbows straight',
+      'Raise both arms out to the sides symmetrically',
+      'Bring both arms level with your shoulders',
+    ],
+    matchJoints: [
+      { name: 'right shoulder abduction', a: LP.RIGHT_HIP, b: LP.RIGHT_SHOULDER, c: LP.RIGHT_ELBOW,  targetDeg: 90,  toleranceDeg: 20, weight: 0.30 },
+      { name: 'left shoulder abduction',  a: LP.LEFT_HIP,  b: LP.LEFT_SHOULDER,  c: LP.LEFT_ELBOW,   targetDeg: 90,  toleranceDeg: 20, weight: 0.30 },
+      { name: 'right elbow extension',    a: LP.RIGHT_SHOULDER, b: LP.RIGHT_ELBOW, c: LP.RIGHT_WRIST, targetDeg: 170, toleranceDeg: 20, weight: 0.20 },
+      { name: 'left elbow extension',     a: LP.LEFT_SHOULDER,  b: LP.LEFT_ELBOW,  c: LP.LEFT_WRIST,  targetDeg: 170, toleranceDeg: 20, weight: 0.20 },
+    ],
+  },
+  // \u2500\u2500 Lower limb \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  {
+    id: 'sit_to_stand',
+    clinicalName: 'Sit to Stand Transfer',
+    name: 'Sit to Stand',
     description: 'Rise from seated to fully standing',
-    cues: ['Sit at the front edge of your chair', 'Lean slightly forward', 'Push through your feet to stand', 'Stand tall, hips and knees fully extended'],
+    cues: [
+      'Sit at the front edge of your chair',
+      'Lean slightly forward',
+      'Push through your feet to stand',
+      'Stand tall with hips and knees fully extended',
+    ],
     matchJoints: [
-      { name: 'right knee', a: LP.RIGHT_HIP,      b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE, targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
-      { name: 'left knee',  a: LP.LEFT_HIP,       b: LP.LEFT_KNEE,  c: LP.LEFT_ANKLE,  targetDeg: 170, toleranceDeg: 15, weight: 0.3 },
-      { name: 'right hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP,  c: LP.RIGHT_KNEE,  targetDeg: 170, toleranceDeg: 15, weight: 0.2 },
-      { name: 'left hip',   a: LP.LEFT_SHOULDER,  b: LP.LEFT_HIP,   c: LP.LEFT_KNEE,   targetDeg: 170, toleranceDeg: 15, weight: 0.2 },
+      { name: 'right knee extension', a: LP.RIGHT_HIP,      b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE, targetDeg: 170, toleranceDeg: 15, weight: 0.30 },
+      { name: 'left knee extension',  a: LP.LEFT_HIP,       b: LP.LEFT_KNEE,  c: LP.LEFT_ANKLE,  targetDeg: 170, toleranceDeg: 15, weight: 0.30 },
+      { name: 'right hip extension',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP,  c: LP.RIGHT_KNEE,  targetDeg: 170, toleranceDeg: 15, weight: 0.20 },
+      { name: 'left hip extension',   a: LP.LEFT_SHOULDER,  b: LP.LEFT_HIP,   c: LP.LEFT_KNEE,   targetDeg: 170, toleranceDeg: 15, weight: 0.20 },
     ],
   },
   {
-    id: 'knee_extension', name: 'Knee Extension (Right)',
-    description: 'Seated - straighten your right leg fully',
-    cues: ['Sit upright in your chair', 'Tighten your quadriceps', 'Slowly straighten your right knee', 'Hold with leg fully extended'],
-    matchJoints: [
-      { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,    targetDeg: 170, toleranceDeg: 12, weight: 0.8 },
-      { name: 'hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE, targetDeg: 95,  toleranceDeg: 18, weight: 0.2 },
+    id: 'knee_extension_right',
+    clinicalName: 'Knee Extension \u2014 Unilateral Right',
+    name: 'Right Leg Straighten',
+    description: 'Seated: straighten your right knee fully',
+    cues: [
+      'Sit upright in your chair',
+      'Tighten your right quadriceps',
+      'Slowly straighten your right knee',
+      'Hold with your leg fully extended',
     ],
-  },
-  {
-    id: 'knee_flexion', name: 'Knee Flexion (Right)',
-    description: 'Standing - bend your right knee 90 degrees behind you',
-    cues: ['Stand on your left leg', 'Hold a surface if needed', 'Keep your thighs level', 'Bend right knee to 90 degrees behind you'],
     matchJoints: [
-      { name: 'knee', a: LP.RIGHT_HIP, b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,    targetDeg: 90,  toleranceDeg: 18, weight: 0.8 },
-      { name: 'hip',  a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP, c: LP.RIGHT_KNEE, targetDeg: 175, toleranceDeg: 15, weight: 0.2 },
+      { name: 'knee extension', a: LP.RIGHT_HIP,      b: LP.RIGHT_KNEE, c: LP.RIGHT_ANKLE,   targetDeg: 170, toleranceDeg: 12, weight: 0.8 },
+      { name: 'hip angle',      a: LP.RIGHT_SHOULDER, b: LP.RIGHT_HIP,  c: LP.RIGHT_KNEE,    targetDeg: 95,  toleranceDeg: 18, weight: 0.2 },
     ],
   },
 ];
 
 // \u2500\u2500\u2500 Match scoring \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function angleBetween(a: Vec2, b: Vec2, cc: Vec2): number {
-  const ba = { x: a.x-b.x, y: a.y-b.y }; const bc = { x: cc.x-b.x, y: cc.y-b.y };
+  const ba = { x: a.x-b.x, y: a.y-b.y };
+  const bc = { x: cc.x-b.x, y: cc.y-b.y };
   const dot = ba.x*bc.x+ba.y*bc.y;
   const mag = Math.sqrt(ba.x**2+ba.y**2)*Math.sqrt(bc.x**2+bc.y**2);
   return mag<0.001 ? 0 : Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI;
@@ -354,12 +508,11 @@ function computeMatch(lms: Landmark[], ex: Exercise, w: number, h: number): numb
   for (const j of ex.matchJoints) {
     const a = lms[j.a]; const b = lms[j.b]; const cc = lms[j.c];
     if (!vis(b)||!vis(cc)) continue;
-    // If anchor landmark (a) is not visible (e.g. hips off-screen), estimate from visible joints
-    let pA: Vec2; let pB = c(b,w,h); let pC = c(cc,w,h);
+    let pA: Vec2;
+    const pB = c(b,w,h); const pC = c(cc,w,h);
     if (vis(a)) {
       pA = c(a,w,h);
     } else {
-      // Use vertical direction from b as fallback anchor (assumes standing/seated upright)
       pA = { x: pB.x, y: pB.y + 100 };
     }
     const delta = Math.abs(angleBetween(pA, pB, pC) - j.targetDeg);
@@ -391,14 +544,12 @@ const LIVE_SEGS: [number,number][] = [
 ];
 
 function drawGhost(ctx: CanvasRenderingContext2D, g: GhostJoints, score: number) {
-  // Colour interpolates blue -> green as score increases
   const t = score;
-  const r = Math.floor(96  + (74  - 96)  * t);
-  const gr= Math.floor(165 + (222 - 165) * t);
-  const b = Math.floor(250 + (128 - 250) * t);
+  const r  = Math.floor(96  + (74  - 96)  * t);
+  const gr = Math.floor(165 + (222 - 165) * t);
+  const b  = Math.floor(250 + (128 - 250) * t);
   const col = `rgba(${r},${gr},${b},`;
 
-  // Torso fill
   ctx.beginPath();
   ctx.moveTo(g.lShoulder.x,g.lShoulder.y);
   ctx.lineTo(g.rShoulder.x,g.rShoulder.y);
@@ -413,7 +564,6 @@ function drawGhost(ctx: CanvasRenderingContext2D, g: GhostJoints, score: number)
     ctx.strokeStyle = col+'0.6)'; ctx.stroke();
   }
   ctx.setLineDash([]);
-
   for (const p of Object.values(g) as Vec2[]) {
     ctx.beginPath(); ctx.arc(p.x,p.y,7,0,Math.PI*2);
     ctx.fillStyle=col+'0.75)'; ctx.fill();
@@ -438,18 +588,14 @@ function drawLive(ctx: CanvasRenderingContext2D, lms: Landmark[], w: number, h: 
   });
 }
 
-// \u2500\u2500\u2500 Viewport smoothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-// Smoothed viewport state \u2014 persists across renders without causing re-renders
+// \u2500\u2500\u2500 Viewport smoothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type Viewport = { scale: number; offsetX: number; offsetY: number };
 
-
-// Demo-mode ghost: cyan/purple pulsing to signal "watch me"
 function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number) {
-  // Colour oscillates between cyan and purple to signal active demo
   const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 350);
-  const r = Math.floor(96  + (167 - 96)  * pulse);
-  const gr= Math.floor(165 + (139 - 165) * pulse);
-  const b = Math.floor(250 + (250 - 250) * pulse);
+  const r  = Math.floor(96  + (167 - 96)  * pulse);
+  const gr = Math.floor(165 + (139 - 165) * pulse);
+  const b  = Math.floor(250 + (250 - 250) * pulse);
   const col = `rgba(${r},${gr},${b},`;
 
   const torso = [g.lShoulder, g.rShoulder, g.rHip, g.lHip];
@@ -457,13 +603,13 @@ function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number)
   torso.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
   ctx.fillStyle=col+'0.08)'; ctx.fill();
 
-  const GHOST_SEGS: [keyof GhostJoints, keyof GhostJoints][] = [
+  const demoSegs: [keyof GhostJoints, keyof GhostJoints][] = [
     ['lShoulder','rShoulder'],['rShoulder','rElbow'],['rElbow','rWrist'],
     ['lShoulder','lElbow'],['lElbow','lWrist'],['rShoulder','rHip'],['lShoulder','lHip'],
     ['lHip','rHip'],['rHip','rKnee'],['rKnee','rAnkle'],['lHip','lKnee'],['lKnee','lAnkle'],
   ];
   ctx.setLineDash([6,4]); ctx.lineWidth=4.5; ctx.lineCap='round';
-  for (const [a,b2] of GHOST_SEGS) {
+  for (const [a,b2] of demoSegs) {
     ctx.beginPath(); ctx.moveTo(g[a].x,g[a].y); ctx.lineTo(g[b2].x,g[b2].y);
     ctx.strokeStyle=col+'0.75)'; ctx.stroke();
   }
@@ -475,20 +621,15 @@ function drawGhostDemo(ctx: CanvasRenderingContext2D, g: GhostJoints, t: number)
   }
 }
 
-// \u2500\u2500\u2500 Exercise phase state machine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// \u2500\u2500\u2500 State machine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 type ExercisePhase = 'demo' | 'attempt' | 'rep_complete';
 
-// Ease in-out cubic
 function easeInOut(t: number): number {
   return t < 0.5 ? 4*t*t*t : 1 - (-2*t+2)**3/2;
 }
-
-// Lerp two Vec2 values
 function lerpV(a: Vec2, b: Vec2, t: number): Vec2 {
   return { x: a.x + (b.x - a.x)*t, y: a.y + (b.y - a.y)*t };
 }
-
-// Lerp all ghost joints between two poses
 function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
   const k = Object.keys(a) as (keyof GhostJoints)[];
   const out = {} as GhostJoints;
@@ -496,19 +637,12 @@ function lerpGhost(a: GhostJoints, b: GhostJoints, t: number): GhostJoints {
   return out;
 }
 
-
-// \u2500\u2500 Animation timeline for DEMO phase \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-// Returns a 0-1 lerp value (rest->target) given elapsed seconds.
-// One demo cycle: 1s at rest, 2s raise, 1.5s hold at top, 2s lower, 0.5s pause
-// Total cycle: 7s. We run 2 cycles then freeze at target.
-const DEMO_CYCLE_S       = 7;   // seconds per cycle
-const DEMO_CYCLES_FIRST  = 2;   // full teaching demo: 2 cycles
-const DEMO_CYCLES_REPEAT = 1;   // reminder demo: 1 cycle (quicker)
-
-// Intent detection: score must rise by this much over INTENT_WINDOW frames
-const INTENT_DELTA     = 0.10; // 10 percentage point rise = "they're trying"
-const INTENT_MIN_SCORE = 0.20; // must be above noise floor to count as intent
-const INTENT_WINDOW    = 20;   // frames to look back (~0.33s at 60fps)
+const DEMO_CYCLE_S       = 7;
+const DEMO_CYCLES_FIRST  = 2;
+const DEMO_CYCLES_REPEAT = 1;
+const INTENT_DELTA       = 0.10;
+const INTENT_MIN_SCORE   = 0.20;
+const INTENT_WINDOW      = 20;
 
 function cycleT(elapsedS: number): number {
   const t = (elapsedS % DEMO_CYCLE_S) / DEMO_CYCLE_S;
@@ -534,10 +668,9 @@ export default function PoseDemoRunner() {
   const landmarksRef = useRef<Landmark[]>([]);
   const exRef        = useRef<Exercise>(EXERCISES[0]);
 
-  // Viewport state \u2014 stored in refs to avoid triggering re-renders each frame
-  const viewportRef      = useRef<Viewport>({ scale:1, offsetX:0, offsetY:0 });
-  const autoFrameRef     = useRef<boolean>(true);
-  const manualZoomRef    = useRef<number>(1.0);
+  const viewportRef   = useRef<Viewport>({ scale:1, offsetX:0, offsetY:0 });
+  const autoFrameRef  = useRef<boolean>(true);
+  const manualZoomRef = useRef<number>(1.0);
 
   const [exercise, setExercise]         = useState<Exercise>(EXERCISES[0]);
   const [score, setScore]               = useState(0);
@@ -552,45 +685,41 @@ export default function PoseDemoRunner() {
   const [manualZoom, setManualZoom]     = useState(1.0);
   const [showControls, setShowControls] = useState(false);
   const [isMobile, setIsMobile]         = useState(false);
-  // UI-facing phase info \u2014 updated from render loop via refs to avoid stale closures
   const [phaseLabel, setPhaseLabel]     = useState('Watch carefully\u2026');
   const [phaseColor, setPhaseColor]     = useState('#60a5fa');
   const [phaseBg, setPhaseBg]           = useState('rgba(96,165,250,0.12)');
-  const [demoProgress, setDemoProgress] = useState(0); // 0-1 for demo progress bar
+  const [demoProgress, setDemoProgress] = useState(0);
 
-  // Phase tracking refs (read in renderLoop without stale closure)
   const phaseRef        = useRef<ExercisePhase>('demo');
   const phaseStartRef   = useRef<number>(performance.now());
   const holdRef         = useRef(0);
   const holdTimerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
-  const lowScoreRef     = useRef<number>(0);    // seconds below 55% during attempt
-  const isRepeatDemoRef = useRef<boolean>(false); // true = reminder cycle (1x), false = first demo (2x)
-  const scoreHistoryRef = useRef<number[]>([]);   // rolling score buffer for intent detection
+  const lowScoreRef     = useRef<number>(0);
+  const isRepeatDemoRef = useRef<boolean>(false);
+  const scoreHistoryRef = useRef<number[]>([]);
 
   useEffect(()=>{ exRef.current = exercise; },[exercise]);
   useEffect(()=>{ autoFrameRef.current = autoFrame; },[autoFrame]);
+  useEffect(()=>{ manualZoomRef.current = manualZoom; },[manualZoom]);
 
-  // Responsive: detect mobile vs desktop, update on resize
   useEffect(()=>{
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   },[]);
-  useEffect(()=>{ manualZoomRef.current = manualZoom; },[manualZoom]);
 
   const startPhase = useCallback((p: ExercisePhase, repeat = false) => {
     phaseRef.current = p;
     phaseStartRef.current = performance.now();
     lowScoreRef.current = 0;
     holdRef.current = 0;
-    scoreHistoryRef.current = []; // clear intent buffer on phase change
+    scoreHistoryRef.current = [];
     if (p === 'demo') isRepeatDemoRef.current = repeat;
     if (holdTimerRef.current) clearInterval(holdTimerRef.current);
     setPhase(p); setHoldSecs(0);
   }, []);
 
-  // Hold timer \u2014 only runs during attempt when matched
   const startHoldTimer = useCallback(() => {
     if (holdTimerRef.current) return;
     holdTimerRef.current = setInterval(()=>{
@@ -620,7 +749,7 @@ export default function PoseDemoRunner() {
     const lms=landmarksRef.current;
     const mir = lms.length>0 ? lms.map(lm=>({...lm, x:1-lm.x})) : [];
 
-    // \u2500\u2500 Viewport auto-frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // \u2500\u2500 Viewport auto-frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     let targetScale = manualZoomRef.current;
     let targetOX = 0; let targetOY = 0;
     if (autoFrameRef.current && mir.length>0) {
@@ -639,11 +768,11 @@ export default function PoseDemoRunner() {
       }
     }
     const LERP=0.07; const vp=viewportRef.current;
-    vp.scale+=( targetScale-vp.scale)*LERP;
+    vp.scale+=(targetScale-vp.scale)*LERP;
     vp.offsetX+=(targetOX-vp.offsetX)*LERP;
     vp.offsetY+=(targetOY-vp.offsetY)*LERP;
 
-    // \u2500\u2500 Draw video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // \u2500\u2500 Draw video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     ctx.save();
     ctx.setTransform(vp.scale,0,0,vp.scale,vp.offsetX,vp.offsetY);
     ctx.save(); ctx.scale(-1,1); ctx.drawImage(video,-W,0,W,H); ctx.restore();
@@ -671,51 +800,42 @@ export default function PoseDemoRunner() {
           const restJoints   = restBuilder(frame);
 
           if (currentPhase === 'demo') {
-            // \u2500\u2500 DEMO: animate silhouette + watch for patient intent \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             const isRepeat = isRepeatDemoRef.current;
             const { t, done } = demoLerp(elapsed, isRepeat);
             const totalS = DEMO_CYCLE_S * (isRepeat ? DEMO_CYCLES_REPEAT : DEMO_CYCLES_FIRST);
             setDemoProgress(Math.min(elapsed / totalS, 1));
 
-            // \u2500\u2500 Intent detection: is score rising? \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-            // Push current score into rolling history buffer
             const hist = scoreHistoryRef.current;
             hist.push(s);
             if (hist.length > INTENT_WINDOW) hist.shift();
 
             let patientIsAttempting = false;
             if (hist.length >= INTENT_WINDOW && s >= INTENT_MIN_SCORE) {
-              const oldest = hist[0];
-              const scoreDelta = s - oldest;
-              // Meaningful rising trend over the window = intent
+              const scoreDelta = s - hist[0];
               if (scoreDelta >= INTENT_DELTA) patientIsAttempting = true;
             }
 
             if (patientIsAttempting) {
-              // Patient started moving to match \u2014 pause demo immediately
               setPhaseLabel('Good \u2014 now hold that position!');
               setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
-              isRepeatDemoRef.current = false; // next repeat will be reminder length
+              isRepeatDemoRef.current = false;
               startPhase('attempt');
             } else {
-              // Draw animated ghost
               const ghostJoints = lerpGhost(restJoints, targetJoints, t);
               drawGhostDemo(ctx, ghostJoints, t);
 
               if (done) {
-                // Demo finished naturally \u2014 switch to attempt
                 setPhaseLabel('Your turn \u2014 match the pose');
                 setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
                 startPhase('attempt');
               } else {
-                if (t < 0.05)      { setPhaseLabel(isRepeat?'Watch again\u2026':'Watch carefully\u2026');    setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
-                else if (t < 0.95) { setPhaseLabel('Follow this movement');                         setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
-                else               { setPhaseLabel('Hold at the top');                              setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+                if      (t < 0.05) { setPhaseLabel(isRepeat?'Watch again\u2026':'Watch carefully\u2026'); setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)'); }
+                else if (t < 0.95) { setPhaseLabel('Follow this movement');                              setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
+                else               { setPhaseLabel('Hold at the top');                                   setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)'); }
               }
             }
 
           } else if (currentPhase === 'attempt') {
-            // \u2500\u2500 ATTEMPT: ghost frozen at target, score live \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             drawGhost(ctx, targetJoints, s);
 
             if (s >= 0.85) {
@@ -726,27 +846,24 @@ export default function PoseDemoRunner() {
               setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
             } else {
               stopHoldTimer();
-              // Track time spent too low
-              lowScoreRef.current += (1/60); // ~60fps
+              lowScoreRef.current += (1/60);
               if (s >= 0.55) {
                 setPhaseLabel('Almost there \u2014 keep adjusting');
                 setPhaseColor('#fbbf24'); setPhaseBg('rgba(251,191,36,0.12)');
-                lowScoreRef.current = 0; // reset low-score timer when getting close
+                lowScoreRef.current = 0;
               } else {
                 setPhaseLabel('Match the blue silhouette');
                 setPhaseColor('#60a5fa'); setPhaseBg('rgba(96,165,250,0.12)');
               }
-              // After 8 seconds struggling → repeat demo (shorter reminder cycle)
               if (lowScoreRef.current > 8) {
                 setPhaseLabel('Let me show you again\u2026');
                 setPhaseColor('#a78bfa'); setPhaseBg('rgba(167,139,250,0.12)');
                 setDemoProgress(0);
-                startPhase('demo', true); // true = repeat = 1 cycle only
+                startPhase('demo', true);
               }
             }
 
           } else if (currentPhase === 'rep_complete') {
-            // \u2500\u2500 REP COMPLETE: brief green flash \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             drawGhost(ctx, targetJoints, 1);
             setPhaseLabel('Rep complete \u2014 well done!');
             setPhaseColor('#4ade80'); setPhaseBg('rgba(74,222,128,0.12)');
@@ -759,7 +876,7 @@ export default function PoseDemoRunner() {
     }
 
     animRef.current=requestAnimationFrame(renderLoop);
-  },[startHoldTimer, stopHoldTimer]);
+  },[startHoldTimer, stopHoldTimer, startPhase]);
 
   useEffect(()=>{
     let stopped=false;
@@ -803,7 +920,6 @@ export default function PoseDemoRunner() {
     if(holdTimerRef.current){ clearInterval(holdTimerRef.current); holdTimerRef.current=null; }
   };
 
-  // Pre-compute responsive styles (avoids SWC spread+ternary parse issues)
   const wrapStyle: React.CSSProperties = isMobile
     ? {height:'100dvh',overflow:'hidden',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'}
     : {minHeight:'100vh',background:'#080c14',fontFamily:"'DM Sans','SF Pro Display',system-ui,sans-serif",display:'flex',flexDirection:'column',color:'#f1f5f9'};
@@ -834,19 +950,20 @@ export default function PoseDemoRunner() {
           <div style={{padding:'3px 10px',borderRadius:20,background:'rgba(59,130,246,0.12)',border:'1px solid rgba(59,130,246,0.25)',fontSize:12,fontWeight:700,color:'#60a5fa'}}>
             {reps} rep{reps!==1?'s':''}
           </div>
-          <button onClick={()=>setShowMenu(m=>!m)} style={{padding:'5px 10px',borderRadius:8,background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'#cbd5e1',fontSize:11,fontWeight:500,cursor:'pointer',maxWidth:150,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <button onClick={()=>setShowMenu(m=>!m)} style={{padding:'5px 10px',borderRadius:8,background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'#cbd5e1',fontSize:11,fontWeight:500,cursor:'pointer',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             {exercise.name} &#9662;
           </button>
         </div>
       </div>
 
-      {/* Exercise menu */}
+      {/* Exercise menu — shows clinical name for context + display name as primary */}
       {showMenu&&(
         <div style={{position:'fixed',top:56,right:10,left:10,zIndex:100,background:'#0f172a',border:'1px solid rgba(255,255,255,0.1)',borderRadius:12,overflow:'hidden',boxShadow:'0 20px 60px rgba(0,0,0,0.7)'}}>
           {EXERCISES.map(ex=>(
-            <button key={ex.id} onClick={()=>pick(ex)} style={{width:'100%',display:'block',padding:'12px 16px',textAlign:'left',background:ex.id===exercise.id?'rgba(59,130,246,0.15)':'transparent',border:'none',borderBottom:'1px solid rgba(255,255,255,0.04)',color:ex.id===exercise.id?'#60a5fa':'#94a3b8',fontSize:13,fontWeight:500,cursor:'pointer'}}>
+            <button key={ex.id} onClick={()=>pick(ex)} style={{width:'100%',display:'block',padding:'12px 16px',textAlign:'left',background:ex.id===exercise.id?'rgba(59,130,246,0.15)':'transparent',border:'none',borderBottom:'1px solid rgba(255,255,255,0.04)',color:ex.id===exercise.id?'#60a5fa':'#e2e8f0',fontSize:13,fontWeight:600,cursor:'pointer'}}>
               {ex.name}
-              <div style={{fontSize:11,color:'#475569',marginTop:2}}>{ex.description}</div>
+              <div style={{fontSize:11,color:'#475569',marginTop:2,fontWeight:400}}>{ex.clinicalName}</div>
+              <div style={{fontSize:11,color:'#334155',marginTop:1,fontWeight:400}}>{ex.description}</div>
             </button>
           ))}
         </div>
@@ -857,7 +974,6 @@ export default function PoseDemoRunner() {
         <video ref={videoRef} style={{display:'none'}} playsInline muted/>
         <canvas ref={canvasRef} width={640} height={480} style={{width:'100%',height:'100%',display:'block',background:'#0a0f1e'}}/>
 
-        {/* Loading */}
         {loading&&(
           <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.85)',borderRadius:0,gap:12}}>
             <div style={{width:40,height:40,borderRadius:'50%',border:'3px solid rgba(96,165,250,0.2)',borderTop:'3px solid #60a5fa',animation:'spin 0.8s linear infinite'}}/>
@@ -865,7 +981,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Camera error */}
         {cameraError&&(
           <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(8,12,20,0.92)',gap:8,padding:24}}>
             <div style={{fontSize:32}}>&#128247;</div>
@@ -874,7 +989,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Score badge - top left */}
         {!loading&&!cameraError&&(
           <div style={{position:'absolute',top:14,left:14,background:'rgba(8,12,20,0.78)',backdropFilter:'blur(8px)',borderRadius:10,padding:'8px 12px',border:`1px solid ${phaseColor}40`,minWidth:80}}>
             <div style={{fontSize:22,fontWeight:800,color:phaseColor,lineHeight:1}}>{pct}%</div>
@@ -885,7 +999,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Hold badge - top right */}
         {phase==='attempt'&&holdSecs>0&&(
           <div style={{position:'absolute',top:14,right:14,background:'rgba(74,222,128,0.1)',border:'1px solid rgba(74,222,128,0.4)',borderRadius:10,padding:'8px 12px',textAlign:'center'}}>
             <div style={{fontSize:22,fontWeight:800,color:'#4ade80',lineHeight:1}}>{holdSecs}s</div>
@@ -893,7 +1006,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Camera controls - bottom right */}
         {!loading&&!cameraError&&(
           <div style={{position:'absolute',bottom:14,right:14,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
             {showControls&&(
@@ -925,7 +1037,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Auto-frame indicator - bottom left */}
         {!loading&&!cameraError&&autoFrame&&(
           <div style={{position:'absolute',bottom:14,left:14,display:'flex',alignItems:'center',gap:5,background:'rgba(8,12,20,0.72)',backdropFilter:'blur(6px)',borderRadius:20,padding:'4px 10px',border:'1px solid rgba(59,130,246,0.25)'}}>
             <div style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',animation:'pulse 2s ease infinite'}}/>
@@ -937,7 +1048,6 @@ export default function PoseDemoRunner() {
       {/* Bottom panel */}
       <div style={bottomStyle}>
 
-        {/* Phase status */}
         <div style={{display:'flex',alignItems:'center',gap:8,background:phaseBg,border:`1px solid ${phaseColor}40`,borderRadius:10,padding:'10px 14px',transition:'all 0.4s ease'}}>
           <div style={{width:8,height:8,borderRadius:'50%',background:phaseColor,boxShadow:`0 0 8px ${phaseColor}`,animation:'pulse 1.5s ease infinite',flexShrink:0}}/>
           <div style={{flex:1}}>
@@ -951,7 +1061,6 @@ export default function PoseDemoRunner() {
           </div>
         </div>
 
-        {/* Demo progress bar */}
         {phase==='demo'&&(
           <div style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(167,139,250,0.2)',borderRadius:10,padding:'10px 14px'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
@@ -965,7 +1074,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Match score - attempt phase */}
         {phase==='attempt'&&(
           <div style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:10,padding:'10px 14px',display:'flex',alignItems:'center',gap:12}}>
             <div>
@@ -983,7 +1091,6 @@ export default function PoseDemoRunner() {
           </div>
         )}
 
-        {/* Legend */}
         <div style={{display:'flex',gap:12,padding:'2px 0',fontSize:11,color:'#475569',flexWrap:'wrap'}}>
           {([['rgba(167,139,250,0.7)','Demo'],['rgba(96,165,250,0.7)','Target'],['rgba(255,255,255,0.7)','You'],['rgba(74,222,128,0.8)','\u2713 Match']] as const).map(([bg,label])=>(
             <span key={label} style={{display:'flex',alignItems:'center',gap:4}}>
