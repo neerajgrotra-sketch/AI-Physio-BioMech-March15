@@ -816,7 +816,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const [estimatedMins, setEstimatedMins] = useState("10");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
-  const [exercises, setExercises] = useState<{ template_id: string; display_name: string; reps: number; hold_ms: number; }[]>([]);
+  const [exercises, setExercises] = useState<{ template_id: string; clinical_name: string; display_name: string; reps: number; hold_ms: number; }[]>([]);
   const [selectedExTemplateId, setSelectedExTemplateId] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -828,7 +828,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     setLoading(true);
     const [{ data: et }, { data: st }] = await Promise.all([
       supabase.from("exercise_templates").select("*").order("display_name"),
-      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, slug, clinical_name, display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
     ]);
     if (et) { setExerciseTemplates(et); if (et.length > 0) setSelectedExTemplateId(et[0].id); }
     if (st) setSavedTemplates(st.map((t: Record<string, unknown>) => ({
@@ -849,7 +849,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const addExercise = () => {
     const et = exerciseTemplates.find(t => t.id === selectedExTemplateId);
     if (!et) return;
-    setExercises(prev => [...prev, { template_id: et.id, display_name: et.display_name, reps: et.default_reps, hold_ms: et.default_hold_ms }]);
+    setExercises(prev => [...prev, { template_id: et.id, clinical_name: et.clinical_name ?? et.display_name, display_name: et.display_name, reps: et.default_reps, hold_ms: et.default_hold_ms }]);
   };
   const removeExercise = (idx: number) => setExercises(prev => prev.filter((_, i) => i !== idx));
   const moveExercise = (idx: number, dir: -1 | 1) => {
@@ -870,6 +870,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     setTags([...t.tags]);
     setExercises(t.exercises.map(ex => ({
       template_id: ex.exercise_template_id,
+      clinical_name: (ex.exercise_template as any)?.clinical_name ?? ex.exercise_template?.display_name ?? "Unknown",
       display_name: ex.exercise_template?.display_name ?? "Unknown",
       reps: ex.default_reps ?? ex.exercise_template?.default_reps ?? 6,
       hold_ms: ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 2000,
@@ -1012,7 +1013,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                   {visibleExercises.map((ex, i) => (
                     <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
                       <span style={{ color: C.textDim, minWidth: 14, fontSize: 11 }}>{i + 1}.</span>
-                      <span style={{ flex: 1, color: C.text, fontWeight: 500 }}>{ex.exercise_template?.display_name}</span>
+                      <span style={{ flex: 1, color: C.text, fontWeight: 500 }}>{(ex.exercise_template as any)?.clinical_name ?? ex.exercise_template?.display_name}</span>
                       <span style={{ color: C.textDim, fontSize: 11 }}>{ex.default_reps ?? ex.exercise_template?.default_reps}× · {msToSeconds(ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 0)}s</span>
                     </div>
                   ))}
@@ -1089,7 +1090,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                 <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
                   <div style={{ flex: 1 }}>
                     <Select value={selectedExTemplateId} onChange={setSelectedExTemplateId}>
-                      {exerciseTemplates.map(t => <option key={t.id} value={t.id}>{t.display_name} · {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</option>)}
+                      {exerciseTemplates.map(t => <option key={t.id} value={t.id}>{t.clinical_name ?? t.display_name}{!t.is_vanilla ? " (Custom)" : ""} · {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</option>)}
                     </Select>
                   </div>
                   <Btn onClick={addExercise} variant="primary">+ Add</Btn>
@@ -1106,7 +1107,8 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                           <button onClick={() => moveExercise(idx, 1)} disabled={idx === exercises.length - 1} style={{ background: "none", border: "none", color: idx === exercises.length - 1 ? C.textDim : C.textMuted, cursor: idx === exercises.length - 1 ? "default" : "pointer", fontSize: 12, padding: 2 }}>▼</button>
                         </div>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 6 }}>{ex.display_name}</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{ex.clinical_name ?? ex.display_name}</div>
+                          {ex.clinical_name !== ex.display_name && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Patient: {ex.display_name}</div>}
                           <div style={{ display: "flex", gap: 10 }}>
                             {[["Reps", "reps", ex.reps, 1, 30, 1], ["Hold (s)", "hold_ms", msToSeconds(ex.hold_ms), 0, 10, 0.5]].map(([label, key, val, min, max, step]) => (
                               <div key={String(key)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1194,7 +1196,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
     const { error: upErr } = await supabase.storage.from("exercise-media").upload(path, file, { upsert: true });
     if (upErr) { showToast("Upload failed: " + upErr.message, false); return; }
     const { data } = supabase.storage.from("exercise-media").getPublicUrl(path);
-    setEditingTemplate(t => t ? { ...t, media_url: data.publicUrl } : t);
+    setEditingTemplate(t => t ? { ...t, media_url: data.publicUrl } as any : t);
     showToast("Image uploaded.");
   };
 
@@ -1262,8 +1264,8 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                       fontSize: 18, flexShrink: 0,
                     }}>{icon}</div>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.clinical_name ?? t.display_name}</div>
-                      {t.clinical_name && t.clinical_name !== t.display_name && (
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{(t as any).clinical_name ?? t.display_name}</div>
+                      {(t as any).clinical_name && (t as any).clinical_name !== t.display_name && (
                         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Patient: {t.display_name}</div>
                       )}
                     </div>
@@ -1279,9 +1281,9 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                     {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold
                   </span>
                 </div>
-                {t.media_url && (
-                  <div style={{ margin: "0 -16px", overflow: "hidden", maxHeight: 100 }}>
-                    <img src={t.media_url} alt={t.display_name} style={{ width: "100%", height: 100, objectFit: "contain", background: "#f8fafc", display: "block" }} />
+                {(t as any).media_url && (
+                  <div style={{ margin: "0 -16px", overflow: "hidden", maxHeight: 120 }}>
+                    <img src={(t as any).media_url} alt={t.display_name} style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 6 }}>
@@ -1304,7 +1306,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
-                    {editingTemplate.id ? "Edit" : "Customise"}: {editingTemplate.clinical_name ?? editingTemplate.display_name}
+                    {editingTemplate.id ? "Edit" : "Customise"}: {(editingTemplate as any).clinical_name ?? editingTemplate.display_name}
                   </h3>
                   {!editingTemplate.id && (
                     <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Creating a clinic copy — system template will not be changed</div>
@@ -1313,18 +1315,18 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                 <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
               </div>
               <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
-              <Field label="Clinical Name"><Input value={editingTemplate.clinical_name ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, clinical_name: v } : t)} /></Field>
+              <Field label="Clinical Name"><Input value={(editingTemplate as any).clinical_name ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, clinical_name: v } as any : t)} /></Field>
               <Field label="Description"><Textarea value={editingTemplate.description ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, description: v } : t)} /></Field>
               <Field label="Reference Image / GIF">
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {editingTemplate.media_url && (
+                  {(editingTemplate as any).media_url && (
                     <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}` }}>
-                      <img src={editingTemplate.media_url ?? ""} alt="Exercise reference" style={{ width: "100%", maxHeight: 200, objectFit: "contain", background: "#f8fafc", display: "block", borderRadius: 6 }} />
-                      <button onClick={() => setEditingTemplate(t => t ? { ...t, media_url: null } : t)} style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                      <img src={(editingTemplate as any).media_url} alt="Exercise reference" style={{ width: "100%", maxHeight: 160, objectFit: "cover", display: "block" }} />
+                      <button onClick={() => setEditingTemplate(t => t ? { ...t, media_url: null } as any : t)} style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                     </div>
                   )}
                   <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 6, border: `1px dashed ${C.border}`, cursor: "pointer", color: C.textMuted, fontSize: 12 }}>
-                    <span>{editingTemplate.media_url ? "Replace image / GIF" : "Upload image / GIF"}</span>
+                    <span>{(editingTemplate as any).media_url ? "Replace image / GIF" : "Upload image / GIF"}</span>
                     <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" style={{ display: "none" }}
                       onChange={e => { const file = e.target.files?.[0]; if (file && editingTemplate) handleMediaUpload(editingTemplate, file); }} />
                   </label>
