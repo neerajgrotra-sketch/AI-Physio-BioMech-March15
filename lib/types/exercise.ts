@@ -94,7 +94,8 @@ export type FramingPeakMovementZone =
   | "shoulder_height"
   | "above_head"
   | "hip_level"
-  | "standing_full";
+  | "standing_full"
+  | "knee_extension";
 
 export type FramingDeclaration = {
   // What the camera must capture for measurement to be valid.
@@ -108,7 +109,7 @@ export type FramingDeclaration = {
   confidenceThresholds: FramingConfidenceThresholds;
 
   // Minimum body coverage required in frame
-  requiredCoverage: "upper_body" | "torso_and_hips" | "full_body";
+  requiredCoverage: "upper_body" | "lower_body" | "torso_and_hips" | "full_body";
 
   // Where the movement reaches at its peak.
   // Used to check if there is enough headroom in frame.
