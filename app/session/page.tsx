@@ -5,10 +5,10 @@
 // All data is fetched here and passed as plain props to SessionPageClient.
 // No Supabase calls ever reach the browser.
 
-import { getServiceClient } from "@/lib/supabase/serviceClient";
-import SessionPageClient from "./SessionPageClient";
-import type { ExercisePrescription } from "@/lib/types/exercise";
-import type { PatientProfile, PatientType } from "@/lib/patient/patientTypes";
+import { getServiceClient } from '@/lib/supabase/serviceClient';
+import SessionPageClient from './SessionPageClient';
+import type { ExercisePrescription } from '@/lib/types/exercise';
+import type { PatientProfile, PatientType } from '@/lib/patient/patientTypes';
 
 // ─── Next.js 14 server page props ────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ interface SupabaseSessionBlock {
     reps_override: number | null;
     hold_ms_override: number | null;
     exercise_templates: {
-      name: string;
+      slug: string;
       display_name: string;
       default_reps: number;
       default_hold_ms: number;
@@ -42,7 +42,7 @@ interface SupabasePrescriptionExercise {
   reps_override: number | null;
   hold_ms_override: number | null;
   exercise_templates: {
-    name: string;
+    slug: string;
     display_name: string;
     default_reps: number;
     default_hold_ms: number;
@@ -51,9 +51,13 @@ interface SupabasePrescriptionExercise {
 }
 
 // ─── Prescription builder ─────────────────────────────────────────────────────
+// Keyed on exercise_templates.slug (snake_case, e.g. shoulder_flexion_right).
+// display_name from the DB is passed through as the patient-facing exercise name.
+// clinical_name is used server-side only and not needed in the prescription payload.
 
 function buildPrescription(
-  templateName: string,
+  slug: string,
+  displayName: string,
   repOverride: number,
   holdMsOverride: number,
   coachingStrings: Record<string, unknown>
@@ -64,155 +68,287 @@ function buildPrescription(
   };
 
   const coaching = {
-    intro: (coachingStrings.intro as string) ?? "Begin when ready.",
-    lift: "Lift to the target position.",
+    intro: (coachingStrings.intro as string) ?? 'Begin when ready.',
+    lift: (coachingStrings.lift as string) ?? 'Lift to the target position.',
     hold: Array.isArray(coachingStrings.hold)
-      ? (coachingStrings.hold as string[])[0] ?? "Hold at the top."
-      : (coachingStrings.hold as string) ?? "Hold at the top.",
-    lower: (coachingStrings.lower as string) ?? "Lower slowly.",
+      ? (coachingStrings.hold as string[])[0] ?? 'Hold at the top.'
+      : (coachingStrings.hold as string) ?? 'Hold at the top.',
+    lower: (coachingStrings.lower as string) ?? 'Lower slowly.',
     success: Array.isArray(coachingStrings.success_rotating)
-      ? (coachingStrings.success_rotating as string[])[0] ?? "Good."
-      : "Good.",
+      ? (coachingStrings.success_rotating as string[])[0] ?? 'Good.'
+      : 'Good.',
     failedHeight:
-      (coachingStrings.correction_height as string) ?? "Lift a little higher.",
+      (coachingStrings.correction_height as string) ?? 'Lift a little higher.',
     failedHold:
-      (coachingStrings.correction_hold as string) ?? "Hold for the full duration.",
+      (coachingStrings.correction_hold as string) ?? 'Hold for the full duration.',
     failedBalance:
-      (coachingStrings.correction_balance as string) ?? "Keep your posture steady.",
+      (coachingStrings.correction_balance as string) ?? 'Keep your posture steady.',
     failedIsolation:
       (coachingStrings.correction_isolation as string) ?? undefined,
   };
 
-  switch (templateName) {
-    case "right-arm-raise":
+  switch (slug) {
+    // ── Shoulder Flexion (sagittal plane — arm forward and up) ───────────────
+    case 'shoulder_flexion_right':
       return {
-        id: "right-arm-raise",
-        name: "Right Arm Raise",
-        category: "upper_body",
-        template: "raise_hold_lower",
-        runtimeStatus: "active",
-        side: "right",
-        posture: "either",
-        description: "Lift your right arm to shoulder height, hold, then lower slowly.",
+        id: 'shoulder_flexion_right',
+        name: displayName,
+        category: 'upper_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'right',
+        posture: 'either',
+        description: 'Lift your right arm forward and up to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
         startThreshold: 25,
         targetThreshold: 70,
         finishThreshold: 30,
-        target: { metric: "rightArmElevationDeg", label: "shoulder height", targetValue: 70, tolerance: 10 },
+        target: { metric: 'rightArmElevationDeg', label: 'shoulder height', targetValue: 70, tolerance: 10 },
         hold,
-        tempo: { label: "slow and controlled" },
+        tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15, maxOppositeArmElevationDeg: 35 },
         coaching,
         framing: {
-          intent: "Measure right arm elevation arc from resting position to shoulder height.",
-          landmarks: { critical: ["right_shoulder", "right_elbow", "right_wrist"], supporting: ["left_shoulder", "nose", "right_hip"], reference: [] },
+          intent: 'Measure right arm elevation arc in the sagittal plane from resting to shoulder height.',
+          landmarks: { critical: ['right_shoulder', 'right_elbow', 'right_wrist'], supporting: ['left_shoulder', 'nose', 'right_hip'], reference: [] },
           confidenceThresholds: { critical: 0.5, supporting: 0.35 },
-          requiredCoverage: "upper_body",
-          peakMovementZone: "shoulder_height",
-          requiredStartPosture: "either",
+          requiredCoverage: 'upper_body',
+          peakMovementZone: 'shoulder_height',
+          requiredStartPosture: 'either',
           bilateralSymmetryRequired: false,
-          angleGuidance: "Frontal view preferred. Ensure the right arm and shoulder are clearly visible.",
-          measurementRisk: "Without clear visibility of right arm landmarks, elevation cannot be measured accurately.",
+          angleGuidance: 'Lateral or frontal view. Ensure the right arm and shoulder are clearly visible.',
+          measurementRisk: 'Without clear visibility of right arm landmarks, elevation cannot be measured accurately.',
         },
       };
 
-    case "left-arm-raise":
+    case 'shoulder_flexion_left':
       return {
-        id: "left-arm-raise",
-        name: "Left Arm Raise",
-        category: "upper_body",
-        template: "raise_hold_lower",
-        runtimeStatus: "active",
-        side: "left",
-        posture: "either",
-        description: "Lift your left arm to shoulder height, hold, then lower slowly.",
+        id: 'shoulder_flexion_left',
+        name: displayName,
+        category: 'upper_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'left',
+        posture: 'either',
+        description: 'Lift your left arm forward and up to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
         startThreshold: 25,
         targetThreshold: 70,
         finishThreshold: 30,
-        target: { metric: "leftArmElevationDeg", label: "shoulder height", targetValue: 70, tolerance: 10 },
+        target: { metric: 'leftArmElevationDeg', label: 'shoulder height', targetValue: 70, tolerance: 10 },
         hold,
-        tempo: { label: "slow and controlled" },
+        tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15, maxOppositeArmElevationDeg: 35 },
         coaching,
         framing: {
-          intent: "Measure left arm elevation arc from resting position to shoulder height.",
-          landmarks: { critical: ["left_shoulder", "left_elbow", "left_wrist"], supporting: ["right_shoulder", "nose", "left_hip"], reference: [] },
+          intent: 'Measure left arm elevation arc in the sagittal plane from resting to shoulder height.',
+          landmarks: { critical: ['left_shoulder', 'left_elbow', 'left_wrist'], supporting: ['right_shoulder', 'nose', 'left_hip'], reference: [] },
           confidenceThresholds: { critical: 0.5, supporting: 0.35 },
-          requiredCoverage: "upper_body",
-          peakMovementZone: "shoulder_height",
-          requiredStartPosture: "either",
+          requiredCoverage: 'upper_body',
+          peakMovementZone: 'shoulder_height',
+          requiredStartPosture: 'either',
           bilateralSymmetryRequired: false,
-          angleGuidance: "Frontal view preferred. Ensure the left arm and shoulder are clearly visible.",
-          measurementRisk: "Without clear visibility of left arm landmarks, elevation cannot be measured accurately.",
+          angleGuidance: 'Lateral or frontal view. Ensure the left arm and shoulder are clearly visible.',
+          measurementRisk: 'Without clear visibility of left arm landmarks, elevation cannot be measured accurately.',
         },
       };
 
-    case "both-arm-raise":
+    case 'shoulder_flexion_bilateral':
       return {
-        id: "both-arm-raise",
-        name: "Both Arm Raise",
-        category: "upper_body",
-        template: "raise_hold_lower",
-        runtimeStatus: "active",
-        side: "both",
-        posture: "either",
-        description: "Lift both arms to shoulder height, hold, then lower slowly.",
+        id: 'shoulder_flexion_bilateral',
+        name: displayName,
+        category: 'upper_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'both',
+        posture: 'either',
+        description: 'Lift both arms forward and up to shoulder height simultaneously, hold, then lower slowly.',
         repTarget: repOverride,
         startThreshold: 25,
         targetThreshold: 70,
         finishThreshold: 30,
-        target: { metric: "bilateralArmElevationDeg", label: "shoulder height", targetValue: 70, tolerance: 10 },
+        target: { metric: 'bilateralArmElevationDeg', label: 'shoulder height', targetValue: 70, tolerance: 10 },
         hold,
-        tempo: { label: "slow and controlled" },
+        tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15 },
         coaching,
         framing: {
-          intent: "Measure bilateral arm elevation simultaneously. Both arms must be equally visible.",
-          landmarks: { critical: ["left_shoulder", "left_elbow", "left_wrist", "right_shoulder", "right_elbow", "right_wrist"], supporting: ["nose", "left_hip", "right_hip"], reference: [] },
+          intent: 'Measure bilateral arm elevation simultaneously in the sagittal plane.',
+          landmarks: { critical: ['left_shoulder', 'left_elbow', 'left_wrist', 'right_shoulder', 'right_elbow', 'right_wrist'], supporting: ['nose', 'left_hip', 'right_hip'], reference: [] },
           confidenceThresholds: { critical: 0.5, supporting: 0.35 },
-          requiredCoverage: "upper_body",
-          peakMovementZone: "shoulder_height",
-          requiredStartPosture: "either",
+          requiredCoverage: 'upper_body',
+          peakMovementZone: 'shoulder_height',
+          requiredStartPosture: 'either',
           bilateralSymmetryRequired: true,
-          angleGuidance: "Frontal view required. Patient must be centred with both arms fully visible.",
-          measurementRisk: "Without bilateral landmark visibility, asymmetry cannot be detected.",
+          angleGuidance: 'Frontal view required. Patient must be centred with both arms fully visible.',
+          measurementRisk: 'Without bilateral landmark visibility, asymmetry cannot be detected.',
         },
       };
 
-    case "sit-to-stand":
+    // ── Shoulder Abduction (frontal plane — arm out to the side and up) ──────
+    case 'shoulder_abduction_right':
       return {
-        id: "sit-to-stand",
-        name: "Sit to Stand",
-        category: "transfer",
-        template: "rise_hold_lower",
-        runtimeStatus: "active",
-        side: "center",
-        posture: "seated",
-        description: "Rise to standing, hold, then sit back down with control.",
+        id: 'shoulder_abduction_right',
+        name: displayName,
+        category: 'upper_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'right',
+        posture: 'either',
+        description: 'Lift your right arm out to the side and up to shoulder height, hold, then lower slowly.',
+        repTarget: repOverride,
+        startThreshold: 25,
+        targetThreshold: 70,
+        finishThreshold: 30,
+        target: { metric: 'rightArmAbductionDeg', label: 'shoulder height', targetValue: 90, tolerance: 12 },
+        hold,
+        tempo: { label: 'slow and controlled' },
+        qualityLimits: { maxTorsoLeanDeg: 15, maxShoulderTiltDeg: 12, maxOppositeArmElevationDeg: 30 },
+        coaching,
+        framing: {
+          intent: 'Measure right arm abduction arc in the frontal plane from resting to 90 degrees.',
+          landmarks: { critical: ['right_shoulder', 'right_elbow', 'right_wrist'], supporting: ['left_shoulder', 'right_hip', 'nose'], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: 'upper_body',
+          peakMovementZone: 'shoulder_height',
+          requiredStartPosture: 'either',
+          bilateralSymmetryRequired: false,
+          angleGuidance: 'Frontal view essential. Patient must face the camera directly for accurate abduction measurement.',
+          measurementRisk: 'Lateral camera angle will misrepresent frontal plane abduction. Frontal view required.',
+        },
+      };
+
+    case 'shoulder_abduction_left':
+      return {
+        id: 'shoulder_abduction_left',
+        name: displayName,
+        category: 'upper_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'left',
+        posture: 'either',
+        description: 'Lift your left arm out to the side and up to shoulder height, hold, then lower slowly.',
+        repTarget: repOverride,
+        startThreshold: 25,
+        targetThreshold: 70,
+        finishThreshold: 30,
+        target: { metric: 'leftArmAbductionDeg', label: 'shoulder height', targetValue: 90, tolerance: 12 },
+        hold,
+        tempo: { label: 'slow and controlled' },
+        qualityLimits: { maxTorsoLeanDeg: 15, maxShoulderTiltDeg: 12, maxOppositeArmElevationDeg: 30 },
+        coaching,
+        framing: {
+          intent: 'Measure left arm abduction arc in the frontal plane from resting to 90 degrees.',
+          landmarks: { critical: ['left_shoulder', 'left_elbow', 'left_wrist'], supporting: ['right_shoulder', 'left_hip', 'nose'], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: 'upper_body',
+          peakMovementZone: 'shoulder_height',
+          requiredStartPosture: 'either',
+          bilateralSymmetryRequired: false,
+          angleGuidance: 'Frontal view essential. Patient must face the camera directly for accurate abduction measurement.',
+          measurementRisk: 'Lateral camera angle will misrepresent frontal plane abduction. Frontal view required.',
+        },
+      };
+
+    case 'shoulder_abduction_bilateral':
+      return {
+        id: 'shoulder_abduction_bilateral',
+        name: displayName,
+        category: 'upper_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'both',
+        posture: 'either',
+        description: 'Lift both arms out to the sides simultaneously to shoulder height, hold, then lower slowly.',
+        repTarget: repOverride,
+        startThreshold: 25,
+        targetThreshold: 70,
+        finishThreshold: 30,
+        target: { metric: 'bilateralArmAbductionDeg', label: 'shoulder height', targetValue: 90, tolerance: 12 },
+        hold,
+        tempo: { label: 'slow and controlled' },
+        qualityLimits: { maxTorsoLeanDeg: 15, maxShoulderTiltDeg: 12 },
+        coaching,
+        framing: {
+          intent: 'Measure bilateral arm abduction simultaneously in the frontal plane.',
+          landmarks: { critical: ['left_shoulder', 'left_elbow', 'left_wrist', 'right_shoulder', 'right_elbow', 'right_wrist'], supporting: ['nose', 'left_hip', 'right_hip'], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: 'upper_body',
+          peakMovementZone: 'shoulder_height',
+          requiredStartPosture: 'either',
+          bilateralSymmetryRequired: true,
+          angleGuidance: 'Frontal view required. Patient must be centred with both arms fully visible.',
+          measurementRisk: 'Without bilateral landmark visibility, asymmetry cannot be detected.',
+        },
+      };
+
+    // ── Sit to Stand (sagittal plane — transfer) ──────────────────────────────
+    case 'sit_to_stand':
+      return {
+        id: 'sit_to_stand',
+        name: displayName,
+        category: 'transfer',
+        template: 'rise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'center',
+        posture: 'seated',
+        description: 'Rise to standing from seated, hold at full extension, then sit back down with control.',
         repTarget: repOverride,
         startThreshold: 100,
         targetThreshold: 170,
         finishThreshold: 120,
-        target: { metric: "kneeToHipExtensionScore", label: "full standing", targetValue: 170, tolerance: 10 },
+        target: { metric: 'kneeToHipExtensionScore', label: 'full standing', targetValue: 170, tolerance: 10 },
         hold: { required: holdMsOverride > 0, durationMs: holdMsOverride || 1000 },
-        tempo: { label: "slow and controlled" },
+        tempo: { label: 'slow and controlled' },
         coaching,
         framing: {
-          intent: "Detect hip transition from seated to full standing. Hip and knee landmarks must be visible throughout.",
-          landmarks: { critical: ["left_hip", "right_hip", "left_knee", "right_knee"], supporting: ["left_shoulder", "right_shoulder", "left_ankle", "right_ankle"], reference: [] },
+          intent: 'Detect hip transition from seated to full standing. Hip and knee landmarks must be visible throughout.',
+          landmarks: { critical: ['left_hip', 'right_hip', 'left_knee', 'right_knee'], supporting: ['left_shoulder', 'right_shoulder', 'left_ankle', 'right_ankle'], reference: [] },
           confidenceThresholds: { critical: 0.5, supporting: 0.35 },
-          requiredCoverage: "full_body",
-          peakMovementZone: "standing_full",
-          requiredStartPosture: "seated",
+          requiredCoverage: 'full_body',
+          peakMovementZone: 'standing_full',
+          requiredStartPosture: 'seated',
           bilateralSymmetryRequired: false,
-          angleGuidance: "Side or frontal view. Full body must be visible from head to feet.",
-          measurementRisk: "Without hip and knee visibility, standing position cannot be confirmed.",
+          angleGuidance: 'Side or frontal view. Full body must be visible from head to feet.',
+          measurementRisk: 'Without hip and knee visibility, standing position cannot be confirmed.',
+        },
+      };
+
+    // ── Knee Extension (sagittal plane — seated) ──────────────────────────────
+    case 'knee_extension_right':
+      return {
+        id: 'knee_extension_right',
+        name: displayName,
+        category: 'lower_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'right',
+        posture: 'seated',
+        description: 'Seated: straighten your right knee fully, hold at full extension, then lower slowly.',
+        repTarget: repOverride,
+        startThreshold: 60,
+        targetThreshold: 155,
+        finishThreshold: 80,
+        target: { metric: 'rightKneeExtensionDeg', label: 'full extension', targetValue: 170, tolerance: 12 },
+        hold,
+        tempo: { label: 'slow and controlled' },
+        qualityLimits: { maxTorsoLeanDeg: 20 },
+        coaching,
+        framing: {
+          intent: 'Measure right knee extension arc from seated flexion to full extension.',
+          landmarks: { critical: ['right_hip', 'right_knee', 'right_ankle'], supporting: ['left_hip', 'left_knee', 'right_shoulder'], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: 'lower_body',
+          peakMovementZone: 'knee_extension',
+          requiredStartPosture: 'seated',
+          bilateralSymmetryRequired: false,
+          angleGuidance: 'Side view preferred. Right leg must be fully visible from hip to ankle.',
+          measurementRisk: 'Without visibility of right knee and ankle, extension cannot be measured.',
         },
       };
 
     default:
-      console.warn(`Unknown exercise template: "${templateName}" — skipping.`);
+      console.warn(`Unknown exercise slug: "${slug}" — skipping.`);
       return null;
   }
 }
@@ -237,7 +373,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
   const supabase = getServiceClient();
 
   const { data, error } = await supabase
-    .from("sessions")
+    .from('sessions')
     .select(`
       id,
       title,
@@ -253,7 +389,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
           reps_override,
           hold_ms_override,
           exercise_templates (
-            name,
+            slug,
             display_name,
             default_reps,
             default_hold_ms,
@@ -266,7 +402,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         reps_override,
         hold_ms_override,
         exercise_templates (
-          name,
+          slug,
           display_name,
           default_reps,
           default_hold_ms,
@@ -274,7 +410,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         )
       )
     `)
-    .eq("id", prescriptionId)
+    .eq('id', prescriptionId)
     .single();
 
   if (error || !data) {
@@ -284,7 +420,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         prescriptions={[]}
         restBoundaries={[]}
         sessionTitle=""
-        error={error?.message ?? "Session not found. It may have been deleted."}
+        error={error?.message ?? 'Session not found. It may have been deleted.'}
       />
     );
   }
@@ -297,23 +433,23 @@ export default async function SessionPage({ searchParams }: PageProps) {
   if (data.patient_id) {
     patientId = data.patient_id;
     const { data: pt } = await supabase
-      .from("patients")
-      .select("full_name, patient_type, condition_notes")
-      .eq("id", data.patient_id)
+      .from('patients')
+      .select('full_name, patient_type, condition_notes')
+      .eq('id', data.patient_id)
       .single();
 
     if (pt) {
       patientName = pt.full_name as string;
       const typeMap: Record<string, PatientType> = {
-        general_fitness: "general_fitness",
-        post_surgery: "post_surgery",
-        senior: "senior",
-        chronic_pain: "chronic_pain",
-        elderly: "senior",
-        pediatric: "general_fitness",
+        general_fitness: 'general_fitness',
+        post_surgery: 'post_surgery',
+        senior: 'senior',
+        chronic_pain: 'chronic_pain',
+        elderly: 'senior',
+        pediatric: 'general_fitness',
       };
       patientProfile = {
-        type: typeMap[pt.patient_type as string] ?? "general_fitness",
+        type: typeMap[pt.patient_type as string] ?? 'general_fitness',
         sessionNumber: 1,
         isReturningPatient: false,
         clinicalNotes: (pt.condition_notes as string | null) ?? null,
@@ -345,7 +481,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         if (!tmpl) continue;
         const reps = ex.reps_override ?? tmpl.default_reps;
         const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-        const prescription = buildPrescription(tmpl.name, reps, holdMs, tmpl.coaching_strings);
+        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings);
         if (prescription) mapped.push(prescription);
       }
     }
@@ -360,7 +496,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
       if (!tmpl) continue;
       const reps = ex.reps_override ?? tmpl.default_reps;
       const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-      const prescription = buildPrescription(tmpl.name, reps, holdMs, tmpl.coaching_strings);
+      const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings);
       if (prescription) mapped.push(prescription);
     }
   }
