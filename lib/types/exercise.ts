@@ -33,21 +33,33 @@ export type MovementPhase =
   | "unknown";
 
 export type MetricSource =
+  // Shoulder flexion (sagittal plane)
   | "rightArmElevationDeg"
   | "leftArmElevationDeg"
   | "bilateralArmElevationDeg"
+  // Shoulder abduction (frontal plane)
+  | "rightArmAbductionDeg"
+  | "leftArmAbductionDeg"
+  | "bilateralArmAbductionDeg"
+  // Elbow
   | "rightElbowAngleDeg"
   | "leftElbowAngleDeg"
+  // Posture
   | "torsoLeanDeg"
   | "shoulderTiltDeg"
   | "rightWristToShoulderDy"
   | "leftWristToShoulderDy"
+  // Hip / transfer
   | "hipCenterY"
   | "hipHeightNormalized"
   | "hipCenterVelocityY"
   | "kneeToHipExtensionScore"
+  // Wrist overhead
   | "rightWristAboveShoulder"
-  | "leftWristAboveShoulder";
+  | "leftWristAboveShoulder"
+  // Knee
+  | "rightKneeExtensionDeg"
+  | "leftKneeExtensionDeg";
 
 // ============================================================
 // FRAMING DECLARATION — Module 1
