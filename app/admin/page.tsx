@@ -1194,7 +1194,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
     const { error: upErr } = await supabase.storage.from("exercise-media").upload(path, file, { upsert: true });
     if (upErr) { showToast("Upload failed: " + upErr.message, false); return; }
     const { data } = supabase.storage.from("exercise-media").getPublicUrl(path);
-    setEditingTemplate(t => t ? { ...t, media_url: data.publicUrl } as any : t);
+    setEditingTemplate(t => t ? { ...t, media_url: data.publicUrl } : t);
     showToast("Image uploaded.");
   };
 
@@ -1262,8 +1262,8 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                       fontSize: 18, flexShrink: 0,
                     }}>{icon}</div>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{(t as any).clinical_name ?? t.display_name}</div>
-                      {(t as any).clinical_name && (t as any).clinical_name !== t.display_name && (
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.clinical_name ?? t.display_name}</div>
+                      {t.clinical_name && t.clinical_name !== t.display_name && (
                         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Patient: {t.display_name}</div>
                       )}
                     </div>
@@ -1279,9 +1279,9 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                     {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold
                   </span>
                 </div>
-                {(t as any).media_url && (
-                  <div style={{ margin: "0 -16px", overflow: "hidden", maxHeight: 120 }}>
-                    <img src={(t as any).media_url} alt={t.display_name} style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
+                {t.media_url && (
+                  <div style={{ margin: "0 -16px", overflow: "hidden", maxHeight: 100 }}>
+                    <img src={t.media_url} alt={t.display_name} style={{ width: "100%", height: 100, objectFit: "contain", background: "#f8fafc", display: "block" }} />
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 6 }}>
@@ -1304,7 +1304,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
-                    {editingTemplate.id ? "Edit" : "Customise"}: {(editingTemplate as any).clinical_name ?? editingTemplate.display_name}
+                    {editingTemplate.id ? "Edit" : "Customise"}: {editingTemplate.clinical_name ?? editingTemplate.display_name}
                   </h3>
                   {!editingTemplate.id && (
                     <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Creating a clinic copy — system template will not be changed</div>
@@ -1313,18 +1313,18 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                 <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
               </div>
               <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
-              <Field label="Clinical Name"><Input value={(editingTemplate as any).clinical_name ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, clinical_name: v } as any : t)} /></Field>
+              <Field label="Clinical Name"><Input value={editingTemplate.clinical_name ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, clinical_name: v } : t)} /></Field>
               <Field label="Description"><Textarea value={editingTemplate.description ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, description: v } : t)} /></Field>
               <Field label="Reference Image / GIF">
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {(editingTemplate as any).media_url && (
+                  {editingTemplate.media_url && (
                     <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}` }}>
-                      <img src={(editingTemplate as any).media_url} alt="Exercise reference" style={{ width: "100%", maxHeight: 160, objectFit: "cover", display: "block" }} />
-                      <button onClick={() => setEditingTemplate(t => t ? { ...t, media_url: null } as any : t)} style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                      <img src={editingTemplate.media_url ?? ""} alt="Exercise reference" style={{ width: "100%", maxHeight: 200, objectFit: "contain", background: "#f8fafc", display: "block", borderRadius: 6 }} />
+                      <button onClick={() => setEditingTemplate(t => t ? { ...t, media_url: null } : t)} style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                     </div>
                   )}
                   <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 6, border: `1px dashed ${C.border}`, cursor: "pointer", color: C.textMuted, fontSize: 12 }}>
-                    <span>{(editingTemplate as any).media_url ? "Replace image / GIF" : "Upload image / GIF"}</span>
+                    <span>{editingTemplate.media_url ? "Replace image / GIF" : "Upload image / GIF"}</span>
                     <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" style={{ display: "none" }}
                       onChange={e => { const file = e.target.files?.[0]; if (file && editingTemplate) handleMediaUpload(editingTemplate, file); }} />
                   </label>
