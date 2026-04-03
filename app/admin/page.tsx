@@ -1166,15 +1166,17 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
   const handleSave = async (template: ExerciseTemplate) => {
     setSaving(true);
     try {
-      const isNew = !template.id || template.is_vanilla;
-      const payload = { ...template, is_vanilla: false, created_by: null };
-      if (isNew) {
-        const { id: _id, ...insertPayload } = payload;
-        const { error } = await supabase.from("exercise_templates").insert(insertPayload);
-        if (error) throw error; showToast("Exercise created in My Library.");
+      if (template.id) {
+        // Always update in place — system (is_vanilla) and clinic exercises alike.
+        // Copy-on-write for multi-clinic is deferred until the global admin panel is built.
+        const { error } = await supabase.from("exercise_templates").update(template).eq("id", template.id);
+        if (error) throw error;
+        showToast("Exercise updated.");
       } else {
-        const { error } = await supabase.from("exercise_templates").update(payload).eq("id", template.id);
-        if (error) throw error; showToast("Exercise updated.");
+        const { id: _id, ...insertPayload } = { ...template, is_vanilla: false, created_by: null };
+        const { error } = await supabase.from("exercise_templates").insert(insertPayload);
+        if (error) throw error;
+        showToast("Exercise created.");
       }
       setEditingTemplate(null); loadTemplates();
     } catch (err: unknown) { showToast(err instanceof Error ? err.message : "Save failed.", false); }
@@ -1207,6 +1209,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
           {active.map(t => {
             // Accent colour per exercise type
+            // Accent colour per exercise type
             const accent = t.exercise_type === "shoulder_flexion" ? C.blue
               : t.exercise_type === "shoulder_abduction" ? C.purple
               : t.exercise_type === "sit_to_stand" ? C.green
@@ -1219,9 +1222,9 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
               : t.exercise_type === "knee_extension" ? C.orangeDim
               : t.exercise_type === "knee_flexion" ? C.orangeDim
               : C.blueDim;
-            const icon = t.exercise_type === "shoulder_flexion" ? "\u{1F4AA}"
-              : t.exercise_type === "shoulder_abduction" ? "\u{1F64C}"
-              : t.exercise_type === "sit_to_stand" ? "\u{1F9B5}"
+            const icon = t.exercise_type === "shoulder_flexion" ? "💪"
+              : t.exercise_type === "shoulder_abduction" ? "🙌"
+              : t.exercise_type === "sit_to_stand" ? "🦵"
               : "⚡";
             return (
               <div key={t.id} style={{
@@ -1261,7 +1264,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                     {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold
                   </span>
                 </div>
-                <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost">{t.is_vanilla ? "Customise →" : "Edit"}</Btn>
+                <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost">"Edit"</Btn>
               </div>
             );
           })}
@@ -1274,7 +1277,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
             {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editingTemplate.is_vanilla ? `Customise: ${editingTemplate.display_name}` : `Edit: ${editingTemplate.display_name}`}</h3>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{`Edit: ${editingTemplate.clinical_name ?? editingTemplate.display_name}`}</h3>
                 <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
               </div>
               <Field label="Display Name"><Input value={editingTemplate.display_name} onChange={v => setEditingTemplate(t => t ? { ...t, display_name: v } : t)} /></Field>
@@ -1288,7 +1291,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
             {/* Sticky footer — always visible regardless of scroll position */}
             <div style={{ padding: "16px 24px", borderTop: `1px solid ${C.border}`, background: C.surface, display: "flex", gap: 10, flexShrink: 0 }}>
               <Btn onClick={() => setEditingTemplate(null)} variant="ghost">Cancel</Btn>
-              <Btn onClick={() => handleSave(editingTemplate)} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingTemplate.is_vanilla ? "Save to My Library" : "Update"}</Btn>
+              <Btn onClick={() => handleSave(editingTemplate)} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : "Update Exercise"}</Btn>
             </div>
           </div>
         </div>
