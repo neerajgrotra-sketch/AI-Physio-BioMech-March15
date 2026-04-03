@@ -1,10 +1,18 @@
 // lib/supabase/types.ts
-// Schema v2 — Module 8
-// Reflects renamed and restructured tables from migrations 005 + 006.
+// Schema v3 — Module 11
+// Reflects clinical naming, slug-based exercise lookup, and new patient/protocol fields.
 
 export type PatientType = 'general_fitness' | 'post_surgery' | 'senior' | 'chronic_pain'
 export type UserRole = 'physio' | 'patient' | 'clinic_admin' | 'super_admin'
-export type ExerciseType = 'arm_raise' | 'bilateral_arm_raise' | 'sit_to_stand' | 'custom'
+export type ExerciseType =
+  | 'shoulder_flexion'
+  | 'shoulder_abduction'
+  | 'sit_to_stand'
+  | 'knee_extension'
+  | 'knee_flexion'
+  | 'custom'
+export type PlaneOfMotion = 'sagittal' | 'frontal' | 'transverse'
+export type Laterality = 'unilateral_right' | 'unilateral_left' | 'bilateral' | 'centre'
 export type SessionStatus = 'pending' | 'in_progress' | 'completed' | 'missed' | 'cancelled'
 
 // ─── Clinic ───────────────────────────────────────────────────────────────────
@@ -33,6 +41,12 @@ export interface Patient {
   photo_url: string | null; condition_notes: string | null
   goals: string | null; consent_given_at: string | null
   data_retention_until: string | null; created_at: string
+  // Module 11: contact + PIPEDA consent
+  email: string | null
+  phone: string | null
+  notification_consent: boolean
+  notification_consent_at: string | null
+  coaching_preferences: Record<string, unknown> | null
   clinic?: Clinic; physios?: PatientPhysio[]
 }
 export interface PatientPhysio {
@@ -43,11 +57,15 @@ export interface PatientPhysio {
 
 // ─── Exercise Library ─────────────────────────────────────────────────────────
 export interface CoachingStrings {
-  intro: string; hold: string[]; lower: string
-  success_first: string; success_rotating: string[]
-  correction_height: string; correction_hold: string
-  correction_balance: string; correction_isolation: string
-  exercise_complete: string
+  intro: string
+  lift: string
+  hold: string | string[]
+  lower: string
+  success_rotating: string[]
+  correction_height: string
+  correction_hold: string
+  correction_balance: string
+  correction_isolation?: string
 }
 export interface MeasurementSpec {
   primary_metric: string; threshold_degrees: number
@@ -56,31 +74,52 @@ export interface MeasurementSpec {
 }
 export interface ExerciseTemplate {
   id: string; clinic_id: string | null; created_by: string | null
-  is_vanilla: boolean; name: string; display_name: string
-  exercise_type: ExerciseType; description: string | null
-  clinical_objective: string | null; default_reps: number
-  default_hold_ms: number; default_rest_ms: number
-  target_metric_degrees: number; bilateral: boolean
-  coaching_strings: CoachingStrings; measurement_spec: MeasurementSpec
+  is_vanilla: boolean
+  // slug: stable programmatic key — never shown to users, used in buildPrescription() lookups
+  slug: string
+  // clinical_name: shown to physios in admin, protocols, clinical documentation
+  clinical_name: string
+  // display_name: shown to patients in session runner and voice coaching
+  display_name: string
+  exercise_type: ExerciseType
+  plane_of_motion: PlaneOfMotion | null
+  laterality: Laterality | null
+  description: string | null
+  clinical_objective: string | null
+  default_reps: number
+  default_hold_ms: number
+  default_rest_ms: number
+  target_metric_degrees: number
+  bilateral: boolean
+  coaching_strings: CoachingStrings
+  measurement_spec: MeasurementSpec
+  // Module 11: coaching customisation
+  coaching_persona: string
+  coaching_focus: string
   created_at: string; updated_at: string
 }
 
-// ─── Protocols (was session_templates) ───────────────────────────────────────
+// ─── Protocols ────────────────────────────────────────────────────────────────
 export interface Protocol {
   id: string; clinic_id: string | null; created_by: string | null
   title: string; objective: string | null
   estimated_duration_mins: number; tags: string[]
+  // Module 11: session coaching context
+  session_coaching_context: string | null
   created_at: string; updated_at: string
   exercises?: ProtocolExercise[]; clinic?: Clinic
 }
 export interface ProtocolExercise {
   id: string; protocol_id: string; exercise_template_id: string
   sequence_order: number; default_reps: number | null
-  default_hold_ms: number | null; created_at: string
+  default_hold_ms: number | null
+  // Module 11: rest after this exercise before the next
+  rest_after_ms: number
+  created_at: string
   exercise_template?: ExerciseTemplate
 }
 
-// ─── Sessions (was session_prescriptions) ────────────────────────────────────
+// ─── Sessions ─────────────────────────────────────────────────────────────────
 export interface Session {
   id: string; clinic_id: string | null; patient_id: string
   physio_id: string | null; source_protocol_id: string | null
@@ -100,6 +139,8 @@ export interface SessionBlockExercise {
   id: string; session_block_id: string; exercise_template_id: string
   sequence_order: number; reps_override: number | null
   hold_ms_override: number | null; coaching_notes: string | null
+  // Module 11: rest after this exercise before the next
+  rest_after_ms: number
   created_at: string; exercise_template?: ExerciseTemplate
 }
 
@@ -152,8 +193,15 @@ export interface SessionDraft {
 }
 
 export interface ExerciseTemplateFormData {
-  display_name: string; description: string; clinical_objective: string
-  default_reps: number; default_hold_ms: number; default_rest_ms: number
-  target_metric_degrees: number; billing: boolean
+  slug: string
+  clinical_name: string
+  display_name: string
+  description: string
+  clinical_objective: string
+  default_reps: number
+  default_hold_ms: number
+  default_rest_ms: number
+  target_metric_degrees: number
+  billing: boolean
   coaching_strings: CoachingStrings
 }
