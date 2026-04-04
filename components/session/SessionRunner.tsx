@@ -445,7 +445,11 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const cameraRef = useRef<CameraViewportHandle | null>(null);
   const sessionStartedAtMsRef = useRef<number | null>(null);
   // Ghost silhouette refs
-  const ghostCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ghostCanvasRef  = useRef<HTMLCanvasElement | null>(null);
+  // Refs hold latest values for rAF ghost loop - avoids stale closures
+  const ghostFrameRef   = useRef<import("@/lib/types/pose").PoseFrame | null>(null);
+  const ghostSlugRef    = useRef<string>("");
+  const ghostHoldMsRef  = useRef<number>(0);
   const ghostAnimRef   = useRef<number>(0);
   const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
   const ghostStartRef  = useRef<number>(performance.now());
@@ -495,6 +499,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
   const sessionQueue = useSessionQueue();
   const inferenceLoop = useInferenceLoop();
+  // Keep ghost refs current on every render so the rAF loop reads fresh data
+  ghostFrameRef.current  = inferenceLoop.frame;
+  ghostSlugRef.current   = sessionQueue.getActivePrescription()?.id ?? "";
+  ghostHoldMsRef.current = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
   const framingIntelligence = useFramingIntelligence(patientProfile);
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
@@ -954,12 +962,12 @@ Reply with only the summary text, no JSON, no formatting.`;
       const deltaS = Math.min((now - lastT) / 1000, 0.1); lastT = now;
       ctx.clearRect(0, 0, W, H);
 
-      const frame = inferenceLoop.frame;
+      const frame = ghostFrameRef.current;
       if (!frame || !frame.personDetected) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
       const rawLms = poseFrameToLandmarkArray(frame);
       const lms = mirrorLandmarks(rawLms);
-      const slug = sessionQueue.getActivePrescription()?.id ?? "";
+      const slug = ghostSlugRef.current;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
       const bodyFrame = getBodyFrame(lms as any, W, H);
@@ -999,7 +1007,7 @@ Reply with only the summary text, no JSON, no formatting.`;
           if (!ghostHoldRef.current) { ghostHoldRef.current=now; ghostPhaseRef.current="holding"; setGhostPhase("holding"); }
           const holdMs = now - (ghostHoldRef.current??now);
           setGhostHoldMs(holdMs);
-          const holdTarget = (sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000);
+          const holdTarget = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
           drawHoldRing(ctx, W, H, holdMs, holdTarget, score);
         } else {
           ghostHoldRef.current=null; if(p==="holding"){ghostPhaseRef.current="attempt";setGhostPhase("attempt");}
