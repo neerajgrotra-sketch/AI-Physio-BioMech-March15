@@ -460,6 +460,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const vpRafRef    = useRef<number>(0);
   const ghostAnimRef      = useRef<number>(0);
   const ghostLastFrameRef = useRef<import("@/lib/pose/bodyFrame").BodyFrame | null>(null);
+  const ghostRepCountRef  = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
+  const ghostPrevPhaseRef = useRef<string>("");  // detect phase transitions for debug log
   const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
   const ghostStartRef  = useRef<number>(performance.now());
   const ghostHoldRef   = useRef<number|null>(null);
@@ -483,6 +485,13 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
   const [debugLog, setDebugLog] = useState<DebugLogEntry[]>([]);
   const [debugOpen, setDebugOpen] = useState(false);
+  // Ghost intelligence log — phase transitions and key events
+  type GhostLogEntry = { id: string; time: string; phase: string; score: number; rep: number; detail: string; };
+  const [ghostLog, setGhostLog] = useState<GhostLogEntry[]>([]);
+  const [ghostLogOpen, setGhostLogOpen] = useState(false);
+  const ghostLogRef = useRef<GhostLogEntry[]>([]);
+  const ghostSetLogRef = useRef<React.Dispatch<React.SetStateAction<GhostLogEntry[]>> | null>(null);
+  ghostSetLogRef.current = setGhostLog;
   const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(
@@ -512,8 +521,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostFrameRef.current       = inferenceLoop.frame;
   ghostSlugRef.current        = sessionQueue.getActivePrescription()?.id ?? "";
   ghostHoldMsRef.current      = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
-  ghostPhaseInfRef.current    = inferenceLoop.phase;  // inference loop phase drives ghost position
-  ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;  // ms remaining in hold
+  ghostPhaseInfRef.current    = inferenceLoop.phase;
+  ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
+  ghostRepCountRef.current    = inferenceLoop.repCount;
   const framingIntelligence = useFramingIntelligence(patientProfile);
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
@@ -949,6 +959,10 @@ Reply with only the summary text, no JSON, no formatting.`;
     ghostRepRef.current = false;
     ghostHistRef.current = [];
     ghostLastFrameRef.current = null;
+    ghostRepCountRef.current = 0;
+    ghostPrevPhaseRef.current = "";
+    ghostLogRef.current = [];
+    ghostSetLogRef.current?.([]);
     startGhostLoop();
   }
 
@@ -1038,50 +1052,68 @@ Reply with only the summary text, no JSON, no formatting.`;
       const elapsed = (now - ghostStartRef.current) / 1000;
 
       // Ghost is driven by inferenceLoop.phase — the clinical source of truth.
-      // No independent state machine needed: the inference loop already knows
-      // exactly where the patient is in the movement.
-      const infPhase = ghostPhaseInfRef.current;
-      const holdRem  = ghostHoldRemRef.current;
+      const infPhase  = ghostPhaseInfRef.current;
+      const holdRem   = ghostHoldRemRef.current;
       const holdTotal = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+      const repsDone  = ghostRepCountRef.current;
+
+      // Log phase transitions only (not every frame)
+      if (infPhase !== ghostPrevPhaseRef.current) {
+        const entry: GhostLogEntry = {
+          id: `${now}-${Math.random().toString(36).slice(2,5)}`,
+          time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
+          phase: infPhase,
+          score: Math.round(score * 100),
+          rep: repsDone,
+          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
+        };
+        ghostPrevPhaseRef.current = infPhase;
+        ghostLogRef.current = [entry, ...ghostLogRef.current].slice(0, 80);
+        ghostSetLogRef.current?.([...ghostLogRef.current]);
+      }
 
       if (infPhase === "ready" || infPhase === "idle" || infPhase === "unknown") {
-        // Patient at rest or session just starting — animate ghost slowly to teach
-        const t = 0.5 + 0.5 * Math.sin(now / 3500); // gentle 7s oscillation
-        drawGhostDemo(ctx, lerpGhost(rst, tgt, t), t);
-        setGhostPhase("demo");
-        setGhostDemoProgress(t);
+        if (repsDone === 0) {
+          // First rep not yet started — animate ghost to teach the movement
+          const t = 0.5 + 0.5 * Math.sin(now / 3500);
+          drawGhostDemo(ctx, lerpGhost(rst, tgt, t), t);
+          setGhostPhase("demo");
+          setGhostDemoProgress(t);
+        } else {
+          // Between reps — ghost sits at rest, static. No animation.
+          drawGhost(ctx, rst, 0);
+          setGhostPhase("attempt");
+          setGhostHoldMs(0);
+        }
 
       } else if (infPhase === "lifting") {
-        // Patient is raising — show target ghost in blue, encouraging "get here"
+        // Patient raising — ghost at target encouraging "get here"
         drawGhost(ctx, tgt, score);
         setGhostPhase("attempt");
         setGhostHoldMs(0);
 
       } else if (infPhase === "top" || infPhase === "holding") {
-        // Patient at peak — show target ghost green + hold countdown ring
-        drawGhost(ctx, tgt, Math.max(score, 0.85)); // always green at top
+        // At peak — target ghost green + hold countdown ring
+        drawGhost(ctx, tgt, Math.max(score, 0.85));
         setGhostPhase("holding");
-        // holdRem is ms REMAINING; convert to elapsed for the ring
         const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : holdTotal;
         setGhostHoldMs(holdElapsed);
         drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1);
 
       } else if (infPhase === "lowering") {
-        // Patient lowering — ghost animates toward rest, guiding them down
-        // Pulse between target and rest so ghost clearly shows "come down"
+        // Lowering — ghost pulses toward rest, guiding them down
         const lowerPulse = 0.4 + 0.35 * Math.sin(now / 800);
         drawGhost(ctx, lerpGhost(tgt, rst, lowerPulse), score);
         setGhostPhase("attempt");
         setGhostHoldMs(0);
 
       } else if (infPhase === "complete" || infPhase === "bottom") {
-        // Rep complete — brief green flash at target
+        // Rep complete — green flash at target
         drawGhost(ctx, tgt, 1);
         setGhostPhase("rep_complete");
         setGhostHoldMs(0);
 
       } else {
-        // Fallback for any other phase — show target
         drawGhost(ctx, tgt, score);
         setGhostPhase("attempt");
       }
@@ -1533,6 +1565,45 @@ Reply with only the summary text, no JSON, no formatting.`;
         )}
       </div>
       )}
+
+      {/* ── GHOST INTELLIGENCE LOG ── */}
+      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(167,139,250,0.2)", overflow: "hidden", marginBottom: 12 }}>
+        <div onClick={() => setGhostLogOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "rgba(167,139,250,0.05)", borderBottom: ghostLogOpen ? "1px solid rgba(167,139,250,0.1)" : "none", cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 0.8 }}>Ghost Intelligence</span>
+            <span style={{ fontSize: 11, color: "#7a88a8" }}>{ghostLog.length} transitions</span>
+            {sessionQueue.sessionStarted && (
+              <span style={{ fontSize: 11, color: "#a78bfa" }}>phase: {ghostPhaseInfRef.current} | score: {Math.round(ghostScore*100)}% | rep: {inferenceLoop.repCount}</span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={e => { e.stopPropagation(); const text = ghostLog.map(e => `[${e.time}] [${e.phase.toUpperCase()}] rep=${e.rep} score=${e.score}% | ${e.detail}`).join("\n"); copyToClipboard(text); }} style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy Log</button>
+            <button onClick={e => { e.stopPropagation(); ghostLogRef.current=[]; setGhostLog([]); }} style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>Clear</button>
+            <span style={{ color: "#7a88a8", fontSize: 12 }}>{ghostLogOpen ? "▲" : "▼"}</span>
+          </div>
+        </div>
+        {ghostLogOpen && (
+          <div style={{ maxHeight: 280, overflowY: "auto", padding: 10, display: "grid", gap: 3 }}>
+            {ghostLog.length === 0 ? (
+              <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>No transitions yet. Start a session to see ghost phase changes.</div>
+            ) : ghostLog.map(entry => {
+              const phaseColors: Record<string, string> = { lifting: "#7cc6ff", top: "#4ade80", holding: "#4ade80", lowering: "#fbbf24", ready: "#a78bfa", complete: "#9be7b0", bottom: "#9be7b0", idle: "#7a88a8", unknown: "#7a88a8" };
+              const col = phaseColors[entry.phase] ?? "#aab6d3";
+              return (
+                <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "5px 10px", border: `1px solid ${col}22` }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>{entry.time}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: `${col}22`, color: col, flexShrink: 0 }}>{entry.phase.toUpperCase()}</span>
+                    <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>rep {entry.rep}</span>
+                    <span style={{ fontSize: 10, color: col, flexShrink: 0 }}>{entry.score}%</span>
+                    <span style={{ fontSize: 11, color: "#aab6d3", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.detail}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* ── DEBUG LOG ── */}
       <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(124,198,255,0.15)", overflow: "hidden" }}>
