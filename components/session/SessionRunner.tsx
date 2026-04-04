@@ -449,7 +449,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // Refs hold latest values for rAF ghost loop - avoids stale closures
   const ghostFrameRef   = useRef<import("@/lib/types/pose").PoseFrame | null>(null);
   const ghostSlugRef    = useRef<string>("");
-  const ghostHoldMsRef  = useRef<number>(0);
+  const ghostHoldMsRef      = useRef<number>(0);
+  const ghostPhaseInfRef    = useRef<string>("ready");  // inferenceLoop.phase
+  const ghostHoldRemRef     = useRef<number|null>(null); // inferenceLoop.holdRemainingMs
   // Auto-frame viewport: CSS transform applied to the camera container div
   const cameraContainerRef = useRef<HTMLDivElement | null>(null);
   const vpScaleRef  = useRef(1);
@@ -506,9 +508,11 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const sessionQueue = useSessionQueue();
   const inferenceLoop = useInferenceLoop();
   // Keep ghost refs current on every render so the rAF loop reads fresh data
-  ghostFrameRef.current  = inferenceLoop.frame;
-  ghostSlugRef.current   = sessionQueue.getActivePrescription()?.id ?? "";
-  ghostHoldMsRef.current = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
+  ghostFrameRef.current       = inferenceLoop.frame;
+  ghostSlugRef.current        = sessionQueue.getActivePrescription()?.id ?? "";
+  ghostHoldMsRef.current      = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
+  ghostPhaseInfRef.current    = inferenceLoop.phase;  // inference loop phase drives ghost position
+  ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;  // ms remaining in hold
   const framingIntelligence = useFramingIntelligence(patientProfile);
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
@@ -1022,42 +1026,52 @@ Reply with only the summary text, no JSON, no formatting.`;
       const p = ghostPhaseRef.current;
       const elapsed = (now - ghostStartRef.current) / 1000;
 
-      if (p === "demo") {
-        const isRep = ghostRepRef.current;
-        const cycles = isRep ? 1 : 2;
-        const totalS = DEMO_CYCLE_S * cycles;
-        const t = elapsed >= totalS ? cycleT(totalS-0.01) : cycleT(elapsed);
-        const done = elapsed >= totalS;
-        setGhostDemoProgress(Math.min(elapsed/totalS,1));
-        const hist = ghostHistRef.current; hist.push(score); if(hist.length>INTENT_WIN)hist.shift();
-        const intent = hist.length>=INTENT_WIN && score>=INTENT_MIN && (score-hist[0])>=INTENT_DELTA;
-        if (intent || done) {
-          ghostPhaseRef.current="attempt"; ghostStartRef.current=now;
-          ghostLowRef.current=0; ghostHoldRef.current=null; ghostHistRef.current=[];
-          setGhostPhase("attempt");
-        } else {
-          drawGhostDemo(ctx, lerpGhost(rst,tgt,t), t);
-        }
-      } else if (p === "attempt" || p === "holding") {
+      // Ghost is driven by inferenceLoop.phase — the clinical source of truth.
+      // No independent state machine needed: the inference loop already knows
+      // exactly where the patient is in the movement.
+      const infPhase = ghostPhaseInfRef.current;
+      const holdRem  = ghostHoldRemRef.current;
+      const holdTotal = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+
+      if (infPhase === "ready" || infPhase === "idle" || infPhase === "unknown") {
+        // Patient at rest or session just starting — animate ghost slowly to teach
+        const t = 0.5 + 0.5 * Math.sin(now / 3500); // gentle 7s oscillation
+        drawGhostDemo(ctx, lerpGhost(rst, tgt, t), t);
+        setGhostPhase("demo");
+        setGhostDemoProgress(t);
+
+      } else if (infPhase === "lifting") {
+        // Patient is raising — show target ghost in blue, encouraging "get here"
         drawGhost(ctx, tgt, score);
-        if (score >= MATCH_THRESHOLD) {
-          ghostLowRef.current = 0;
-          if (!ghostHoldRef.current) { ghostHoldRef.current=now; ghostPhaseRef.current="holding"; setGhostPhase("holding"); }
-          const holdMs = now - (ghostHoldRef.current??now);
-          setGhostHoldMs(holdMs);
-          const holdTarget = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
-          drawHoldRing(ctx, W, H, holdMs, holdTarget, score);
-        } else {
-          ghostHoldRef.current=null; if(p==="holding"){ghostPhaseRef.current="attempt";setGhostPhase("attempt");}
-          setGhostHoldMs(0); ghostLowRef.current+=deltaS;
-          if (ghostLowRef.current > LOW_TIMEOUT) {
-            ghostPhaseRef.current="demo"; ghostStartRef.current=now;
-            ghostRepRef.current=true; ghostHistRef.current=[]; ghostLowRef.current=0;
-            setGhostPhase("demo"); setGhostDemoProgress(0);
-          }
-        }
-      } else if (p === "rep_complete") {
+        setGhostPhase("attempt");
+        setGhostHoldMs(0);
+
+      } else if (infPhase === "top" || infPhase === "holding") {
+        // Patient at peak — show target ghost green + hold countdown ring
+        drawGhost(ctx, tgt, Math.max(score, 0.85)); // always green at top
+        setGhostPhase("holding");
+        // holdRem is ms REMAINING; convert to elapsed for the ring
+        const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : holdTotal;
+        setGhostHoldMs(holdElapsed);
+        drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1);
+
+      } else if (infPhase === "lowering") {
+        // Patient lowering — ghost lerps toward rest position, encouraging them down
+        const lowerT = 0.3 + 0.7 * Math.sin(now / 1500) * 0.3; // subtle rest-leaning pose
+        drawGhost(ctx, lerpGhost(tgt, rst, 0.4), score);
+        setGhostPhase("attempt");
+        setGhostHoldMs(0);
+
+      } else if (infPhase === "complete" || infPhase === "bottom") {
+        // Rep complete — brief green flash at target
         drawGhost(ctx, tgt, 1);
+        setGhostPhase("rep_complete");
+        setGhostHoldMs(0);
+
+      } else {
+        // Fallback for any other phase — show target
+        drawGhost(ctx, tgt, score);
+        setGhostPhase("attempt");
       }
 
       drawLive(ctx, lms, W, H, score);
