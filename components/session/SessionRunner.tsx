@@ -450,6 +450,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostFrameRef   = useRef<import("@/lib/types/pose").PoseFrame | null>(null);
   const ghostSlugRef    = useRef<string>("");
   const ghostHoldMsRef  = useRef<number>(0);
+  // Auto-frame viewport: CSS transform applied to the camera container div
+  const cameraContainerRef = useRef<HTMLDivElement | null>(null);
+  const vpScaleRef  = useRef(1);
+  const vpOXRef     = useRef(0);
+  const vpOYRef     = useRef(0);
+  const vpRafRef    = useRef<number>(0);
   const ghostAnimRef   = useRef<number>(0);
   const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
   const ghostStartRef  = useRef<number>(performance.now());
@@ -938,6 +944,38 @@ Reply with only the summary text, no JSON, no formatting.`;
     ghostRepRef.current = false;
     ghostHistRef.current = [];
     startGhostLoop();
+    startAutoFrame();
+  }
+
+  function startAutoFrame() {
+    cancelAnimationFrame(vpRafRef.current);
+    function afTick() {
+      const frame = ghostFrameRef.current;
+      const container = cameraContainerRef.current;
+      if (container && frame && frame.personDetected) {
+        const lms = frame.landmarks as Record<string, {x:number;y:number;score?:number}|undefined>;
+        const pts = Object.values(lms).filter(lm => lm && (lm.score ?? 1) > 0.15) as {x:number;y:number}[];
+        if (pts.length >= 2) {
+          const W = container.clientWidth; const H = container.clientHeight;
+          let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
+          for (const p of pts) { mnX=Math.min(mnX,p.x); mxX=Math.max(mxX,p.x); mnY=Math.min(mnY,p.y); mxY=Math.max(mxY,p.y); }
+          const padX=(mxX-mnX)*0.35+0.05; const padY=(mxY-mnY)*0.28+0.05;
+          const bx=Math.max(0,mnX-padX); const by=Math.max(0,mnY-padY);
+          const bw=Math.min(1,mxX+padX)-bx; const bh=Math.min(1,mxY+padY)-by;
+          const tScale=Math.max(1,Math.min(3.5,Math.min(1/bw,1/bh)));
+          const tOX=0.5-(bx+bw/2)*tScale; const tOY=0.5-(by+bh/2)*tScale;
+          const L=0.06;
+          vpScaleRef.current += (tScale - vpScaleRef.current)*L;
+          vpOXRef.current    += (tOX   - vpOXRef.current)*L;
+          vpOYRef.current    += (tOY   - vpOYRef.current)*L;
+          const s=vpScaleRef.current; const ox=vpOXRef.current; const oy=vpOYRef.current;
+          container.style.transformOrigin = "top left";
+          container.style.transform = `scale(${s}) translate(${(ox/s)*W}px, ${(oy/s)*H}px)`;
+        }
+      }
+      vpRafRef.current = requestAnimationFrame(afTick);
+    }
+    vpRafRef.current = requestAnimationFrame(afTick);
   }
 
   function startGhostLoop() {
@@ -1032,6 +1070,10 @@ Reply with only the summary text, no JSON, no formatting.`;
     writeDebugLog("info", "CAMERA", "Camera stopped");
     inferenceLoop.stopLoop();
     cancelAnimationFrame(ghostAnimRef.current);
+    cancelAnimationFrame(vpRafRef.current);
+    // Reset viewport transform
+    if (cameraContainerRef.current) cameraContainerRef.current.style.transform = "";
+    vpScaleRef.current=1; vpOXRef.current=0; vpOYRef.current=0;
     sessionQueue.endSession();
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
@@ -1173,7 +1215,8 @@ Reply with only the summary text, no JSON, no formatting.`;
             <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.4 }}>[{framingPanelState.severity}]</span>
           </div>
 
-          <div style={{ position: "relative" }}>
+          <div style={{ overflow: "hidden", borderRadius: 12 }}>
+          <div ref={cameraContainerRef} style={{ position: "relative", transition: "none" }}>
             <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
             <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
               <PoseCanvasOverlay frame={inferenceLoop.frame} />
@@ -1194,6 +1237,7 @@ Reply with only the summary text, no JSON, no formatting.`;
                 </div>
               </div>
             )}
+          </div>
           </div>
 
           {inferenceLoop.engineError && (
