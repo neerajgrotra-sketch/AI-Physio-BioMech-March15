@@ -581,20 +581,62 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
 // ─── Patient Profile Panel ────────────────────────────────────────────────────
 
 function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdit, onDelete, onRefresh }: { patient: Patient; prescriptions: PrescribedSession[]; templates: SessionTemplate[]; onClose: () => void; onEdit: () => void; onDelete: () => void; onRefresh: () => void; }) {
+  const supabase = getSupabaseClient();
   const age = patient.date_of_birth ? calcAge(patient.date_of_birth) : null;
   const bmi = patient.height_cm && patient.weight_kg ? calcBMI(patient.height_cm, patient.weight_kg) : null;
   const bmiInfo = bmi ? bmiCategory(bmi) : null;
-  const patientSessions = prescriptions.filter(s => s.patient_id === patient.id);
+  const patientSessions = prescriptions.filter(s => s.patient_id === patient.id)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const completedSessions = patientSessions.filter(s => s.status === "completed");
+  const pendingSessions   = patientSessions.filter(s => s.status === "pending");
+
   const [assigning, setAssigning] = useState(false);
   const [viewingResultsId, setViewingResultsId] = useState<string | null>(null);
   const [viewingResultsTitle, setViewingResultsTitle] = useState<string>("");
+  const [sessionFilter, setSessionFilter] = useState<"all" | "pending" | "completed">("all");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const filteredSessions = sessionFilter === "pending"
+    ? pendingSessions
+    : sessionFilter === "completed"
+    ? completedSessions
+    : patientSessions;
+
+  const handleDeleteSession = async (sessionId: string, title: string) => {
+    if (!confirm(`Delete session "${title}"? This cannot be undone.`)) return;
+    setDeletingId(sessionId);
+    try {
+      // Delete child rows first (session_block_exercises -> session_blocks -> sessions)
+      const { data: blocks } = await supabase.from("session_blocks").select("id").eq("session_id", sessionId);
+      if (blocks && blocks.length > 0) {
+        const blockIds = blocks.map((b: { id: string }) => b.id);
+        await supabase.from("session_block_exercises").delete().in("session_block_id", blockIds);
+        await supabase.from("session_blocks").delete().eq("session_id", sessionId);
+      }
+      const { error } = await supabase.from("sessions").delete().eq("id", sessionId);
+      if (error) throw error;
+      onRefresh();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const filterBtnStyle = (active: boolean) => ({
+    padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+    cursor: "pointer" as const, border: "none",
+    background: active ? C.blue + "22" : "transparent",
+    color: active ? C.blue : C.textMuted,
+    outline: active ? `1px solid ${C.blue}44` : "1px solid transparent",
+  });
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ width: "min(520px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ width: "min(600px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
         {/* Header */}
-        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
           <PatientPhoto photoUrl={patient.photo_url} name={patient.full_name} size={56} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{patient.full_name}</div>
@@ -610,69 +652,115 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
           </div>
         </div>
 
+        {/* Stats bar */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+          {[
+            { label: "Total", value: patientSessions.length },
+            { label: "Completed", value: completedSessions.length, color: C.green },
+            { label: "Pending", value: pendingSessions.length, color: C.blue },
+            { label: "Rate", value: patientSessions.length > 0 ? `${Math.round(completedSessions.length / patientSessions.length * 100)}%` : "—", color: C.blue },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ padding: "12px 16px", textAlign: "center", background: C.bg }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: color ?? C.text }}>{value}</div>
+              <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
         {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-
           {assigning ? (
             <AssignSessionPanel patient={patient} templates={templates} onAssign={() => { setAssigning(false); onRefresh(); }} onCancel={() => setAssigning(false)} />
           ) : (
             <>
-              {/* Stats */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
-                {[
-                  { label: "Sessions", value: patientSessions.length },
-                  { label: "Completed", value: completedSessions.length },
-                  { label: "Pending", value: patientSessions.filter(s => s.status === "pending").length },
-                  { label: "Completion", value: patientSessions.length > 0 ? `${Math.round(completedSessions.length / patientSessions.length * 100)}%` : "—" },
-                ].map(({ label, value }) => (
-                  <div key={label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{value}</div>
-                    <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Physical */}
-              {(patient.height_cm || patient.weight_kg || patient.date_of_birth) && (
-                <div style={{ marginBottom: 20 }}>
-                  <SectionHeader title="Physical" />
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    {patient.date_of_birth && <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px" }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Date of Birth</div><div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{formatDate(patient.date_of_birth)}</div>{age !== null && <div style={{ fontSize: 12, color: C.textMuted }}>Age {age}</div>}</div>}
-                    {patient.height_cm && <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px" }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Height</div><div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{patient.height_cm} cm</div><div style={{ fontSize: 12, color: C.textMuted }}>{cmToFtIn(patient.height_cm).ft}′ {cmToFtIn(patient.height_cm).inches}″</div></div>}
-                    {patient.weight_kg && <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px" }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Weight</div><div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{patient.weight_kg} kg</div><div style={{ fontSize: 12, color: C.textMuted }}>{kgToLbs(patient.weight_kg)} lbs</div></div>}
-                    {bmi && bmiInfo && <div style={{ background: bmiInfo.color + "15", border: `1px solid ${bmiInfo.color}30`, borderRadius: 8, padding: "10px 14px" }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>BMI</div><div style={{ fontSize: 14, fontWeight: 700, color: bmiInfo.color, marginTop: 2 }}>{bmi} · {bmiInfo.label}</div></div>}
-                  </div>
-                </div>
-              )}
-
-              {/* Clinical */}
+              {/* Clinical notes */}
               {(patient.condition_notes || patient.goals) && (
-                <div style={{ marginBottom: 20 }}>
-                  <SectionHeader title="Clinical" />
-                  {patient.condition_notes && <div style={{ marginBottom: 10 }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 4 }}>Condition</div><div style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{patient.condition_notes}</div></div>}
+                <div style={{ marginBottom: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "14px 16px" }}>
+                  {patient.condition_notes && <div style={{ marginBottom: patient.goals ? 10 : 0 }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 4 }}>Condition</div><div style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{patient.condition_notes}</div></div>}
                   {patient.goals && <div><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 4 }}>Goals</div><div style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{patient.goals}</div></div>}
                 </div>
               )}
 
-              {/* Sessions */}
+              {/* Sessions section */}
               <div>
-                <SectionHeader title={`Sessions (${patientSessions.length})`} action={<Btn onClick={() => setAssigning(true)} variant="primary" small>+ Assign Protocol</Btn>} />
-                {patientSessions.length === 0 ? (
-                  <div style={{ fontSize: 13, color: C.textDim, padding: "16px 0", textAlign: "center" }}>No sessions assigned yet. Click "+ Assign Protocol" to add one.</div>
+                {/* Section header + assign button */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Sessions</div>
+                  <Btn onClick={() => setAssigning(true)} variant="primary" small>+ Assign Protocol</Btn>
+                </div>
+
+                {/* Filter tabs */}
+                {patientSessions.length > 0 && (
+                  <div style={{ display: "flex", gap: 4, marginBottom: 14, background: C.bg, borderRadius: 24, padding: 4, width: "fit-content", border: `1px solid ${C.border}` }}>
+                    {(["all", "pending", "completed"] as const).map(f => (
+                      <button key={f} onClick={() => setSessionFilter(f)} style={filterBtnStyle(sessionFilter === f)}>
+                        {f === "all" ? `All (${patientSessions.length})` : f === "pending" ? `Pending (${pendingSessions.length})` : `Completed (${completedSessions.length})`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {filteredSessions.length === 0 ? (
+                  <div style={{ fontSize: 13, color: C.textDim, padding: "24px 0", textAlign: "center" }}>
+                    {patientSessions.length === 0 ? 'No sessions assigned yet.' : `No ${sessionFilter} sessions.`}
+                  </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {patientSessions.map(s => (
+                    {filteredSessions.map(s => (
                       <div key={s.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px" }}>
-                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-                          <div>
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{s.title}</div>
-                            <div style={{ fontSize: 11, color: C.textDim }}>{s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · {s.estimated_duration_mins} min · {formatDate(s.created_at)}</div>
+                            <div style={{ fontSize: 11, color: C.textDim }}>
+                              {s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · {s.estimated_duration_mins} min · Created {formatDate(s.created_at)}
+                            </div>
                           </div>
-                          <Badge label={s.status} color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : C.textMuted} />
+                          <Badge
+                            label={s.status === "completed" ? "Completed" : s.status === "pending" ? "Pending" : s.status}
+                            color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : C.textMuted}
+                          />
                         </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>{s.status === "completed" ? "↺ Re-run" : "▶ Run"}</Btn>
-                          {s.status === "completed" && <Btn onClick={() => { setViewingResultsId(s.id); setViewingResultsTitle(s.title); }} small variant="ghost">📊 Results</Btn>}
+
+                        {/* Exercise list preview */}
+                        {s.exercises.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 4, marginBottom: 10 }}>
+                            {s.exercises.slice(0, 4).map((ex, i) => (
+                              <span key={i} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>
+                                {ex.display_name}
+                              </span>
+                            ))}
+                            {s.exercises.length > 4 && (
+                              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>
+                                +{s.exercises.length - 4} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Actions */}
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>
+                            {s.status === "completed" ? "↺ Re-run" : "▶ Run Session"}
+                          </Btn>
+                          {s.status === "completed" && (
+                            <Btn onClick={() => { setViewingResultsId(s.id); setViewingResultsTitle(s.title); }} small variant="ghost">
+                              📊 Results
+                            </Btn>
+                          )}
+                          {s.status === "pending" && (
+                            <button
+                              onClick={() => handleDeleteSession(s.id, s.title)}
+                              disabled={deletingId === s.id}
+                              style={{
+                                marginLeft: "auto", padding: "4px 10px", borderRadius: 6,
+                                fontSize: 11, fontWeight: 600, cursor: deletingId === s.id ? "not-allowed" : "pointer",
+                                background: "rgba(239,68,68,0.08)", color: "#ef4444",
+                                border: "1px solid rgba(239,68,68,0.2)", opacity: deletingId === s.id ? 0.5 : 1,
+                              }}
+                            >
+                              {deletingId === s.id ? "Deleting…" : "🗑 Delete"}
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -685,7 +773,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
 
         {/* Footer */}
         {!assigning && (
-          <div style={{ padding: "14px 24px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
+          <div style={{ padding: "14px 24px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, flexShrink: 0 }}>
             <Btn onClick={onEdit} variant="primary">Edit Profile</Btn>
             <Btn onClick={onDelete} variant="danger">Delete Patient</Btn>
           </div>
@@ -699,6 +787,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
     </div>
   );
 }
+
 
 // ─── Patients Tab ─────────────────────────────────────────────────────────────
 
