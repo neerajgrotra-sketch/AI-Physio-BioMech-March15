@@ -1089,13 +1089,13 @@ Reply with only the summary text, no JSON, no formatting.`;
           setGhostPhase("attempt");
           setGhostHoldMs(0);
         } else {
-          // After 5s — ghost slowly animates toward target to encourage next rep
-          // Ramps from 0 to 0.7 over the next 8s, then holds
-          const rampT = Math.min(0.7, (readyElapsedS - 5) / 8 * 0.7);
-          const encouragePulse = rampT + 0.1 * Math.sin(now / 600);
-          drawGhostDemo(ctx, lerpGhost(rst, tgt, Math.max(0, encouragePulse)), encouragePulse);
+          // After 5s — ghost ramps smoothly to full target over 6s, holds there
+          // Clear "come here" signal with no wobble — just a gentle glow pulse at top
+          const rampT = Math.min(1.0, (readyElapsedS - 5) / 6);
+          const holdPulse = rampT >= 1.0 ? 0.85 + 0.15 * Math.sin(now / 1200) : rampT;
+          drawGhostDemo(ctx, lerpGhost(rst, tgt, holdPulse), holdPulse);
           setGhostPhase("demo");
-          setGhostDemoProgress(Math.min(1, (readyElapsedS - 5) / 8));
+          setGhostDemoProgress(rampT);
         }
 
       } else if (infPhase === "lifting") {
