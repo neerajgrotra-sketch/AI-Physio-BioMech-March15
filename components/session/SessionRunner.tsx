@@ -1014,13 +1014,11 @@ Reply with only the summary text, no JSON, no formatting.`;
     function tick() {
       const canvas = ghostCanvasRef.current; if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
       const ctx = canvas.getContext("2d"); if (!ctx) return;
-      // Match canvas buffer to actual rendered size so ghost coords align with video
-      const parent = canvas.parentElement;
-      const W = parent?.clientWidth  || canvas.width;
-      const H = parent?.clientHeight || canvas.height;
+      // Use fixed 640x480 buffer — canvas is styled to 100% via CSS
+      // Landmarks are normalised 0-1 so they scale correctly with any W/H
+      const W = 640; const H = 480;
       if (canvas.width !== W || canvas.height !== H) {
-        canvas.width  = W;
-        canvas.height = H;
+        canvas.width = W; canvas.height = H;
       }
       const now = performance.now();
       const deltaS = Math.min((now - lastT) / 1000, 0.1); lastT = now;
@@ -1088,17 +1086,21 @@ Reply with only the summary text, no JSON, no formatting.`;
 
       } else if (infPhase === "lifting") {
         // Patient raising — ghost at target encouraging "get here"
-        drawGhost(ctx, tgt, score);
+        // Use a moderate score (0.5) for consistent blue-leaning colour
+        // Ghost score from computeMatchScore is unreliable when hips leave frame
+        drawGhost(ctx, tgt, 0.5);
         setGhostPhase("attempt");
         setGhostHoldMs(0);
 
       } else if (infPhase === "top" || infPhase === "holding") {
-        // At peak — target ghost green + hold countdown ring
-        drawGhost(ctx, tgt, Math.max(score, 0.85));
+        // At peak — always show green ghost + hold countdown ring
+        // Use 1.0 score so ghost is always green at this phase (inference loop confirmed peak)
+        drawGhost(ctx, tgt, 1.0);
         setGhostPhase("holding");
-        const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : holdTotal;
+        // holdRem = ms remaining; convert to elapsed for the ring progress
+        const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
         setGhostHoldMs(holdElapsed);
-        drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1);
+        drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1.0);
 
       } else if (infPhase === "lowering") {
         // Lowering — ghost pulses toward rest, guiding them down
@@ -1278,16 +1280,17 @@ Reply with only the summary text, no JSON, no formatting.`;
             {/* Ghost silhouette canvas — layered on top of pose skeleton */}
             <canvas
               ref={ghostCanvasRef}
+              width={640} height={480}
               style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
             />
-            {/* Match score badge — top left, hidden during hold (ring takes over) */}
+            {/* Phase indicator badge — top left, hidden during hold (ring takes over) */}
             {sessionQueue.sessionStarted && ghostPhase !== "holding" && (
-              <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(13,17,23,0.78)", backdropFilter: "blur(8px)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(124,198,255,0.3)", minWidth: 72 }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: ghostScore >= 0.85 ? "#4ade80" : "#7cc6ff", lineHeight: 1 }}>{Math.round(ghostScore*100)}%</div>
-                <div style={{ fontSize: 10, color: "#7d8590", marginTop: 2 }}>match</div>
-                <div style={{ marginTop: 5, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${Math.round(ghostScore*100)}%`, background: ghostScore >= 0.85 ? "#4ade80" : "#7cc6ff", borderRadius: 2, transition: "width 0.2s ease" }} />
-                </div>
+              <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(13,17,23,0.78)", backdropFilter: "blur(8px)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(124,198,255,0.3)" }}>
+                {ghostPhase === "demo" && <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa" }}>Watch</div>}
+                {ghostPhase === "attempt" && ghostPhaseInfRef.current === "lifting" && <div style={{ fontSize: 12, fontWeight: 700, color: "#7cc6ff" }}>Raise ↑</div>}
+                {ghostPhase === "attempt" && ghostPhaseInfRef.current === "lowering" && <div style={{ fontSize: 12, fontWeight: 700, color: "#fbbf24" }}>Lower ↓</div>}
+                {ghostPhase === "attempt" && ghostPhaseInfRef.current === "ready" && <div style={{ fontSize: 12, fontWeight: 700, color: "#9be7b0" }}>Ready</div>}
+                {ghostPhase === "rep_complete" && <div style={{ fontSize: 12, fontWeight: 700, color: "#4ade80" }}>✓ Rep!</div>}
               </div>
             )}
           </div>
