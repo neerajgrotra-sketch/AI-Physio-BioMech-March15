@@ -950,7 +950,6 @@ Reply with only the summary text, no JSON, no formatting.`;
     ghostHistRef.current = [];
     ghostLastFrameRef.current = null;
     startGhostLoop();
-    startAutoFrame();
   }
 
   function startAutoFrame() {
@@ -1068,9 +1067,10 @@ Reply with only the summary text, no JSON, no formatting.`;
         drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1);
 
       } else if (infPhase === "lowering") {
-        // Patient lowering — ghost lerps toward rest position, encouraging them down
-        const lowerT = 0.3 + 0.7 * Math.sin(now / 1500) * 0.3; // subtle rest-leaning pose
-        drawGhost(ctx, lerpGhost(tgt, rst, 0.4), score);
+        // Patient lowering — ghost animates toward rest, guiding them down
+        // Pulse between target and rest so ghost clearly shows "come down"
+        const lowerPulse = 0.4 + 0.35 * Math.sin(now / 800);
+        drawGhost(ctx, lerpGhost(tgt, rst, lowerPulse), score);
         setGhostPhase("attempt");
         setGhostHoldMs(0);
 
@@ -1096,11 +1096,7 @@ Reply with only the summary text, no JSON, no formatting.`;
     writeDebugLog("info", "CAMERA", "Camera stopped");
     inferenceLoop.stopLoop();
     cancelAnimationFrame(ghostAnimRef.current);
-    cancelAnimationFrame(vpRafRef.current);
     ghostLastFrameRef.current = null;
-    // Reset viewport transform
-    if (cameraContainerRef.current) cameraContainerRef.current.style.transform = "";
-    vpScaleRef.current=1; vpOXRef.current=0; vpOYRef.current=0;
     sessionQueue.endSession();
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
@@ -1242,8 +1238,7 @@ Reply with only the summary text, no JSON, no formatting.`;
             <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.4 }}>[{framingPanelState.severity}]</span>
           </div>
 
-          <div style={{ overflow: "hidden", borderRadius: 12 }}>
-          <div ref={cameraContainerRef} style={{ position: "relative", transition: "none" }}>
+          <div style={{ position: "relative" }}>
             <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
             <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
               <PoseCanvasOverlay frame={inferenceLoop.frame} />
@@ -1263,7 +1258,6 @@ Reply with only the summary text, no JSON, no formatting.`;
                 </div>
               </div>
             )}
-          </div>
           </div>
 
           {inferenceLoop.engineError && (
