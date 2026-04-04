@@ -1078,8 +1078,10 @@ Reply with only the summary text, no JSON, no formatting.`;
           setGhostPhase("demo");
           setGhostDemoProgress(t);
         } else {
-          // Between reps — ghost sits at rest, static. No animation.
-          drawGhost(ctx, rst, 0);
+          // Between reps — ghost at rest with soft pulse (alive but not teaching)
+          // Gentle 0.0-0.15 opacity pulse signals "ready when you are"
+          const waitPulse = 0.08 + 0.07 * Math.sin(now / 900);
+          drawGhost(ctx, rst, waitPulse);
           setGhostPhase("attempt");
           setGhostHoldMs(0);
         }
