@@ -462,6 +462,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostLastFrameRef = useRef<import("@/lib/pose/bodyFrame").BodyFrame | null>(null);
   const ghostRepCountRef  = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
   const ghostPrevPhaseRef = useRef<string>("");  // detect phase transitions for debug log
+  const ghostReadyStartRef = useRef<number>(0); // when ready phase started, for animation after wait
   const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
   const ghostStartRef  = useRef<number>(performance.now());
   const ghostHoldRef   = useRef<number|null>(null);
@@ -958,9 +959,10 @@ Reply with only the summary text, no JSON, no formatting.`;
     ghostLowRef.current = 0;
     ghostRepRef.current = false;
     ghostHistRef.current = [];
-    ghostLastFrameRef.current = null;
+    // Do NOT clear ghostLastFrameRef here — cached frame keeps ghost visible at rest
     ghostRepCountRef.current = 0;
     ghostPrevPhaseRef.current = "";
+    ghostReadyStartRef.current = performance.now();
     ghostLogRef.current = [];
     ghostSetLogRef.current?.([]);
     startGhostLoop();
@@ -1057,6 +1059,8 @@ Reply with only the summary text, no JSON, no formatting.`;
 
       // Log phase transitions only (not every frame)
       if (infPhase !== ghostPrevPhaseRef.current) {
+        // Track when ready phase starts (for animated encouragement after wait)
+        if (infPhase === "ready") ghostReadyStartRef.current = now;
         const entry: GhostLogEntry = {
           id: `${now}-${Math.random().toString(36).slice(2,5)}`,
           time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
@@ -1071,19 +1075,27 @@ Reply with only the summary text, no JSON, no formatting.`;
       }
 
       if (infPhase === "ready" || infPhase === "idle" || infPhase === "unknown") {
+        const readyElapsedS = (now - ghostReadyStartRef.current) / 1000;
         if (repsDone === 0) {
-          // First rep not yet started — animate ghost to teach the movement
+          // First rep — always animate to teach
           const t = 0.5 + 0.5 * Math.sin(now / 3500);
           drawGhostDemo(ctx, lerpGhost(rst, tgt, t), t);
           setGhostPhase("demo");
           setGhostDemoProgress(t);
-        } else {
-          // Between reps — ghost at rest with soft pulse (alive but not teaching)
-          // Gentle 0.0-0.15 opacity pulse signals "ready when you are"
+        } else if (readyElapsedS < 5) {
+          // First 5s after rep — ghost at rest, gentle pulse, patient catching breath
           const waitPulse = 0.08 + 0.07 * Math.sin(now / 900);
           drawGhost(ctx, rst, waitPulse);
           setGhostPhase("attempt");
           setGhostHoldMs(0);
+        } else {
+          // After 5s — ghost slowly animates toward target to encourage next rep
+          // Ramps from 0 to 0.7 over the next 8s, then holds
+          const rampT = Math.min(0.7, (readyElapsedS - 5) / 8 * 0.7);
+          const encouragePulse = rampT + 0.1 * Math.sin(now / 600);
+          drawGhostDemo(ctx, lerpGhost(rst, tgt, Math.max(0, encouragePulse)), encouragePulse);
+          setGhostPhase("demo");
+          setGhostDemoProgress(Math.min(1, (readyElapsedS - 5) / 8));
         }
 
       } else if (infPhase === "lifting") {
