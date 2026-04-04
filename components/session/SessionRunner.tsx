@@ -458,7 +458,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const vpOXRef     = useRef(0);
   const vpOYRef     = useRef(0);
   const vpRafRef    = useRef<number>(0);
-  const ghostAnimRef   = useRef<number>(0);
+  const ghostAnimRef      = useRef<number>(0);
+  const ghostLastFrameRef = useRef<import("@/lib/pose/bodyFrame").BodyFrame | null>(null);
   const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
   const ghostStartRef  = useRef<number>(performance.now());
   const ghostHoldRef   = useRef<number|null>(null);
@@ -947,6 +948,7 @@ Reply with only the summary text, no JSON, no formatting.`;
     ghostLowRef.current = 0;
     ghostRepRef.current = false;
     ghostHistRef.current = [];
+    ghostLastFrameRef.current = null;
     startGhostLoop();
     startAutoFrame();
   }
@@ -999,7 +1001,14 @@ Reply with only the summary text, no JSON, no formatting.`;
     function tick() {
       const canvas = ghostCanvasRef.current; if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
       const ctx = canvas.getContext("2d"); if (!ctx) return;
-      const W = canvas.width; const H = canvas.height;
+      // Match canvas buffer to actual rendered size so ghost coords align with video
+      const parent = canvas.parentElement;
+      const W = parent?.clientWidth  || canvas.width;
+      const H = parent?.clientHeight || canvas.height;
+      if (canvas.width !== W || canvas.height !== H) {
+        canvas.width  = W;
+        canvas.height = H;
+      }
       const now = performance.now();
       const deltaS = Math.min((now - lastT) / 1000, 0.1); lastT = now;
       ctx.clearRect(0, 0, W, H);
@@ -1012,7 +1021,10 @@ Reply with only the summary text, no JSON, no formatting.`;
       const slug = ghostSlugRef.current;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
-      const bodyFrame = getBodyFrame(lms as any, W, H);
+      const freshFrame = getBodyFrame(lms as any, W, H);
+      // Cache last valid frame — fall back to it when landmarks are partially occluded
+      if (freshFrame) ghostLastFrameRef.current = freshFrame;
+      const bodyFrame = freshFrame ?? ghostLastFrameRef.current;
       if (!bodyFrame) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
       const tb = POSE_BUILDERS[slug]; const rb = REST_BUILDERS[slug];
@@ -1085,6 +1097,7 @@ Reply with only the summary text, no JSON, no formatting.`;
     inferenceLoop.stopLoop();
     cancelAnimationFrame(ghostAnimRef.current);
     cancelAnimationFrame(vpRafRef.current);
+    ghostLastFrameRef.current = null;
     // Reset viewport transform
     if (cameraContainerRef.current) cameraContainerRef.current.style.transform = "";
     vpScaleRef.current=1; vpOXRef.current=0; vpOYRef.current=0;
@@ -1238,8 +1251,7 @@ Reply with only the summary text, no JSON, no formatting.`;
             {/* Ghost silhouette canvas — layered on top of pose skeleton */}
             <canvas
               ref={ghostCanvasRef}
-              width={640} height={480}
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
             />
             {/* Match score badge — top left, hidden during hold (ring takes over) */}
             {sessionQueue.sessionStarted && ghostPhase !== "holding" && (
