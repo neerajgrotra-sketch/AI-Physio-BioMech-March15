@@ -1041,11 +1041,14 @@ Reply with only the summary text, no JSON, no formatting.`;
       if (!frame || !frame.personDetected) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
       const rawLms = poseFrameToLandmarkArray(frame);
-      const lms = mirrorLandmarks(rawLms);
-      const slug = ghostSlugRef.current;
+      const lms    = mirrorLandmarks(rawLms);  // mirrored — for drawLive only
+      const slug   = ghostSlugRef.current;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
-      const freshFrame = getBodyFrame(lms as any, W, H);
+      // Ghost coordinate frame built from RAW (un-mirrored) landmarks.
+      // bodyFrame.ts axisRight = rsC -> lsC which is correct for un-mirrored coords.
+      // After we build the frame we flip ghost x-coords for canvas draw.
+      const freshFrame = getBodyFrame(rawLms as any, W, H);
       // SMOOTHED BODY FRAME: LERP the origin and axes to prevent ghost drift
       // when shoulder landmarks shift as arms raise overhead.
       // During active movement phases, freeze the frame (only update in ready phase).
@@ -1108,6 +1111,13 @@ Reply with only the summary text, no JSON, no formatting.`;
 
       const tgt = tb(bodyFrame);
       const rst = rb(bodyFrame);
+
+      // Mirror the canvas context so ghost aligns with the flipped video.
+      // CameraViewport applies transform:scaleX(-1) to the video element.
+      // We match that by drawing ghost in a flipped context.
+      ctx.save();
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
       const score = computeMatchScore(lms, slug, W, H);
       setGhostScore(score);
 
@@ -1197,6 +1207,8 @@ Reply with only the summary text, no JSON, no formatting.`;
         setGhostPhase("attempt");
       }
 
+      // Restore unflipped context for drawLive (lms already mirrored)
+      ctx.restore();
       drawLive(ctx, lms, W, H, score);
       ghostAnimRef.current = requestAnimationFrame(tick);
     }
