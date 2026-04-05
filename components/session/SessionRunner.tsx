@@ -1072,10 +1072,17 @@ Reply with only the summary text, no JSON, no formatting.`;
         } else {
           ghostSmoothedOriginX.current += (freshFrame.origin.x - ghostSmoothedOriginX.current) * L;
           ghostSmoothedOriginY.current += (freshFrame.origin.y - ghostSmoothedOriginY.current) * L;
-          ghostSmoothedADX.current += (freshFrame.axisDown.x - ghostSmoothedADX.current) * L;
-          ghostSmoothedADY.current += (freshFrame.axisDown.y - ghostSmoothedADY.current) * L;
-          ghostSmoothedARX.current += (freshFrame.axisRight.x - ghostSmoothedARX.current) * L;
-          ghostSmoothedARY.current += (freshFrame.axisRight.y - ghostSmoothedARY.current) * L;
+          // LERP axes then RE-NORMALIZE — lerped vectors lose unit length and orthogonality
+          const adX = ghostSmoothedADX.current + (freshFrame.axisDown.x - ghostSmoothedADX.current) * L;
+          const adY = ghostSmoothedADY.current + (freshFrame.axisDown.y - ghostSmoothedADY.current) * L;
+          const adM = Math.sqrt(adX*adX + adY*adY) || 1;
+          ghostSmoothedADX.current = adX / adM;
+          ghostSmoothedADY.current = adY / adM;
+          const arX = ghostSmoothedARX.current + (freshFrame.axisRight.x - ghostSmoothedARX.current) * L;
+          const arY = ghostSmoothedARY.current + (freshFrame.axisRight.y - ghostSmoothedARY.current) * L;
+          const arM = Math.sqrt(arX*arX + arY*arY) || 1;
+          ghostSmoothedARX.current = arX / arM;
+          ghostSmoothedARY.current = arY / arM;
           ghostSmoothedTorso.current += (freshFrame.torsoLen - ghostSmoothedTorso.current) * L;
           ghostSmoothedSW.current += (freshFrame.shoulderWidth - ghostSmoothedSW.current) * L;
         }
