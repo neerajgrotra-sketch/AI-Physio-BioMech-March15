@@ -459,7 +459,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const vpOYRef     = useRef(0);
   const vpRafRef    = useRef<number>(0);
   const ghostAnimRef      = useRef<number>(0);
-  const ghostLastFrameRef = useRef<import("@/lib/pose/bodyFrame").BodyFrame | null>(null);
+  const ghostLastFrameRef    = useRef<import("@/lib/pose/bodyFrame").BodyFrame | null>(null);
+  const ghostSmoothedOriginX = useRef<number>(0);
+  const ghostSmoothedOriginY = useRef<number>(0);
+  const ghostSmoothedADX     = useRef<number>(0);
+  const ghostSmoothedADY     = useRef<number>(1);
+  const ghostSmoothedARX     = useRef<number>(1);
+  const ghostSmoothedARY     = useRef<number>(0);
+  const ghostSmoothedTorso   = useRef<number>(0);
+  const ghostSmoothedSW      = useRef<number>(0);
+  const ghostFrameInitRef    = useRef<boolean>(false);
   const ghostRepCountRef  = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
   const ghostPrevPhaseRef = useRef<string>("");  // detect phase transitions for debug log
   const ghostReadyStartRef = useRef<number>(0); // when ready phase started, for animation after wait
@@ -960,6 +969,8 @@ Reply with only the summary text, no JSON, no formatting.`;
     ghostRepRef.current = false;
     ghostHistRef.current = [];
     // Do NOT clear ghostLastFrameRef here — cached frame keeps ghost visible at rest
+    // Reset frame smoothing so new exercise anchors cleanly
+    ghostFrameInitRef.current = false;
     ghostRepCountRef.current = 0;
     ghostPrevPhaseRef.current = "";
     ghostReadyStartRef.current = performance.now();
@@ -1035,10 +1046,62 @@ Reply with only the summary text, no JSON, no formatting.`;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
       const freshFrame = getBodyFrame(lms as any, W, H);
-      // Cache last valid frame — fall back to it when landmarks are partially occluded
-      if (freshFrame) ghostLastFrameRef.current = freshFrame;
-      const bodyFrame = freshFrame ?? ghostLastFrameRef.current;
-      if (!bodyFrame) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      // SMOOTHED BODY FRAME: LERP the origin and axes to prevent ghost drift
+      // when shoulder landmarks shift as arms raise overhead.
+      // During active movement phases, freeze the frame (only update in ready phase).
+      const currentInfPhase = ghostPhaseInfRef.current;
+      const canUpdateFrame = freshFrame !== null && (
+        currentInfPhase === "ready" || currentInfPhase === "idle" || currentInfPhase === "unknown"
+      );
+      if (freshFrame && canUpdateFrame) {
+        // LERP speed: fast during ready (0.15), frozen during active phases
+        const L = 0.15;
+        if (!ghostFrameInitRef.current) {
+          // First frame — snap immediately, no lerp
+          ghostSmoothedOriginX.current = freshFrame.origin.x;
+          ghostSmoothedOriginY.current = freshFrame.origin.y;
+          ghostSmoothedADX.current = freshFrame.axisDown.x;
+          ghostSmoothedADY.current = freshFrame.axisDown.y;
+          ghostSmoothedARX.current = freshFrame.axisRight.x;
+          ghostSmoothedARY.current = freshFrame.axisRight.y;
+          ghostSmoothedTorso.current = freshFrame.torsoLen;
+          ghostSmoothedSW.current = freshFrame.shoulderWidth;
+          ghostFrameInitRef.current = true;
+        } else {
+          ghostSmoothedOriginX.current += (freshFrame.origin.x - ghostSmoothedOriginX.current) * L;
+          ghostSmoothedOriginY.current += (freshFrame.origin.y - ghostSmoothedOriginY.current) * L;
+          ghostSmoothedADX.current += (freshFrame.axisDown.x - ghostSmoothedADX.current) * L;
+          ghostSmoothedADY.current += (freshFrame.axisDown.y - ghostSmoothedADY.current) * L;
+          ghostSmoothedARX.current += (freshFrame.axisRight.x - ghostSmoothedARX.current) * L;
+          ghostSmoothedARY.current += (freshFrame.axisRight.y - ghostSmoothedARY.current) * L;
+          ghostSmoothedTorso.current += (freshFrame.torsoLen - ghostSmoothedTorso.current) * L;
+          ghostSmoothedSW.current += (freshFrame.shoulderWidth - ghostSmoothedSW.current) * L;
+        }
+        ghostLastFrameRef.current = freshFrame;
+      } else if (freshFrame && !ghostFrameInitRef.current) {
+        // First frame even during active phase — snap
+        ghostSmoothedOriginX.current = freshFrame.origin.x;
+        ghostSmoothedOriginY.current = freshFrame.origin.y;
+        ghostSmoothedADX.current = freshFrame.axisDown.x;
+        ghostSmoothedADY.current = freshFrame.axisDown.y;
+        ghostSmoothedARX.current = freshFrame.axisRight.x;
+        ghostSmoothedARY.current = freshFrame.axisRight.y;
+        ghostSmoothedTorso.current = freshFrame.torsoLen;
+        ghostSmoothedSW.current = freshFrame.shoulderWidth;
+        ghostFrameInitRef.current = true;
+        ghostLastFrameRef.current = freshFrame;
+      }
+      // Build stable body frame from smoothed values
+      if (!ghostFrameInitRef.current) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      const lastF = ghostLastFrameRef.current!;
+      const bodyFrame: import("@/lib/pose/bodyFrame").BodyFrame = {
+        ...lastF,
+        origin:      { x: ghostSmoothedOriginX.current, y: ghostSmoothedOriginY.current },
+        axisDown:    { x: ghostSmoothedADX.current,     y: ghostSmoothedADY.current },
+        axisRight:   { x: ghostSmoothedARX.current,     y: ghostSmoothedARY.current },
+        torsoLen:    ghostSmoothedTorso.current,
+        shoulderWidth: ghostSmoothedSW.current,
+      };
 
       const tb = POSE_BUILDERS[slug]; const rb = REST_BUILDERS[slug];
       if (!tb || !rb) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
@@ -1145,6 +1208,7 @@ Reply with only the summary text, no JSON, no formatting.`;
     inferenceLoop.stopLoop();
     cancelAnimationFrame(ghostAnimRef.current);
     ghostLastFrameRef.current = null;
+    ghostFrameInitRef.current = false;
     sessionQueue.endSession();
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
