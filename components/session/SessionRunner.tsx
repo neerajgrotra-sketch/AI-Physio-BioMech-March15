@@ -41,8 +41,8 @@ import { usePatientContext } from "@/lib/patient/usePatientContext";
 import { createDefaultPatientProfile } from "@/lib/patient/patientTypes";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getBodyFrame } from "@/lib/pose/bodyFrame";
-import { POSE_BUILDERS, REST_BUILDERS, lerpGhost, computeMatchScore } from "@/lib/pose/poseBuilders";
-import { drawGhost, drawGhostDemo, drawLive, drawHoldRing } from "@/lib/pose/ghostRenderer";
+import { computeMatchScore } from "@/lib/pose/poseBuilders";
+import { drawLive, drawHoldRing } from "@/lib/pose/ghostRenderer";
 import { poseFrameToLandmarkArray, mirrorLandmarks } from "@/lib/pose/poseFrameBridge";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
@@ -1045,8 +1045,9 @@ Reply with only the summary text, no JSON, no formatting.`;
       const slug   = ghostSlugRef.current;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
-      // Use mirrored landmarks — axisRight in bodyFrame.ts is computed as
-      // rsC -> lsC which correctly points to patient-right in mirrored canvas space.
+      // Simple landmark-based ghost: anchor directly to detected shoulder positions.
+      // No body frame coordinate system — eliminates all drift and rotation bugs.
+      // We only show the relevant arm(s) for each exercise, nothing else.
       const freshFrame = getBodyFrame(lms as any, W, H);
       // SMOOTHED BODY FRAME: LERP the origin and axes to prevent ghost drift
       // when shoulder landmarks shift as arms raise overhead.
@@ -1112,101 +1113,159 @@ Reply with only the summary text, no JSON, no formatting.`;
         shoulderWidth: ghostSmoothedSW.current,
       };
 
-      const tb = POSE_BUILDERS[slug]; const rb = REST_BUILDERS[slug];
-      if (!tb || !rb) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
-
-      const tgt = tb(bodyFrame);
-      const rst = rb(bodyFrame);
-
-      // No canvas flip needed — ghost uses mirrored landmark coords
-      // which already match the video's scaleX(-1) transform.
+      // Draw landmark-anchored ghost arms — no pose builder, no body frame instability
+      // Anchor: detected shoulder(s) → ghost elbow → ghost wrist at target angle
       const score = computeMatchScore(lms, slug, W, H);
       setGhostScore(score);
 
-      const p = ghostPhaseRef.current;
-      const elapsed = (now - ghostStartRef.current) / 1000;
+      // Get shoulder landmarks (mirrored, normalised 0-1)
+      const lsLm = lms[11]; const rsLm = lms[12];
+      const lsVis = lsLm && (lsLm.visibility ?? 1) > 0.3;
+      const rsVis = rsLm && (rsLm.visibility ?? 1) > 0.3;
 
-      // Ghost is driven by inferenceLoop.phase — the clinical source of truth.
+      if (!lsVis && !rsVis) { drawLive(ctx, lms, W, H, score); ghostAnimRef.current = requestAnimationFrame(tick); return; }
+
+      // Estimate arm length from shoulder width (stable even during arm movement)
+      const shoulderWidthPx = (lsVis && rsVis)
+        ? Math.abs(rsLm.x * W - lsLm.x * W)
+        : W * 0.18;
+      const upperArmLen = shoulderWidthPx * 0.82;
+      const foreArmLen  = shoulderWidthPx * 0.72;
+
+      // Determine exercise type from slug
+      const isFlexion   = slug.includes("flexion");
+      const isAbduction = slug.includes("abduction");
+      const isRight     = slug.includes("_right") || slug.includes("bilateral");
+      const isLeft      = slug.includes("_left")  || slug.includes("bilateral");
+
       const infPhase  = ghostPhaseInfRef.current;
       const holdRem   = ghostHoldRemRef.current;
       const holdTotal = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+      const readyElapsedS = (now - ghostReadyStartRef.current) / 1000;
       const repsDone  = ghostRepCountRef.current;
 
-      // Log phase transitions only (not every frame)
+      // Ghost arm opacity/position based on phase
+      let ghostT = 0; // 0 = rest position, 1 = full target position
+      let ghostOpacity = 0.7;
+      let isHolding = false;
+
+      if (infPhase === "ready" || infPhase === "idle") {
+        if (repsDone === 0) {
+          ghostT = 0.5 + 0.5 * Math.sin(now / 3500); // teach animation
+          ghostOpacity = 0.6;
+        } else if (readyElapsedS < 5) {
+          ghostT = 0; ghostOpacity = 0.15 + 0.1 * Math.sin(now / 900);
+        } else {
+          ghostT = Math.min(1, (readyElapsedS - 5) / 6);
+          ghostOpacity = 0.7;
+        }
+      } else if (infPhase === "lifting") {
+        ghostT = 1; ghostOpacity = 0.7;
+      } else if (infPhase === "top" || infPhase === "holding") {
+        ghostT = 1; ghostOpacity = 0.85; isHolding = true;
+      } else if (infPhase === "lowering") {
+        ghostT = 0.4 + 0.35 * Math.sin(now / 800); ghostOpacity = 0.7;
+      } else if (infPhase === "complete" || infPhase === "bottom") {
+        ghostT = 1; ghostOpacity = 1.0;
+      } else {
+        ghostT = 1; ghostOpacity = 0.6;
+      }
+
+      // Phase indicator badge state
+      if (infPhase === "holding" || infPhase === "top") { setGhostPhase("holding"); const he = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0; setGhostHoldMs(he); }
+      else if (infPhase === "ready" && repsDone === 0) setGhostPhase("demo");
+      else if (infPhase === "complete") setGhostPhase("rep_complete");
+      else { setGhostPhase("attempt"); setGhostHoldMs(0); }
+
+      // Phase transition logging
       if (infPhase !== ghostPrevPhaseRef.current) {
-        // Track when ready phase starts (for animated encouragement after wait)
         if (infPhase === "ready") ghostReadyStartRef.current = now;
         const entry: GhostLogEntry = {
           id: `${now}-${Math.random().toString(36).slice(2,5)}`,
           time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
-          phase: infPhase,
-          score: Math.round(score * 100),
-          rep: repsDone,
-          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
+          phase: infPhase, score: Math.round(score * 100), rep: repsDone,
+          detail: `${ghostPrevPhaseRef.current} \u2192 ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
         };
         ghostPrevPhaseRef.current = infPhase;
         ghostLogRef.current = [entry, ...ghostLogRef.current].slice(0, 80);
         ghostSetLogRef.current?.([...ghostLogRef.current]);
       }
 
-      if (infPhase === "ready" || infPhase === "idle" || infPhase === "unknown") {
-        const readyElapsedS = (now - ghostReadyStartRef.current) / 1000;
-        if (repsDone === 0) {
-          // First rep — always animate to teach
-          const t = 0.5 + 0.5 * Math.sin(now / 3500);
-          drawGhostDemo(ctx, lerpGhost(rst, tgt, t), t);
-          setGhostPhase("demo");
-          setGhostDemoProgress(t);
-        } else if (readyElapsedS < 5) {
-          // First 5s after rep — ghost at rest, gentle pulse, patient catching breath
-          const waitPulse = 0.08 + 0.07 * Math.sin(now / 900);
-          drawGhost(ctx, rst, waitPulse);
-          setGhostPhase("attempt");
-          setGhostHoldMs(0);
-        } else {
-          // After 5s — ghost ramps smoothly to full target over 6s, holds there
-          // Clear "come here" signal with no wobble — just a gentle glow pulse at top
-          const rampT = Math.min(1.0, (readyElapsedS - 5) / 6);
-          const holdPulse = rampT >= 1.0 ? 0.85 + 0.15 * Math.sin(now / 1200) : rampT;
-          drawGhostDemo(ctx, lerpGhost(rst, tgt, holdPulse), holdPulse);
-          setGhostPhase("demo");
-          setGhostDemoProgress(rampT);
+      // Color: blue when moving toward target, green when holding
+      const r = Math.floor(96  + (74  - 96)  * ghostT);
+      const g = Math.floor(165 + (222 - 165) * ghostT);
+      const b = Math.floor(250 + (128 - 250) * ghostT);
+      const col = `rgba(${r},${g},${b},${ghostOpacity})`;
+
+      // Draw ghost arm function
+      const drawGhostArm = (shoulderX: number, shoulderY: number, dirX: number, dirY: number) => {
+        // Normalise direction
+        const dm = Math.sqrt(dirX*dirX + dirY*dirY) || 1;
+        const dx = dirX/dm; const dy = dirY/dm;
+        const elbowX = shoulderX + dx * upperArmLen;
+        const elbowY = shoulderY + dy * upperArmLen;
+        const wristX = elbowX + dx * foreArmLen;
+        const wristY = elbowY + dy * foreArmLen;
+
+        ctx.setLineDash([8, 5]);
+        ctx.lineWidth = 5;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = col;
+
+        // Shoulder to elbow
+        ctx.beginPath(); ctx.moveTo(shoulderX, shoulderY); ctx.lineTo(elbowX, elbowY); ctx.stroke();
+        // Elbow to wrist
+        ctx.beginPath(); ctx.moveTo(elbowX, elbowY); ctx.lineTo(wristX, wristY); ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Joints
+        for (const [px, py] of [[shoulderX, shoulderY], [elbowX, elbowY], [wristX, wristY]]) {
+          ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI*2);
+          ctx.fillStyle = col; ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.stroke();
         }
+      };
 
-      } else if (infPhase === "lifting") {
-        // Patient raising — ghost at target encouraging "get here"
-        // Use a moderate score (0.5) for consistent blue-leaning colour
-        // Ghost score from computeMatchScore is unreliable when hips leave frame
-        drawGhost(ctx, tgt, 0.5);
-        setGhostPhase("attempt");
-        setGhostHoldMs(0);
+      // Target direction vectors (canvas space, mirrored):
+      // Flexion: arm goes UP (negative y) and slightly forward
+      // Abduction: arm goes OUT SIDEWAYS (positive x for right, negative x for left)
+      // ghostT interpolates from rest (0) to target (1)
 
-      } else if (infPhase === "top" || infPhase === "holding") {
-        // At peak — always show green ghost + hold countdown ring
-        // Use 1.0 score so ghost is always green at this phase (inference loop confirmed peak)
-        drawGhost(ctx, tgt, 1.0);
-        setGhostPhase("holding");
-        // holdRem = ms remaining; convert to elapsed for the ring progress
+      if (isFlexion) {
+        // Rest direction: arm down (0, 1). Target: arm up (-0.15, -1) slight forward lean
+        const restDX = 0.15; const restDY = 0.9;
+        const tgtDX  = 0.1;  const tgtDY  = -1.0;
+        const dX = restDX + (tgtDX - restDX) * ghostT;
+        const dY = restDY + (tgtDY - restDY) * ghostT;
+        if (isRight && rsVis) drawGhostArm(rsLm.x * W, rsLm.y * H, dX, dY);
+        if (isLeft  && lsVis) drawGhostArm(lsLm.x * W, lsLm.y * H, -dX, dY);
+      } else if (isAbduction) {
+        // Rest direction: arm down. Target: arm out sideways (horizontal)
+        const restDY = 0.9; const tgtDY = 0.05;
+        const restDX = 0.15; const tgtDX = 1.0;
+        const dY = restDY + (tgtDY - restDY) * ghostT;
+        const dX = restDX + (tgtDX - restDX) * ghostT;
+        if (isRight && rsVis) drawGhostArm(rsLm.x * W, rsLm.y * H,  dX, dY);
+        if (isLeft  && lsVis) drawGhostArm(lsLm.x * W, lsLm.y * H, -dX, dY);
+      } else if (slug === "sit_to_stand") {
+        // For sit-to-stand just show a gentle upward arrow at torso level
+        if (lsVis && rsVis) {
+          const midX = (lsLm.x + rsLm.x) * 0.5 * W;
+          const midY = rsLm.y * H + shoulderWidthPx * 0.5;
+          drawGhostArm(midX, midY, 0, -1);
+        }
+      } else if (slug === "knee_extension_right") {
+        // Ghost leg extending out from knee — use hip as anchor
+        const rhLm = lms[24];
+        if (rhLm && (rhLm.visibility ?? 1) > 0.3) {
+          drawGhostArm(rhLm.x * W, rhLm.y * H, 1.0, 0.1);
+        }
+      }
+
+      // Hold ring
+      if (isHolding) {
         const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
-        setGhostHoldMs(holdElapsed);
         drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1.0);
-
-      } else if (infPhase === "lowering") {
-        // Lowering — ghost pulses toward rest, guiding them down
-        const lowerPulse = 0.4 + 0.35 * Math.sin(now / 800);
-        drawGhost(ctx, lerpGhost(tgt, rst, lowerPulse), score);
-        setGhostPhase("attempt");
-        setGhostHoldMs(0);
-
-      } else if (infPhase === "complete" || infPhase === "bottom") {
-        // Rep complete — green flash at target
-        drawGhost(ctx, tgt, 1);
-        setGhostPhase("rep_complete");
-        setGhostHoldMs(0);
-
-      } else {
-        drawGhost(ctx, tgt, score);
-        setGhostPhase("attempt");
       }
 
       drawLive(ctx, lms, W, H, score);
