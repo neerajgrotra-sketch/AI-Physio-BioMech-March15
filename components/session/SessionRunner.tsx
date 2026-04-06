@@ -439,6 +439,14 @@ interface SessionRunnerProps {
   patientName?: string;
 }
 
+// Rep cycle debug entry — defined outside component to avoid SWC issues
+type RepCycleEntry = {
+  id: string; time: string; event: string;
+  metricValue: number | null; targetThreshold: number | null;
+  startThreshold: number | null; romAcceptableMin: number | null;
+  romNormDegrees: number | null; repCount: number; detail: string;
+};
+
 export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
@@ -504,14 +512,6 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostSetLogRef.current = setGhostLog;
 
   // ── Rep Cycle Debug Log ────────────────────────────────────────────────
-  // Captures every hold start and rep complete/fail with full threshold data
-  // so we can tune rom_acceptable_min without guessing.
-  type RepCycleEntry = {
-    id: string; time: string; event: string;
-    metricValue: number | null; targetThreshold: number | null;
-    startThreshold: number | null; romAcceptableMin: number | null;
-    romNormDegrees: number | null; repCount: number; detail: string;
-  };
   const [repCycleLog, setRepCycleLog] = useState<RepCycleEntry[]>([]);
   const [repCycleOpen, setRepCycleOpen] = useState(false);
   const repCycleLogRef = useRef<RepCycleEntry[]>([]);
