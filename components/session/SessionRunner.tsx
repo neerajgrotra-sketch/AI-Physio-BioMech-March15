@@ -1954,8 +1954,7 @@ Reply with only the summary text, no JSON, no formatting.`;
             <span style={{ fontSize: 10, color: "#4ade80", opacity: 0.7 }}>metric · threshold · romMin · romNorm</span>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={e => { e.stopPropagation(); const text = repCycleLog.map(e => `[${e.time}] [${e.event}] rep=${e.repCount} | ${e.detail}`).join("
-"); copyToClipboard(text); }} style={{ background: "rgba(74,222,128,0.15)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy</button>
+            <button onClick={e => { e.stopPropagation(); const text = repCycleLog.map(e => `[${e.time}] [${e.event}] rep=${e.repCount} | ${e.detail}`).join("\n"); copyToClipboard(text); }} style={{ background: "rgba(74,222,128,0.15)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy</button>
             <button onClick={e => { e.stopPropagation(); repCycleLogRef.current=[]; setRepCycleLog([]); }} style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>Clear</button>
             <span style={{ color: "#7a88a8", fontSize: 12 }}>{repCycleOpen ? "▲" : "▼"}</span>
           </div>
