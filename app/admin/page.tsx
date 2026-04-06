@@ -1362,6 +1362,26 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                   {t.is_vanilla && <Badge label="System" color={accent} />}
                 </div>
                 {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
+
+                {/* Position + Camera + ROM info */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {(t as any).patient_position && (
+                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: C.textMuted }}>
+                      {(t as any).patient_position === "standing" ? "Standing" : (t as any).patient_position === "seated" ? "Seated" : "Standing / Seated"}
+                    </span>
+                  )}
+                  {(t as any).camera_position && (
+                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: C.textMuted }}>
+                      Camera: {(t as any).camera_position === "front" ? "Front" : (t as any).camera_position === "side" ? "Side" : "Front or Side"}
+                    </span>
+                  )}
+                  {(t as any).rom_norm_degrees != null && (
+                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: accent }}>
+                      ROM {(t as any).rom_start_degrees ?? 0}° → {(t as any).rom_norm_degrees}°{(t as any).rom_acceptable_min != null ? ` (min ${(t as any).rom_acceptable_min}°)` : ""}
+                    </span>
+                  )}
+                </div>
+
                 <div style={{
                   display: "flex", gap: 8, padding: "6px 10px",
                   background: accentDim, borderRadius: 6,
@@ -1426,6 +1446,55 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                 <Field label="Default Reps"><Input type="number" value={editingTemplate.default_reps} onChange={v => setEditingTemplate(t => t ? { ...t, default_reps: parseInt(v) || 1 } : t)} min={1} max={30} /></Field>
                 <Field label="Hold (s)"><Input type="number" value={msToSeconds(editingTemplate.default_hold_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_hold_ms: secondsToMs(v) } : t)} min={0} max={10} step={0.5} /></Field>
                 <Field label="Rest (s)"><Input type="number" value={msToSeconds(editingTemplate.default_rest_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_rest_ms: secondsToMs(v) } : t)} min={0} max={30} step={0.5} /></Field>
+              </div>
+
+              {/* ── Clinical Setup ── */}
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Clinical Setup</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <Field label="Patient Position" hint="Required starting position">
+                    <select value={(editingTemplate as any).patient_position ?? "standing"} onChange={e => setEditingTemplate(t => t ? { ...t, patient_position: e.target.value } as any : t)}
+                      style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 12px", color: C.text, fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%" }}>
+                      <option value="standing">Standing</option>
+                      <option value="seated">Seated</option>
+                      <option value="either">Either</option>
+                    </select>
+                  </Field>
+                  <Field label="Camera Position" hint="Best angle for measurement">
+                    <select value={(editingTemplate as any).camera_position ?? "front"} onChange={e => setEditingTemplate(t => t ? { ...t, camera_position: e.target.value } as any : t)}
+                      style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 12px", color: C.text, fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%" }}>
+                      <option value="front">Front-facing</option>
+                      <option value="side">Side-on</option>
+                      <option value="either">Either</option>
+                    </select>
+                  </Field>
+                </div>
+              </div>
+
+              {/* ── Range of Motion ── */}
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Range of Motion</div>
+                <div style={{ fontSize: 11, color: C.textDim, marginBottom: 12 }}>
+                  {(editingTemplate as any).rom_unit === "normalised" ? "Scale 0–100 (normalised — used for sit to stand)" : "Degrees — start → target → minimum acceptable for rep to count"}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+                  <Field label="Start">
+                    <Input type="number" value={(editingTemplate as any).rom_start_degrees ?? 0}
+                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_start_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} />
+                  </Field>
+                  <Field label="Target (norm)">
+                    <Input type="number" value={(editingTemplate as any).rom_norm_degrees ?? ""}
+                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_norm_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} />
+                  </Field>
+                  <Field label="Min acceptable">
+                    <Input type="number" value={(editingTemplate as any).rom_acceptable_min ?? ""}
+                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_acceptable_min: parseInt(v) || 0 } as any : t)} min={0} max={180} />
+                  </Field>
+                  <Field label="Max (ceiling)">
+                    <Input type="number" value={(editingTemplate as any).rom_max_degrees ?? ""}
+                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_max_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} />
+                  </Field>
+                </div>
               </div>
             </div>
             {/* Sticky footer — always visible regardless of scroll position */}
