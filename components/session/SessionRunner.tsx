@@ -1113,31 +1113,24 @@ Reply with only the summary text, no JSON, no formatting.`;
         shoulderWidth: ghostSmoothedSW.current,
       };
 
-      // ── Ghost v17: Landmark-anchored overlay ─────────────────────────────────
-      // Draw the ghost DIRECTLY on the patient's own detected landmarks.
-      // This solves the arm-length mismatch completely — the ghost IS the
-      // patient's skeleton, coloured blue→green as they approach the target.
+      // ── Ghost v18: Fixed-direction, shoulder-anchored ────────────────────────
+      // Architecture:
+      // 1. Shoulder pixel position = anchor (most stable landmark always)
+      // 2. Arm length = shoulderWidth * ratio, measured during ready phase
+      //    and FROZEN once active — never recalculated during movement
+      // 3. Direction vectors are fixed per exercise type — no elbow/wrist
+      //    landmarks used in ghost geometry at all
+      // 4. ghostT (0→1) drives animation smoothly via infPhase
       //
-      // For the teaching animation (rep=0, ready phase) we synthesise a target
-      // position by computing the actual arm length from detected landmarks,
-      // then animating the wrist along that arc. Size is always correct because
-      // it's derived from the patient's own shoulder→wrist distance.
-
+      // This eliminates all size instability and tilt/snap issues.
+      // The ghost is a clean leading indicator, not a follower.
       const score = computeMatchScore(lms, slug, W, H);
       setGhostScore(score);
 
-      // ── Landmark indices (BlazePose) ──────────────────────────────────────
-      // Upper body: 11=L_shoulder 12=R_shoulder 13=L_elbow 14=R_elbow 15=L_wrist 16=R_wrist
-      // Lower body: 23=L_hip 24=R_hip 25=L_knee 26=R_knee 27=L_ankle 28=R_ankle
+      // Shoulder anchors — most reliable landmarks at all arm positions
       const lsLm = lms[11]; const rsLm = lms[12];
-      const leLm = lms[13]; const reLm = lms[14];
-      const lwLm = lms[15]; const rwLm = lms[16];
-      const lhLm = lms[23]; const rhLm = lms[24];
-      const lkLm = lms[25]; const rkLm = lms[26];
-      const laLm = lms[27]; const raLm = lms[28];
-
-      const vis = (lm: typeof lsLm) => !!lm && (lm.visibility ?? 1) > 0.25;
-      const lsVis = vis(lsLm); const rsVis = vis(rsLm);
+      const lsVis = !!lsLm && (lsLm.visibility ?? 1) > 0.25;
+      const rsVis = !!rsLm && (rsLm.visibility ?? 1) > 0.25;
 
       if (!lsVis && !rsVis) {
         drawLive(ctx, lms, W, H, score);
@@ -1145,7 +1138,14 @@ Reply with only the summary text, no JSON, no formatting.`;
         return;
       }
 
-      // ── Exercise type flags ───────────────────────────────────────────────
+      // ── Arm length — computed from smoothed shoulder width, frozen when active ──
+      // shoulderWidth is already smoothed and frozen during active phases
+      // by the body frame system above. Use it directly.
+      const swPx = ghostSmoothedSW.current * W;
+      const upperArmPx = swPx * 1.05; // tuned for correct visual proportion
+      const foreArmPx  = swPx * 0.90;
+
+      // ── Exercise flags ────────────────────────────────────────────────────
       const isFlexion   = slug.includes("flexion");
       const isAbduction = slug.includes("abduction");
       const isKnee      = slug.includes("knee_extension");
@@ -1153,225 +1153,208 @@ Reply with only the summary text, no JSON, no formatting.`;
       const isRight     = slug.includes("_right") || slug.includes("bilateral");
       const isLeft      = slug.includes("_left")  || slug.includes("bilateral");
 
-      // ── Phase state ───────────────────────────────────────────────────────
+      // ── Phase → ghostT ────────────────────────────────────────────────────
       const infPhase  = ghostPhaseInfRef.current;
       const holdRem   = ghostHoldRemRef.current;
       const holdTotal = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
       const readyElapsedS = (now - ghostReadyStartRef.current) / 1000;
       const repsDone  = ghostRepCountRef.current;
 
-      let ghostT = 0;
-      let ghostOpacity = 0.7;
+      let ghostT = 0; // 0 = rest, 1 = full target
+      let ghostOpacity = 0.72;
       let isHolding = false;
 
       if (infPhase === "ready" || infPhase === "idle") {
         if (repsDone === 0) {
-          ghostT = 0.5 + 0.5 * Math.sin(now / 3500); // teaching animation
+          // Teaching animation: oscillate 0→1→0 so patient sees the movement
+          ghostT = 0.5 + 0.5 * Math.sin(now / 3200);
           ghostOpacity = 0.65;
         } else if (readyElapsedS < 5) {
-          ghostT = 0; ghostOpacity = 0.15 + 0.1 * Math.sin(now / 900);
+          // Between reps: ghost dims at rest
+          ghostT = 0; ghostOpacity = 0.18 + 0.08 * Math.sin(now / 900);
         } else {
+          // Encouragement ramp after 5s rest: ghost rises to invite next rep
           ghostT = Math.min(1, (readyElapsedS - 5) / 6);
-          ghostOpacity = 0.7;
+          ghostOpacity = 0.72;
         }
       } else if (infPhase === "lifting") {
-        ghostT = 1; ghostOpacity = 0.7;
+        ghostT = 1; ghostOpacity = 0.72; // ghost at target: "get here"
       } else if (infPhase === "top" || infPhase === "holding") {
-        ghostT = 1; ghostOpacity = 0.85; isHolding = true;
+        ghostT = 1; ghostOpacity = 0.88; isHolding = true;
       } else if (infPhase === "lowering") {
-        ghostT = 0.4 + 0.35 * Math.sin(now / 800); ghostOpacity = 0.7;
+        // Pulse between 40% and 75% to signal "come back down"
+        ghostT = 0.4 + 0.35 * Math.sin(now / 800); ghostOpacity = 0.72;
       } else if (infPhase === "complete" || infPhase === "bottom") {
         ghostT = 1; ghostOpacity = 1.0;
       } else {
         ghostT = 1; ghostOpacity = 0.6;
       }
 
-      // Phase badge state
+      // ── Phase badge ───────────────────────────────────────────────────────
       if (infPhase === "holding" || infPhase === "top") {
         setGhostPhase("holding");
-        const he = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
-        setGhostHoldMs(he);
+        setGhostHoldMs(holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0);
       } else if (infPhase === "ready" && repsDone === 0) setGhostPhase("demo");
       else if (infPhase === "complete") setGhostPhase("rep_complete");
       else { setGhostPhase("attempt"); setGhostHoldMs(0); }
 
-      // Phase transition logging
+      // ── Phase transition log ──────────────────────────────────────────────
       if (infPhase !== ghostPrevPhaseRef.current) {
         if (infPhase === "ready") ghostReadyStartRef.current = now;
         const entry: GhostLogEntry = {
           id: `${now}-${Math.random().toString(36).slice(2,5)}`,
           time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
           phase: infPhase, score: Math.round(score * 100), rep: repsDone,
-          detail: `${ghostPrevPhaseRef.current} \u2192 ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
+          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
         };
         ghostPrevPhaseRef.current = infPhase;
         ghostLogRef.current = [entry, ...ghostLogRef.current].slice(0, 80);
         ghostSetLogRef.current?.([...ghostLogRef.current]);
       }
 
-      // ── Colour: blue at rest/lifting, green at target/hold ────────────────
+      // ── Colour: blue → green as ghostT goes 0 → 1 ────────────────────────
       const r = Math.floor(96  + (74  - 96)  * ghostT);
       const g = Math.floor(165 + (222 - 165) * ghostT);
       const b = Math.floor(250 + (128 - 250) * ghostT);
       const col = `rgba(${r},${g},${b},${ghostOpacity})`;
 
-      // ── Core drawing helper ───────────────────────────────────────────────
-      // Draw a 3-joint limb through actual detected landmark positions.
-      // p0=proximal joint, p1=mid joint, p2=distal joint — all in pixel coords.
-      const drawLimbThrough = (
-        p0x: number, p0y: number,
-        p1x: number, p1y: number,
-        p2x: number, p2y: number,
+      // ── Core arm drawing: shoulder → elbow → wrist ────────────────────────
+      // All positions computed from shoulder anchor + fixed direction vectors.
+      // No other landmarks involved. Size from frozen shoulderWidth only.
+      const drawArm = (
+        shX: number, shY: number, // shoulder pixel position (anchor)
+        dX: number, dY: number,   // interpolated direction (normalised)
       ) => {
-        ctx.setLineDash([8, 5]);
+        const dm = Math.sqrt(dX*dX + dY*dY) || 1;
+        const nx = dX/dm; const ny = dY/dm;
+        const elX = shX + nx * upperArmPx;
+        const elY = shY + ny * upperArmPx;
+        const wrX = elX + nx * foreArmPx;
+        const wrY = elY + ny * foreArmPx;
+
+        ctx.setLineDash([9, 5]);
         ctx.lineWidth = 6;
         ctx.lineCap = "round";
         ctx.strokeStyle = col;
-        ctx.beginPath(); ctx.moveTo(p0x, p0y); ctx.lineTo(p1x, p1y); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(p1x, p1y); ctx.lineTo(p2x, p2y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(shX, shY); ctx.lineTo(elX, elY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(elX, elY); ctx.lineTo(wrX, wrY); ctx.stroke();
         ctx.setLineDash([]);
-        for (const [px, py] of [[p0x, p0y], [p1x, p1y], [p2x, p2y]]) {
-          ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2);
+
+        for (const [px, py, r2] of [[shX, shY, 9], [elX, elY, 8], [wrX, wrY, 7]] as [number,number,number][]) {
+          ctx.beginPath(); ctx.arc(px, py, r2, 0, Math.PI*2);
           ctx.fillStyle = col; ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.stroke();
+          ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
         }
       };
 
-      // ── Teaching animation helper ─────────────────────────────────────────
-      // When ghostT is animated (rep=0 teaching), we need synthetic joint positions.
-      // Derive arm/leg length from the patient's own detected landmarks so size
-      // is always correct regardless of camera distance.
-      // Computes elbow and wrist positions by rotating along a target arc.
-      const synthLimb = (
-        shX: number, shY: number,        // shoulder/hip anchor (detected)
-        detElX: number, detElY: number,  // detected elbow at rest
-        detWrX: number, detWrY: number,  // detected wrist at rest
-        tgtDirX: number, tgtDirY: number // normalised target direction at ghostT=1
-      ): [number,number,number,number,number,number] => {
-        // Measure actual upper and lower limb segment lengths from detected landmarks
-        const uelX = detElX - shX; const uelY = detElY - shY;
-        const upperLen = Math.sqrt(uelX*uelX + uelY*uelY) || W * 0.12;
-        const fxL = detWrX - detElX; const fyL = detWrY - detElY;
-        const foreLen = Math.sqrt(fxL*fxL + fyL*fyL) || W * 0.10;
-
-        // Rest direction: from shoulder toward detected elbow
-        const rdm = Math.sqrt(uelX*uelX + uelY*uelY) || 1;
-        const rdX = uelX/rdm; const rdY = uelY/rdm;
-
-        // Interpolate direction rest→target by ghostT
-        const tm = Math.sqrt(tgtDirX*tgtDirX + tgtDirY*tgtDirY) || 1;
-        const tdX = tgtDirX/tm; const tdY = tgtDirY/tm;
-        const iX = rdX + (tdX - rdX) * ghostT;
-        const iY = rdY + (tdY - rdY) * ghostT;
-        const im = Math.sqrt(iX*iX + iY*iY) || 1;
-        const dX = iX/im; const dY = iY/im;
-
-        const elX = shX + dX * upperLen;
-        const elY = shY + dY * upperLen;
-        const wrX = elX + dX * foreLen;
-        const wrY = elY + dY * foreLen;
-        return [shX, shY, elX, elY, wrX, wrY];
-      };
-
-      // ── Per-exercise ghost rendering ───────────────────────────────────────
+      // ── Fixed direction vectors per exercise type ─────────────────────────
+      // REST direction: arm hangs straight down along torso
+      // Canvas Y increases downward, so rest = (small_x, positive_y)
+      // TARGET direction: depends on exercise
+      // Flexion target:   arm sweeps forward and UP → (slight_x, -1)
+      // Abduction target: arm sweeps OUT sideways  → (±1, slight_y)
+      //
+      // ghostT interpolates REST → TARGET linearly.
+      // Vectors are normalised inside drawArm so magnitudes don't matter.
 
       if (isFlexion || isAbduction) {
-        // ── Upper body: shoulder → elbow → wrist ──────────────────────────
-        // During active movement (lifting/holding/lowering): draw directly on
-        // detected elbow + wrist landmarks — perfect size match always.
-        // During teaching animation (rep=0): synthesise positions from actual
-        // arm length measured from detected landmarks.
+        const restDX = 0.12; // slight outward lean at rest (natural arm hang)
+        const restDY = 1.0;  // straight down
 
-        // Target direction for teaching animation
-        // Flexion: arm sweeps forward and up. Abduction: arm sweeps out sideways.
-        const tgtDirX = isFlexion ? 0.08 : 1.0;
-        const tgtDirY = isFlexion ? -1.0 : 0.05;
+        const tgtDX = isFlexion ? 0.06 : 1.0;
+        const tgtDY = isFlexion ? -1.0 : 0.04;
 
-        // Ghost leads the patient — always use synthLimb driven by ghostT.
-        // This means the ghost animates to the target position and the patient
-        // must match it. We never snap to detected wrist position because that
-        // would make the hold ring trigger the moment the arm starts moving.
-        // ghostT is driven by infPhase: 0=rest, 1=full target.
+        const dX = restDX + (tgtDX - restDX) * ghostT;
+        const dY = restDY + (tgtDY - restDY) * ghostT;
 
-        if (isRight && rsVis) {
-          const reVis = vis(reLm); const rwVis = vis(rwLm);
-          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-            rsLm.x*W, rsLm.y*H,
-            reVis ? reLm.x*W : rsLm.x*W + W*0.01, reVis ? reLm.y*H : rsLm.y*H + H*0.12,
-            rwVis ? rwLm.x*W : rsLm.x*W + W*0.02, rwVis ? rwLm.y*H : rsLm.y*H + H*0.24,
-            tgtDirX, tgtDirY
-          );
-          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-        }
-
-        if (isLeft && lsVis) {
-          const leVis = vis(leLm); const lwVis = vis(lwLm);
-          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-            lsLm.x*W, lsLm.y*H,
-            leVis ? leLm.x*W : lsLm.x*W - W*0.01, leVis ? leLm.y*H : lsLm.y*H + H*0.12,
-            lwVis ? lwLm.x*W : lsLm.x*W - W*0.02, lwVis ? lwLm.y*H : lsLm.y*H + H*0.24,
-            isAbduction ? -tgtDirX : tgtDirX, tgtDirY
-          );
-          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-        }
+        if (isRight && rsVis) drawArm(rsLm.x * W, rsLm.y * H,  dX, dY);
+        if (isLeft  && lsVis) drawArm(lsLm.x * W, lsLm.y * H, -dX, dY);
 
       } else if (isKnee) {
-        // ── Lower body: hip → knee → ankle ────────────────────────────────
-        // Knee extension: leg straightens from ~90deg to 0deg (full extension).
-        // Target direction: leg extends forward/downward from knee.
-        // Teaching animation: ghostT animates from detected bent position to extended.
+        // ── Knee extension: hip anchor → leg extends forward ────────────────
+        // Use hip landmarks as anchor (seated exercise).
+        // Lower body landmarks: 23=L_hip 24=R_hip 25=L_knee 26=R_knee
+        const lhLm = lms[23]; const rhLm = lms[24];
+        const lkLm = lms[25]; const rkLm = lms[26];
+        const hipVis = (lm: typeof lhLm) => !!lm && (lm.visibility ?? 1) > 0.25;
 
-        if (isRight && vis(rhLm) && vis(rkLm)) {
-          const raVis = vis(raLm);
-          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-            rhLm.x*W, rhLm.y*H,
-            rkLm.x*W, rkLm.y*H,
-            raVis ? raLm.x*W : rkLm.x*W + W*0.02, raVis ? raLm.y*H : rkLm.y*H + H*0.15,
-            0.3, 1.0
-          );
-          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
+        // Knee segment length from hip→knee if visible, else estimate from sw
+        const kneeLenR = (hipVis(rhLm) && hipVis(rkLm))
+          ? Math.sqrt(Math.pow((rkLm!.x - rhLm!.x)*W, 2) + Math.pow((rkLm!.y - rhLm!.y)*H, 2))
+          : upperArmPx;
+        const kneeLenL = (hipVis(lhLm) && hipVis(lkLm))
+          ? Math.sqrt(Math.pow((lkLm!.x - lhLm!.x)*W, 2) + Math.pow((lkLm!.y - lhLm!.y)*H, 2))
+          : upperArmPx;
+        const shinLen = foreArmPx;
+
+        // Rest: lower leg hangs down from knee. Target: leg extends forward.
+        const kRestDX = 0.1; const kRestDY = 1.0;
+        const kTgtDX  = 0.85; const kTgtDY = 0.1;
+        const kdX = kRestDX + (kTgtDX - kRestDX) * ghostT;
+        const kdY = kRestDY + (kTgtDY - kRestDY) * ghostT;
+        const kdm = Math.sqrt(kdX*kdX + kdY*kdY) || 1;
+        const knx = kdX/kdm; const kny = kdY/kdm;
+
+        const drawLeg = (
+          hipX: number, hipY: number,
+          kneeX: number, kneeY: number,
+          legLen: number, flipX: number
+        ) => {
+          // Thigh: hip to knee (drawn on detected positions — thigh doesn't move in knee ext)
+          ctx.setLineDash([9, 5]); ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.strokeStyle = col;
+          ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
+          ctx.setLineDash([]);
+          // Shin: knee → extended position (animated by ghostT)
+          const shX2 = kneeX + knx * flipX * legLen;
+          const shY2 = kneeY + kny * shinLen;
+          ctx.setLineDash([9, 5]); ctx.strokeStyle = col;
+          ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(shX2, shY2); ctx.stroke();
+          ctx.setLineDash([]);
+          for (const [px, py] of [[hipX, hipY], [kneeX, kneeY], [shX2, shY2]]) {
+            ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI*2);
+            ctx.fillStyle = col; ctx.fill();
+            ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
+          }
+        };
+
+        if (isRight && hipVis(rhLm) && hipVis(rkLm)) {
+          drawLeg(rhLm!.x*W, rhLm!.y*H, rkLm!.x*W, rkLm!.y*H, kneeLenR, 1);
         }
-
-        if (isLeft && vis(lhLm) && vis(lkLm)) {
-          const laVis = vis(laLm);
-          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-            lhLm.x*W, lhLm.y*H,
-            lkLm.x*W, lkLm.y*H,
-            laVis ? laLm.x*W : lkLm.x*W - W*0.02, laVis ? laLm.y*H : lkLm.y*H + H*0.15,
-            -0.3, 1.0
-          );
-          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
+        if (isLeft && hipVis(lhLm) && hipVis(lkLm)) {
+          drawLeg(lhLm!.x*W, lhLm!.y*H, lkLm!.x*W, lkLm!.y*H, kneeLenL, -1);
         }
 
       } else if (isSTS) {
-        // ── Sit to Stand: highlight hip→knee chain ─────────────────────────
-        // Show both legs rising. ghostT=0 seated, ghostT=1 standing.
-        // Draw on detected landmarks when active; synthesise for teaching.
-        const lhVis = vis(lhLm); const rhVis = vis(rhLm);
-        const lkVis = vis(lkLm); const rkVis = vis(rkLm);
-        const laVis = vis(laLm); const raVis = vis(raLm);
+        // ── Sit to Stand: show body rising ───────────────────────────────────
+        const lhLm = lms[23]; const rhLm = lms[24];
+        const hVis = (lm: typeof lhLm) => !!lm && (lm.visibility ?? 1) > 0.25;
 
-        if (rhVis && rkVis) {
-          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-            rhLm.x*W, rhLm.y*H,
-            rkLm.x*W, rkLm.y*H,
-            raVis ? raLm.x*W : rkLm.x*W, raVis ? raLm.y*H : rkLm.y*H + H*0.15,
-            0.0, -1.0
-          );
-          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-        }
-        if (lhVis && lkVis) {
-          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-            lhLm.x*W, lhLm.y*H,
-            lkLm.x*W, lkLm.y*H,
-            laVis ? laLm.x*W : lkLm.x*W, laVis ? laLm.y*H : lkLm.y*H + H*0.15,
-            0.0, -1.0
-          );
-          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
+        if (hVis(lhLm) && hVis(rhLm)) {
+          const hipMidX = (lhLm!.x + rhLm!.x) * 0.5 * W;
+          const hipMidY = (lhLm!.y + rhLm!.y) * 0.5 * H;
+          const riseLen = ghostSmoothedTorso.current * H * ghostT;
+          const arrowTipY = hipMidY - riseLen * 0.8;
+
+          ctx.setLineDash([9, 5]); ctx.lineWidth = 8; ctx.strokeStyle = col; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(hipMidX, hipMidY); ctx.lineTo(hipMidX, arrowTipY); ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Arrowhead
+          ctx.beginPath();
+          ctx.moveTo(hipMidX, arrowTipY);
+          ctx.lineTo(hipMidX - 16, arrowTipY + 20);
+          ctx.lineTo(hipMidX + 16, arrowTipY + 20);
+          ctx.closePath();
+          ctx.fillStyle = col; ctx.fill();
+
+          // Joint dot at hip
+          ctx.beginPath(); ctx.arc(hipMidX, hipMidY, 9, 0, Math.PI*2);
+          ctx.fillStyle = col; ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
         }
       }
 
-      // ── Hold ring ─────────────────────────────────────────────────────────
+      // ── Hold countdown ring ───────────────────────────────────────────────
       if (isHolding) {
         const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
         drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1.0);
