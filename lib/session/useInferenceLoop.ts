@@ -272,6 +272,17 @@ export function useInferenceLoop() {
   // Track hold entry time for holdElapsedMs calculation
   const holdEnteredAtMsRef = useRef<number | null>(null);
 
+  // ── Dynamic rest baseline calibration ─────────────────────────────────────
+  // Sample activeMetricValue for 2s after exercise start to compute the true
+  // resting position. TensorFlow's angle measurements have a ~20° offset at
+  // rest that varies with camera distance and patient posture.
+  // Once calibrated, all thresholds are offset from the real baseline.
+  const calibrationSamplesRef = useRef<number[]>([]);
+  const calibrationCompleteRef = useRef<boolean>(false);
+  const calibrationBaselineRef = useRef<number>(0);
+  const calibrationStartMsRef = useRef<number | null>(null);
+  const calibrationWindowMs = 2000; // sample for 2 seconds
+
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
   >("idle");
@@ -302,6 +313,12 @@ export function useInferenceLoop() {
     featureHistoryRef.current.clear();
     prevPhaseRef.current = "ready";
     holdEnteredAtMsRef.current = null;
+
+    // Reset calibration for new exercise
+    calibrationSamplesRef.current = [];
+    calibrationCompleteRef.current = false;
+    calibrationBaselineRef.current = 0;
+    calibrationStartMsRef.current = null;
 
     setPhase("ready");
     setRepCount(0);
@@ -421,6 +438,74 @@ export function useInferenceLoop() {
 
             setFeatures(smoothedFeatures);
 
+            // ── Dynamic Rest Baseline Calibration ─────────────────────────
+            // During the first 2 seconds while the patient is at rest (before
+            // any movement is detected), sample the active metric to compute
+            // the true resting baseline. This corrects TensorFlow's ~20° offset
+            // which varies with camera distance, posture, and patient size.
+            // All thresholds are then offset from this real measured baseline.
+            if (normalized.personDetected && !calibrationCompleteRef.current) {
+              // Start calibration timer on first detected person
+              if (calibrationStartMsRef.current === null) {
+                calibrationStartMsRef.current = nowMs;
+              }
+
+              // Compute raw metric value for this frame
+              const rawMetricForCalib = (() => {
+                const id = activePrescription.id;
+                const f = smoothedFeatures;
+                if (id.includes("flexion")) {
+                  if (id.includes("right")) return f.rightArmElevationDeg;
+                  if (id.includes("left")) return f.leftArmElevationDeg;
+                  return f.bilateralArmElevationDeg;
+                }
+                if (id.includes("abduction")) {
+                  if (id.includes("right")) return f.rightArmElevationDeg;
+                  if (id.includes("left")) return f.leftArmElevationDeg;
+                  return f.bilateralArmElevationDeg;
+                }
+                return null;
+              })();
+
+              if (rawMetricForCalib !== null && rawMetricForCalib > 0) {
+                calibrationSamplesRef.current.push(rawMetricForCalib);
+              }
+
+              // After calibration window, compute baseline and update thresholds
+              if (nowMs - calibrationStartMsRef.current >= calibrationWindowMs) {
+                const samples = calibrationSamplesRef.current;
+                if (samples.length >= 5) {
+                  // Use median to avoid outliers
+                  const sorted = [...samples].sort((a, b) => a - b);
+                  const baseline = sorted[Math.floor(sorted.length / 2)];
+                  calibrationBaselineRef.current = baseline;
+                  calibrationCompleteRef.current = true;
+
+                  // Recompute thresholds offset from real resting baseline
+                  // romStart (e.g. 0°) is the anatomical rest — baseline is what
+                  // TensorFlow actually reads at that anatomical position.
+                  // We shift all thresholds by (baseline - romStart).
+                  const romStart = (activePrescription as any).romStartDegrees ?? 0;
+                  const offset = Math.max(0, baseline - romStart);
+                  const romMin = (activePrescription as any).romAcceptableMin;
+                  const romNorm = (activePrescription as any).romNormDegrees;
+
+                  if (romMin != null) {
+                    // targetThreshold: must exceed romMin + offset
+                    (activePrescription as any).startThreshold = romStart + offset + 10;
+                    (activePrescription as any).targetThreshold = romMin + offset;
+                    (activePrescription as any).finishThreshold = romStart + offset - 5;
+                    activePrescription.startThreshold = romStart + offset + 10;
+                    activePrescription.targetThreshold = romMin + offset;
+                    activePrescription.finishThreshold = Math.max(0, romStart + offset - 5);
+                  }
+                } else {
+                  // Not enough samples — mark complete to avoid blocking
+                  calibrationCompleteRef.current = true;
+                }
+              }
+            }
+
             // Run movement interpreter
             const output = interpretMovement(
               repStateRef.current,
@@ -492,15 +577,32 @@ export function useInferenceLoop() {
 
             // ------------------------------------------------
             // ARM ELEVATION FOR OBSERVATION BUFFER
+            // Maps to the correct metric based on exercise slug.
+            // Supports both old slugs and new DB slugs.
             // ------------------------------------------------
-            const armElevation =
-              activePrescription.id === "right-arm-raise"
-                ? smoothedFeatures.rightArmElevationDeg
-                : activePrescription.id === "left-arm-raise"
-                ? smoothedFeatures.leftArmElevationDeg
-                : activePrescription.id === "both-arm-raise"
-                ? smoothedFeatures.bilateralArmElevationDeg
-                : null;
+            const armElevation = (() => {
+              const id = activePrescription.id;
+              const f = smoothedFeatures;
+              // Shoulder flexion — forward raise
+              if (id === "right-arm-raise" || id === "shoulder_flexion_right")
+                return f.rightArmElevationDeg;
+              if (id === "left-arm-raise" || id === "shoulder_flexion_left")
+                return f.leftArmElevationDeg;
+              if (id === "both-arm-raise" || id === "shoulder_flexion_bilateral")
+                return f.bilateralArmElevationDeg;
+              // Shoulder abduction — sideways raise (uses same elevation metric)
+              if (id === "shoulder_abduction_right") return f.rightArmElevationDeg;
+              if (id === "shoulder_abduction_left") return f.leftArmElevationDeg;
+              if (id === "shoulder_abduction_bilateral") return f.bilateralArmElevationDeg;
+              // Knee extension — use elbow angle as proxy for knee angle
+              if (id === "knee_extension_right") return f.rightElbowAngleDeg;
+              if (id === "knee_extension_left") return f.leftElbowAngleDeg;
+              if (id === "knee_extension_bilateral") return f.bilateralArmElevationDeg;
+              // Sit to stand — hip height
+              if (id === "sit-to-stand" || id === "sit_to_stand")
+                return f.hipHeightNormalized != null ? f.hipHeightNormalized * 100 : null;
+              return null;
+            })();
 
             // ------------------------------------------------
             // FEED COACHING BRAIN (every frame)
