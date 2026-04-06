@@ -83,6 +83,10 @@ function buildPrescription(
   // finishThreshold: back near rest — ends the rep cycle
   // targetValue:     the prescribed goal (rom_norm_degrees) — used by ghost + AI
   //
+  // Note: these are PRE-calibration values. useInferenceLoop applies a dynamic
+  // rest baseline offset during the first 2s of each exercise, overwriting
+  // startThreshold, targetThreshold, finishThreshold on the prescription object.
+  //
   // For descending metrics (knee extension: 90° → 0°), values invert in the
   // interpreter — we pass the DB values as-is and let the state machine handle it.
   const _romStart = romStart ?? 0;
@@ -91,6 +95,15 @@ function buildPrescription(
   const startThresh = _romStart + 15;
   const targetThresh = _romMin;
   const finishThresh = _romStart + 20;
+
+  // Extra fields passed through for calibration and debug logging
+  // These are NOT part of ExercisePrescription type but are attached as extras
+  // and accessed via (prescription as any).romAcceptableMin etc.
+  const extraRomFields = {
+    romAcceptableMin: _romMin,
+    romNormDegrees: _romNorm,
+    romStartDegrees: _romStart,
+  };
 
   const coaching = {
     intro: (coachingStrings.intro as string) ?? 'Begin when ready.',
@@ -144,6 +157,7 @@ function buildPrescription(
           angleGuidance: 'Lateral or frontal view. Ensure the right arm and shoulder are clearly visible.',
           measurementRisk: 'Without clear visibility of right arm landmarks, elevation cannot be measured accurately.',
         },
+        ...extraRomFields,
       };
 
     case 'shoulder_flexion_left':
@@ -176,6 +190,7 @@ function buildPrescription(
           angleGuidance: 'Lateral or frontal view. Ensure the left arm and shoulder are clearly visible.',
           measurementRisk: 'Without clear visibility of left arm landmarks, elevation cannot be measured accurately.',
         },
+        ...extraRomFields,
       };
 
     case 'shoulder_flexion_bilateral':
@@ -208,6 +223,7 @@ function buildPrescription(
           angleGuidance: 'Frontal view required. Patient must be centred with both arms fully visible.',
           measurementRisk: 'Without bilateral landmark visibility, asymmetry cannot be detected.',
         },
+        ...extraRomFields,
       };
 
     // ── Shoulder Abduction (frontal plane — arm out to the side and up) ──────
@@ -241,6 +257,7 @@ function buildPrescription(
           angleGuidance: 'Frontal view essential. Patient must face the camera directly for accurate abduction measurement.',
           measurementRisk: 'Lateral camera angle will misrepresent frontal plane abduction. Frontal view required.',
         },
+        ...extraRomFields,
       };
 
     case 'shoulder_abduction_left':
@@ -273,6 +290,7 @@ function buildPrescription(
           angleGuidance: 'Frontal view essential. Patient must face the camera directly for accurate abduction measurement.',
           measurementRisk: 'Lateral camera angle will misrepresent frontal plane abduction. Frontal view required.',
         },
+        ...extraRomFields,
       };
 
     case 'shoulder_abduction_bilateral':
@@ -305,6 +323,7 @@ function buildPrescription(
           angleGuidance: 'Frontal view required. Patient must be centred with both arms fully visible.',
           measurementRisk: 'Without bilateral landmark visibility, asymmetry cannot be detected.',
         },
+        ...extraRomFields,
       };
 
     // ── Sit to Stand (sagittal plane — transfer) ──────────────────────────────
@@ -337,6 +356,7 @@ function buildPrescription(
           angleGuidance: 'Side or frontal view. Full body must be visible from head to feet.',
           measurementRisk: 'Without hip and knee visibility, standing position cannot be confirmed.',
         },
+        ...extraRomFields,
       };
 
     // ── Knee Extension (sagittal plane — seated) ──────────────────────────────
@@ -370,6 +390,73 @@ function buildPrescription(
           angleGuidance: 'Side view preferred. Right leg must be fully visible from hip to ankle.',
           measurementRisk: 'Without visibility of right knee and ankle, extension cannot be measured.',
         },
+        ...extraRomFields,
+      };
+
+    case 'knee_extension_left':
+      return {
+        id: 'knee_extension_left',
+        name: displayName,
+        category: 'lower_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'left',
+        posture: 'seated',
+        description: 'Seated: straighten your left knee fully, hold at full extension, then lower slowly.',
+        repTarget: repOverride,
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'leftElbowAngleDeg', label: 'full extension', targetValue: _romNorm, tolerance: 12 },
+        hold,
+        tempo: { label: 'slow and controlled' },
+        qualityLimits: { maxTorsoLeanDeg: 20 },
+        coaching,
+        framing: {
+          intent: 'Measure left knee extension arc from seated flexion to full extension.',
+          landmarks: { critical: ['left_hip', 'left_knee', 'left_ankle'], supporting: ['right_hip', 'right_knee', 'left_shoulder'], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: 'lower_body',
+          peakMovementZone: 'knee_extension',
+          requiredStartPosture: 'seated',
+          bilateralSymmetryRequired: false,
+          angleGuidance: 'Side view preferred. Left leg must be fully visible from hip to ankle.',
+          measurementRisk: 'Without visibility of left knee and ankle, extension cannot be measured.',
+        },
+        ...extraRomFields,
+      };
+
+    case 'knee_extension_bilateral':
+      return {
+        id: 'knee_extension_bilateral',
+        name: displayName,
+        category: 'lower_body',
+        template: 'raise_hold_lower',
+        runtimeStatus: 'active',
+        side: 'both',
+        posture: 'seated',
+        description: 'Seated: straighten both knees simultaneously, hold at full extension, then lower slowly.',
+        repTarget: repOverride,
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'kneeToHipExtensionScore', label: 'full extension', targetValue: _romNorm, tolerance: 12 },
+        hold,
+        tempo: { label: 'slow and controlled' },
+        qualityLimits: { maxTorsoLeanDeg: 20 },
+        coaching,
+        framing: {
+          intent: 'Measure bilateral knee extension from seated to full extension.',
+          landmarks: { critical: ['left_hip', 'left_knee', 'right_hip', 'right_knee'], supporting: ['left_ankle', 'right_ankle', 'left_shoulder', 'right_shoulder'], reference: [] },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: 'lower_body',
+          peakMovementZone: 'knee_extension',
+          requiredStartPosture: 'seated',
+          bilateralSymmetryRequired: true,
+          angleGuidance: 'Front view preferred for bilateral. Both legs must be equally visible.',
+          measurementRisk: 'Without equal visibility of both knees, bilateral asymmetry cannot be detected.',
+        },
+        ...extraRomFields,
       };
 
     default:
