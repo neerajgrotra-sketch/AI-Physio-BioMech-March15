@@ -33,6 +33,9 @@ interface SupabaseSessionBlock {
       default_reps: number;
       default_hold_ms: number;
       coaching_strings: Record<string, unknown>;
+      rom_start_degrees: number | null;
+      rom_norm_degrees: number | null;
+      rom_acceptable_min: number | null;
     } | null;
   }[];
 }
@@ -47,6 +50,9 @@ interface SupabasePrescriptionExercise {
     default_reps: number;
     default_hold_ms: number;
     coaching_strings: Record<string, unknown>;
+    rom_start_degrees: number | null;
+    rom_norm_degrees: number | null;
+    rom_acceptable_min: number | null;
   } | null;
 }
 
@@ -60,12 +66,31 @@ function buildPrescription(
   displayName: string,
   repOverride: number,
   holdMsOverride: number,
-  coachingStrings: Record<string, unknown>
+  coachingStrings: Record<string, unknown>,
+  romStart: number | null = null,
+  romNorm: number | null = null,
+  romAcceptableMin: number | null = null,
 ): ExercisePrescription | null {
   const hold = {
     required: holdMsOverride > 0,
     durationMs: holdMsOverride,
   };
+
+  // ── ROM-driven thresholds ──────────────────────────────────────────────────
+  // Derived from DB values so every exercise uses clinically correct targets.
+  // startThreshold:  just above rest position — triggers rep detection
+  // targetThreshold: minimum degrees for a rep to count (rom_acceptable_min)
+  // finishThreshold: back near rest — ends the rep cycle
+  // targetValue:     the prescribed goal (rom_norm_degrees) — used by ghost + AI
+  //
+  // For descending metrics (knee extension: 90° → 0°), values invert in the
+  // interpreter — we pass the DB values as-is and let the state machine handle it.
+  const _romStart = romStart ?? 0;
+  const _romNorm = romNorm ?? 160;
+  const _romMin = romAcceptableMin ?? 110;
+  const startThresh = _romStart + 15;
+  const targetThresh = _romMin;
+  const finishThresh = _romStart + 20;
 
   const coaching = {
     intro: (coachingStrings.intro as string) ?? 'Begin when ready.',
@@ -100,10 +125,10 @@ function buildPrescription(
         posture: 'either',
         description: 'Lift your right arm forward and up to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
-        startThreshold: 25,
-        targetThreshold: 70,
-        finishThreshold: 30,
-        target: { metric: 'rightArmElevationDeg', label: 'shoulder height', targetValue: 70, tolerance: 10 },
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'rightArmElevationDeg', label: 'shoulder height', targetValue: _romNorm, tolerance: 10 },
         hold,
         tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15, maxOppositeArmElevationDeg: 35 },
@@ -132,10 +157,10 @@ function buildPrescription(
         posture: 'either',
         description: 'Lift your left arm forward and up to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
-        startThreshold: 25,
-        targetThreshold: 70,
-        finishThreshold: 30,
-        target: { metric: 'leftArmElevationDeg', label: 'shoulder height', targetValue: 70, tolerance: 10 },
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'leftArmElevationDeg', label: 'shoulder height', targetValue: _romNorm, tolerance: 10 },
         hold,
         tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15, maxOppositeArmElevationDeg: 35 },
@@ -164,10 +189,10 @@ function buildPrescription(
         posture: 'either',
         description: 'Lift both arms forward and up to shoulder height simultaneously, hold, then lower slowly.',
         repTarget: repOverride,
-        startThreshold: 25,
-        targetThreshold: 70,
-        finishThreshold: 30,
-        target: { metric: 'bilateralArmElevationDeg', label: 'shoulder height', targetValue: 70, tolerance: 10 },
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'bilateralArmElevationDeg', label: 'shoulder height', targetValue: _romNorm, tolerance: 10 },
         hold,
         tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15 },
@@ -197,10 +222,10 @@ function buildPrescription(
         posture: 'either',
         description: 'Lift your right arm out to the side and up to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
-        startThreshold: 25,
-        targetThreshold: 70,
-        finishThreshold: 30,
-        target: { metric: 'rightArmAbductionDeg', label: 'shoulder height', targetValue: 90, tolerance: 12 },
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'rightArmAbductionDeg', label: 'shoulder height', targetValue: _romNorm, tolerance: 12 },
         hold,
         tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 15, maxShoulderTiltDeg: 12, maxOppositeArmElevationDeg: 30 },
@@ -229,10 +254,10 @@ function buildPrescription(
         posture: 'either',
         description: 'Lift your left arm out to the side and up to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
-        startThreshold: 25,
-        targetThreshold: 70,
-        finishThreshold: 30,
-        target: { metric: 'leftArmAbductionDeg', label: 'shoulder height', targetValue: 90, tolerance: 12 },
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'leftArmAbductionDeg', label: 'shoulder height', targetValue: _romNorm, tolerance: 12 },
         hold,
         tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 15, maxShoulderTiltDeg: 12, maxOppositeArmElevationDeg: 30 },
@@ -261,10 +286,10 @@ function buildPrescription(
         posture: 'either',
         description: 'Lift both arms out to the sides simultaneously to shoulder height, hold, then lower slowly.',
         repTarget: repOverride,
-        startThreshold: 25,
-        targetThreshold: 70,
-        finishThreshold: 30,
-        target: { metric: 'bilateralArmAbductionDeg', label: 'shoulder height', targetValue: 90, tolerance: 12 },
+        startThreshold: startThresh,
+        targetThreshold: targetThresh,
+        finishThreshold: finishThresh,
+        target: { metric: 'bilateralArmAbductionDeg', label: 'shoulder height', targetValue: _romNorm, tolerance: 12 },
         hold,
         tempo: { label: 'slow and controlled' },
         qualityLimits: { maxTorsoLeanDeg: 15, maxShoulderTiltDeg: 12 },
@@ -393,7 +418,10 @@ export default async function SessionPage({ searchParams }: PageProps) {
             display_name,
             default_reps,
             default_hold_ms,
-            coaching_strings
+            coaching_strings,
+            rom_start_degrees,
+            rom_norm_degrees,
+            rom_acceptable_min
           )
         )
       ),
@@ -406,7 +434,10 @@ export default async function SessionPage({ searchParams }: PageProps) {
           display_name,
           default_reps,
           default_hold_ms,
-          coaching_strings
+          coaching_strings,
+          rom_start_degrees,
+          rom_norm_degrees,
+          rom_acceptable_min
         )
       )
     `)
@@ -481,7 +512,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         if (!tmpl) continue;
         const reps = ex.reps_override ?? tmpl.default_reps;
         const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings);
+        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null);
         if (prescription) mapped.push(prescription);
       }
     }
@@ -496,7 +527,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
       if (!tmpl) continue;
       const reps = ex.reps_override ?? tmpl.default_reps;
       const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-      const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings);
+      const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null);
       if (prescription) mapped.push(prescription);
     }
   }
