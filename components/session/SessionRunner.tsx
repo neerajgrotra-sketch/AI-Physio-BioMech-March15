@@ -439,7 +439,10 @@ interface SessionRunnerProps {
   patientName?: string;
 }
 
-// Rep cycle debug entry — defined outside component to avoid SWC issues
+// Debug entry types — defined outside component to avoid SWC/Next.js issues
+type GhostLogEntry = { id: string; time: string; phase: string; score: number; rep: number; detail: string; };
+
+// Rep cycle debug entry
 type RepCycleEntry = {
   id: string; time: string; event: string;
   metricValue: number | null; targetThreshold: number | null;
@@ -504,7 +507,6 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [debugLog, setDebugLog] = useState<DebugLogEntry[]>([]);
   const [debugOpen, setDebugOpen] = useState(false);
   // Ghost intelligence log — phase transitions and key events
-  type GhostLogEntry = { id: string; time: string; phase: string; score: number; rep: number; detail: string; };
   const [ghostLog, setGhostLog] = useState<GhostLogEntry[]>([]);
   const [ghostLogOpen, setGhostLogOpen] = useState(false);
   const ghostLogRef = useRef<GhostLogEntry[]>([]);
