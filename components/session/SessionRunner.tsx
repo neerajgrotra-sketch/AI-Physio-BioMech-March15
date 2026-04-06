@@ -1141,7 +1141,8 @@ Reply with only the summary text, no JSON, no formatting.`;
       // ── Arm length — computed from smoothed shoulder width, frozen when active ──
       // shoulderWidth is already smoothed and frozen during active phases
       // by the body frame system above. Use it directly.
-      const swPx = ghostSmoothedSW.current * W;
+      // shoulderWidth from bodyFrame is already in canvas pixels — do NOT multiply by W
+      const swPx = ghostSmoothedSW.current;
       const upperArmPx = swPx * 1.05; // tuned for correct visual proportion
       const foreArmPx  = swPx * 0.90;
 
