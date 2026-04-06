@@ -1287,44 +1287,32 @@ Reply with only the summary text, no JSON, no formatting.`;
         const tgtDirX = isFlexion ? 0.08 : 1.0;
         const tgtDirY = isFlexion ? -1.0 : 0.05;
 
+        // Ghost leads the patient — always use synthLimb driven by ghostT.
+        // This means the ghost animates to the target position and the patient
+        // must match it. We never snap to detected wrist position because that
+        // would make the hold ring trigger the moment the arm starts moving.
+        // ghostT is driven by infPhase: 0=rest, 1=full target.
+
         if (isRight && rsVis) {
           const reVis = vis(reLm); const rwVis = vis(rwLm);
-          if (reVis && rwVis && infPhase !== "ready") {
-            // Active: draw directly on detected landmarks
-            drawLimbThrough(
-              rsLm.x*W, rsLm.y*H,
-              reLm.x*W, reLm.y*H,
-              rwLm.x*W, rwLm.y*H
-            );
-          } else {
-            // Teaching or fallback: synthesise from actual arm length
-            const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-              rsLm.x*W, rsLm.y*H,
-              reVis ? reLm.x*W : rsLm.x*W + W*0.01, reVis ? reLm.y*H : rsLm.y*H + H*0.12,
-              rwVis ? rwLm.x*W : rsLm.x*W + W*0.02, rwVis ? rwLm.y*H : rsLm.y*H + H*0.24,
-              tgtDirX, tgtDirY
-            );
-            drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-          }
+          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
+            rsLm.x*W, rsLm.y*H,
+            reVis ? reLm.x*W : rsLm.x*W + W*0.01, reVis ? reLm.y*H : rsLm.y*H + H*0.12,
+            rwVis ? rwLm.x*W : rsLm.x*W + W*0.02, rwVis ? rwLm.y*H : rsLm.y*H + H*0.24,
+            tgtDirX, tgtDirY
+          );
+          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
         }
 
         if (isLeft && lsVis) {
           const leVis = vis(leLm); const lwVis = vis(lwLm);
-          if (leVis && lwVis && infPhase !== "ready") {
-            drawLimbThrough(
-              lsLm.x*W, lsLm.y*H,
-              leLm.x*W, leLm.y*H,
-              lwLm.x*W, lwLm.y*H
-            );
-          } else {
-            const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-              lsLm.x*W, lsLm.y*H,
-              leVis ? leLm.x*W : lsLm.x*W - W*0.01, leVis ? leLm.y*H : lsLm.y*H + H*0.12,
-              lwVis ? lwLm.x*W : lsLm.x*W - W*0.02, lwVis ? lwLm.y*H : lsLm.y*H + H*0.24,
-              isAbduction ? -tgtDirX : tgtDirX, tgtDirY
-            );
-            drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-          }
+          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
+            lsLm.x*W, lsLm.y*H,
+            leVis ? leLm.x*W : lsLm.x*W - W*0.01, leVis ? leLm.y*H : lsLm.y*H + H*0.12,
+            lwVis ? lwLm.x*W : lsLm.x*W - W*0.02, lwVis ? lwLm.y*H : lsLm.y*H + H*0.24,
+            isAbduction ? -tgtDirX : tgtDirX, tgtDirY
+          );
+          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
         }
 
       } else if (isKnee) {
@@ -1335,42 +1323,24 @@ Reply with only the summary text, no JSON, no formatting.`;
 
         if (isRight && vis(rhLm) && vis(rkLm)) {
           const raVis = vis(raLm);
-          if (raVis && infPhase !== "ready") {
-            // Active: draw on detected hip, knee, ankle
-            drawLimbThrough(
-              rhLm.x*W, rhLm.y*H,
-              rkLm.x*W, rkLm.y*H,
-              raLm.x*W, raLm.y*H
-            );
-          } else {
-            // Teaching: animate from bent to straight — target is leg extended forward
-            const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-              rhLm.x*W, rhLm.y*H,
-              rkLm.x*W, rkLm.y*H,
-              raVis ? raLm.x*W : rkLm.x*W + W*0.02, raVis ? raLm.y*H : rkLm.y*H + H*0.15,
-              0.3, 1.0  // target: leg extending slightly forward and down
-            );
-            drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-          }
+          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
+            rhLm.x*W, rhLm.y*H,
+            rkLm.x*W, rkLm.y*H,
+            raVis ? raLm.x*W : rkLm.x*W + W*0.02, raVis ? raLm.y*H : rkLm.y*H + H*0.15,
+            0.3, 1.0
+          );
+          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
         }
 
         if (isLeft && vis(lhLm) && vis(lkLm)) {
           const laVis = vis(laLm);
-          if (laVis && infPhase !== "ready") {
-            drawLimbThrough(
-              lhLm.x*W, lhLm.y*H,
-              lkLm.x*W, lkLm.y*H,
-              laLm.x*W, laLm.y*H
-            );
-          } else {
-            const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-              lhLm.x*W, lhLm.y*H,
-              lkLm.x*W, lkLm.y*H,
-              laVis ? laLm.x*W : lkLm.x*W - W*0.02, laVis ? laLm.y*H : lkLm.y*H + H*0.15,
-              -0.3, 1.0
-            );
-            drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-          }
+          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
+            lhLm.x*W, lhLm.y*H,
+            lkLm.x*W, lkLm.y*H,
+            laVis ? laLm.x*W : lkLm.x*W - W*0.02, laVis ? laLm.y*H : lkLm.y*H + H*0.15,
+            -0.3, 1.0
+          );
+          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
         }
 
       } else if (isSTS) {
@@ -1382,30 +1352,22 @@ Reply with only the summary text, no JSON, no formatting.`;
         const laVis = vis(laLm); const raVis = vis(raLm);
 
         if (rhVis && rkVis) {
-          if (raVis && infPhase !== "ready") {
-            drawLimbThrough(rhLm.x*W, rhLm.y*H, rkLm.x*W, rkLm.y*H, raLm.x*W, raLm.y*H);
-          } else {
-            const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-              rhLm.x*W, rhLm.y*H,
-              rkLm.x*W, rkLm.y*H,
-              raVis ? raLm.x*W : rkLm.x*W, raVis ? raLm.y*H : rkLm.y*H + H*0.15,
-              0.0, -1.0  // target: rise upward
-            );
-            drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-          }
+          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
+            rhLm.x*W, rhLm.y*H,
+            rkLm.x*W, rkLm.y*H,
+            raVis ? raLm.x*W : rkLm.x*W, raVis ? raLm.y*H : rkLm.y*H + H*0.15,
+            0.0, -1.0
+          );
+          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
         }
         if (lhVis && lkVis) {
-          if (laVis && infPhase !== "ready") {
-            drawLimbThrough(lhLm.x*W, lhLm.y*H, lkLm.x*W, lkLm.y*H, laLm.x*W, laLm.y*H);
-          } else {
-            const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
-              lhLm.x*W, lhLm.y*H,
-              lkLm.x*W, lkLm.y*H,
-              laVis ? laLm.x*W : lkLm.x*W, laVis ? laLm.y*H : lkLm.y*H + H*0.15,
-              0.0, -1.0
-            );
-            drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
-          }
+          const [p0x,p0y,p1x,p1y,p2x,p2y] = synthLimb(
+            lhLm.x*W, lhLm.y*H,
+            lkLm.x*W, lkLm.y*H,
+            laVis ? laLm.x*W : lkLm.x*W, laVis ? laLm.y*H : lkLm.y*H + H*0.15,
+            0.0, -1.0
+          );
+          drawLimbThrough(p0x,p0y,p1x,p1y,p2x,p2y);
         }
       }
 
