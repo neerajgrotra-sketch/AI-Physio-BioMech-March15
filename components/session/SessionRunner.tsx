@@ -502,6 +502,19 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostLogRef = useRef<GhostLogEntry[]>([]);
   const ghostSetLogRef = useRef<React.Dispatch<React.SetStateAction<GhostLogEntry[]>> | null>(null);
   ghostSetLogRef.current = setGhostLog;
+
+  // ── Rep Cycle Debug Log ────────────────────────────────────────────────
+  // Captures every hold start and rep complete/fail with full threshold data
+  // so we can tune rom_acceptable_min without guessing.
+  type RepCycleEntry = {
+    id: string; time: string; event: string;
+    metricValue: number | null; targetThreshold: number | null;
+    startThreshold: number | null; romAcceptableMin: number | null;
+    romNormDegrees: number | null; repCount: number; detail: string;
+  };
+  const [repCycleLog, setRepCycleLog] = useState<RepCycleEntry[]>([]);
+  const [repCycleOpen, setRepCycleOpen] = useState(false);
+  const repCycleLogRef = useRef<RepCycleEntry[]>([]);
   const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(
@@ -641,7 +654,27 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     onRepCompleted: (nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
+      const metricVal = inferenceLoop.activeMetricValue;
+      const tgtThresh = prescription?.targetThreshold ?? null;
+      const romMin = (prescription as any)?.romAcceptableMin ?? null;
+      const romNorm = (prescription as any)?.romNormDegrees ?? null;
       writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + (exerciseCtx?.repCount ?? "?"));
+      writeDebugLog("success", "REP_CYCLE",
+        "✓ REP COMPLETE #" + ((exerciseCtx?.repCount ?? 0) + 1),
+        "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | romMin=" + (romMin ?? "?") + "°"
+      );
+      const rcEntryRep: RepCycleEntry = {
+        id: `${nowMs}-${Math.random().toString(36).slice(2,5)}`,
+        time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
+        event: "REP COMPLETE",
+        metricValue: metricVal, targetThreshold: tgtThresh,
+        startThreshold: prescription?.startThreshold ?? null,
+        romAcceptableMin: romMin, romNormDegrees: romNorm,
+        repCount: (exerciseCtx?.repCount ?? 0) + 1,
+        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
+      };
+      repCycleLogRef.current = [rcEntryRep, ...repCycleLogRef.current].slice(0, 100);
+      setRepCycleLog([...repCycleLogRef.current]);
       if (!prescription || !exerciseCtx) { writeDebugLog("error", "COACHING", "onRepCompleted BLOCKED — null ctx or prescription"); return; }
       recordRepCompleted(exerciseCtx.repCount, nowMs);
       patientContext.recordRepOutcome("success", null, null);
@@ -660,7 +693,28 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     onHoldStarted: (holdRequiredMs: number, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
+      const metricVal = inferenceLoop.activeMetricValue;
+      const tgtThresh = prescription?.targetThreshold ?? null;
+      const strtThresh = prescription?.startThreshold ?? null;
+      const romMin = (prescription as any)?.romAcceptableMin ?? null;
+      const romNorm = (prescription as any)?.romNormDegrees ?? null;
       writeDebugLog("info", "COACHING", "Hold started (" + holdRequiredMs + "ms)");
+      writeDebugLog("success", "REP_CYCLE",
+        "⏱ HOLD START | metric=" + (metricVal?.toFixed(1) ?? "?") + "° targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "°",
+        "romAcceptableMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "° | startThresh=" + (strtThresh ?? "?") + "° | rep=" + (exerciseCtx?.repCount ?? "?") + " | ex=" + (prescription?.id ?? "?")
+      );
+      // Add to rep cycle log
+      const rcEntry: RepCycleEntry = {
+        id: `${nowMs}-${Math.random().toString(36).slice(2,5)}`,
+        time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
+        event: "HOLD START",
+        metricValue: metricVal, targetThreshold: tgtThresh,
+        startThreshold: strtThresh, romAcceptableMin: romMin, romNormDegrees: romNorm,
+        repCount: exerciseCtx?.repCount ?? 0,
+        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
+      };
+      repCycleLogRef.current = [rcEntry, ...repCycleLogRef.current].slice(0, 100);
+      setRepCycleLog([...repCycleLogRef.current]);
       if (!prescription || !exerciseCtx) return;
       recordHoldStarted(holdRequiredMs, nowMs);
       coachingBrain.onHoldStarted({ prescription, patientProfile, exerciseContext: exerciseCtx, holdRequiredMs, nowMs });
@@ -1355,10 +1409,49 @@ Reply with only the summary text, no JSON, no formatting.`;
         }
       }
 
-      // ── Hold countdown ring ───────────────────────────────────────────────
+      // ── Hold countdown ring — top-right corner ───────────────────────────
       if (isHolding) {
         const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
-        drawHoldRing(ctx, W, H, holdElapsed, holdTotal, 1.0);
+        const pct = Math.min(1, holdElapsed / holdTotal);
+        const remaining = Math.max(0, Math.ceil((holdTotal - holdElapsed) / 1000));
+        const radius = Math.min(W, H) * 0.13;   // smaller than centre ring
+        const strokeW = radius * 0.14;
+        const cx = W - radius - strokeW * 2 - 12; // top-right, with padding
+        const cy = radius + strokeW * 2 + 12;
+
+        // Dark backdrop
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius + strokeW * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(8,12,20,0.80)';
+        ctx.fill();
+
+        // Track ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        ctx.lineWidth = strokeW;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // Progress arc
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+        ctx.strokeStyle = '#4ade80';
+        ctx.lineWidth = strokeW;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // Countdown number
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `800 ${Math.round(radius * 0.85)}px system-ui, sans-serif`;
+        ctx.fillText(String(remaining), cx, cy - radius * 0.08);
+
+        // HOLD label
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = `600 ${Math.round(radius * 0.28)}px system-ui, sans-serif`;
+        ctx.fillText('HOLD', cx, cy + radius * 0.45);
       }
 
       drawLive(ctx, lms, W, H, score);
@@ -1842,6 +1935,50 @@ Reply with only the summary text, no JSON, no formatting.`;
                     <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>rep {entry.rep}</span>
                     <span style={{ fontSize: 10, color: col, flexShrink: 0 }}>{entry.score}%</span>
                     <span style={{ fontSize: 11, color: "#aab6d3", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.detail}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── REP CYCLE DEBUG LOG ── */}
+      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(74,222,128,0.2)" }}>
+        <div onClick={() => setRepCycleOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "rgba(74,222,128,0.04)", borderBottom: repCycleOpen ? "1px solid rgba(74,222,128,0.1)" : "none", cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.08em" }}>REP CYCLE LOG</span>
+            <span style={{ fontSize: 11, color: "#7a88a8" }}>{repCycleLog.length} events</span>
+            <span style={{ fontSize: 10, color: "#4ade80", opacity: 0.7 }}>metric · threshold · romMin · romNorm</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={e => { e.stopPropagation(); const text = repCycleLog.map(e => `[${e.time}] [${e.event}] rep=${e.repCount} | ${e.detail}`).join("
+"); copyToClipboard(text); }} style={{ background: "rgba(74,222,128,0.15)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy</button>
+            <button onClick={e => { e.stopPropagation(); repCycleLogRef.current=[]; setRepCycleLog([]); }} style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>Clear</button>
+            <span style={{ color: "#7a88a8", fontSize: 12 }}>{repCycleOpen ? "▲" : "▼"}</span>
+          </div>
+        </div>
+        {repCycleOpen && (
+          <div style={{ maxHeight: 320, overflowY: "auto", padding: 10, display: "grid", gap: 4 }}>
+            {repCycleLog.length === 0 ? (
+              <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>No rep events yet. Begin a session and perform reps.</div>
+            ) : repCycleLog.map(entry => {
+              const isHold = entry.event === "HOLD START";
+              const col = isHold ? "#4ade80" : entry.event === "REP COMPLETE" ? "#7cc6ff" : "#ff8f8f";
+              return (
+                <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "6px 10px", border: `1px solid ${col}20` }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>{entry.time}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: col, padding: "1px 6px", borderRadius: 4, background: `${col}20`, flexShrink: 0 }}>{entry.event}</span>
+                    <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>rep {entry.repCount}</span>
+                  </div>
+                  <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: entry.metricValue !== null && entry.targetThreshold !== null && entry.metricValue >= entry.targetThreshold ? "#4ade80" : "#ff8f8f" }}>
+                      metric: <strong>{entry.metricValue?.toFixed(1) ?? "?"}°</strong>
+                    </span>
+                    <span style={{ fontSize: 11, color: "#7cc6ff" }}>targetThresh: <strong>{entry.targetThreshold?.toFixed(1) ?? "?"}°</strong></span>
+                    <span style={{ fontSize: 11, color: "#ffcc80" }}>romMin: <strong>{entry.romAcceptableMin ?? "?"}°</strong></span>
+                    <span style={{ fontSize: 11, color: "#a78bfa" }}>romNorm: <strong>{entry.romNormDegrees ?? "?"}°</strong></span>
                   </div>
                 </div>
               );
