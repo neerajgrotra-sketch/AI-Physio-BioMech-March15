@@ -1194,7 +1194,7 @@ Reply with only the summary text, no JSON, no formatting.`;
       // score = (metric - restingBaseline) / (targetThreshold - restingBaseline)
       // clamped 0–1. Ghost turns fully green when score >= 85%.
       const activePxMetric = inferenceLoop.activeMetricValue;
-      const calibBaseline = inferenceLoop.calibrationBaselineRef.current;
+      const calibBaseline = inferenceLoop.calibrationBaseline;
       const activePxPrescription = sessionQueue.getActivePrescription();
       const tgtThreshForScore = activePxPrescription?.targetThreshold ?? null;
       let score = 0;
