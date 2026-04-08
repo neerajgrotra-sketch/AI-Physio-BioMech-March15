@@ -285,6 +285,9 @@ export function useInferenceLoop() {
   const calibrationBaselineRef = useRef<number>(0);
   const calibrationStartMsRef = useRef<number | null>(null);
   const calibrationWindowMs = 2000; // sample for 2 seconds
+  // State mirror of calibrationBaselineRef — exported for ROM score ring
+  // (ref is used internally for zero-cost reads in the rAF loop)
+  const [calibrationBaseline, setCalibrationBaseline] = useState<number>(0);
 
   const [engineStatus, setEngineStatus] = useState<
     "idle" | "loading" | "running" | "error"
@@ -323,6 +326,7 @@ export function useInferenceLoop() {
     calibrationCompleteRef.current = false;
     calibrationBaselineRef.current = 0;
     calibrationStartMsRef.current = null;
+    setCalibrationBaseline(0);
 
     setPhase("ready");
     setRepCount(0);
@@ -484,6 +488,7 @@ export function useInferenceLoop() {
                   const baseline = sorted[Math.floor(sorted.length / 2)];
                   calibrationBaselineRef.current = baseline;
                   calibrationCompleteRef.current = true;
+                  setCalibrationBaseline(baseline); // mirrors ref for external consumers
 
                   // Recompute thresholds offset from real resting baseline.
                   // romStart (e.g. 0°) is the anatomical rest — baseline is what
@@ -790,6 +795,8 @@ export function useInferenceLoop() {
     activeMetricValue,
     lastPrimaryIssue,
     liveObservation,
+    // Calibrated resting baseline (degrees) — for ROM score ring
+    calibrationBaseline,
 
     // Actions
     startLoop,
