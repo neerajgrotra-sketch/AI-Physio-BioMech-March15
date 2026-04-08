@@ -251,6 +251,7 @@ export type FramingEventCallbacks = {
     prescription: ExercisePrescription,
     nowMs: number
   ) => void;
+  cancelPendingEval: () => void;
 };
 
 // ============================================================
@@ -271,6 +272,8 @@ export function useInferenceLoop() {
   const prevPhaseRef = useRef<string>("ready");
   // Track hold entry time for holdElapsedMs calculation
   const holdEnteredAtMsRef = useRef<number | null>(null);
+  // Spike filter: tracks previous frame metric to reject impossible jumps (>50° per frame)
+  const prevMetricValueRef = useRef<number | null>(null);
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -313,6 +316,7 @@ export function useInferenceLoop() {
     featureHistoryRef.current.clear();
     prevPhaseRef.current = "ready";
     holdEnteredAtMsRef.current = null;
+    prevMetricValueRef.current = null; // reset spike filter on each exercise
 
     // Reset calibration for new exercise
     calibrationSamplesRef.current = [];
@@ -481,29 +485,84 @@ export function useInferenceLoop() {
                   calibrationBaselineRef.current = baseline;
                   calibrationCompleteRef.current = true;
 
-                  // Recompute thresholds offset from real resting baseline
+                  // Recompute thresholds offset from real resting baseline.
                   // romStart (e.g. 0°) is the anatomical rest — baseline is what
                   // TensorFlow actually reads at that anatomical position.
                   // We shift all thresholds by (baseline - romStart).
                   const romStart = (activePrescription as any).romStartDegrees ?? 0;
                   const offset = Math.max(0, baseline - romStart);
                   const romMin = (activePrescription as any).romAcceptableMin;
-                  const romNorm = (activePrescription as any).romNormDegrees;
 
-                  if (romMin != null) {
-                    // targetThreshold: must exceed romMin + offset
-                    (activePrescription as any).startThreshold = romStart + offset + 10;
-                    (activePrescription as any).targetThreshold = romMin + offset;
-                    (activePrescription as any).finishThreshold = romStart + offset - 5;
-                    activePrescription.startThreshold = romStart + offset + 10;
-                    activePrescription.targetThreshold = romMin + offset;
-                    activePrescription.finishThreshold = Math.max(0, romStart + offset - 5);
+                  // Fix B: physio override (romTargetDegrees) takes priority over
+                  // population-level romAcceptableMin. buildPrescription already set
+                  // targetThreshold = romTargetDegrees ?? romMin, but calibration was
+                  // overwriting it back to romMin. Use the same priority here.
+                  const physioTarget = (activePrescription as any).romTargetDegrees ?? null;
+                  const effectiveTarget = physioTarget ?? romMin;
+
+                  if (effectiveTarget != null) {
+                    // startThreshold: just above TF's resting read — triggers rep detection
+                    const start = romStart + offset + 10;
+                    // targetThreshold: physio override if set, otherwise population min
+                    const target = effectiveTarget + offset;
+                    // Fix A: finishThreshold must be ABOVE the resting metric, not below it.
+                    // Patient rests at ~baseline. Setting finish below baseline means LOWERING
+                    // never resolves because the arms never drop that far.
+                    // Use offset + 5 (5° above anatomical rest + TF offset) as the floor.
+                    const finish = Math.max(0, romStart + offset + 5);
+
+                    (activePrescription as any).startThreshold = start;
+                    (activePrescription as any).targetThreshold = target;
+                    (activePrescription as any).finishThreshold = finish;
+                    activePrescription.startThreshold = start;
+                    activePrescription.targetThreshold = target;
+                    activePrescription.finishThreshold = finish;
                   }
                 } else {
                   // Not enough samples — mark complete to avoid blocking
                   calibrationCompleteRef.current = true;
                 }
               }
+            }
+
+            // ── Spike filter ───────────────────────────────────────────────
+            // TensorFlow occasionally produces single-frame landmark jumps that
+            // cause the metric to spike 50°+ in one frame (e.g. 15° → 103°).
+            // These spikes cause premature hold triggers. The interpreter reads
+            // metric from smoothedFeatures directly, so we clamp the relevant
+            // field back to the previous known-good value on spike frames.
+            const rawMetricThisFrame = (() => {
+              const id = activePrescription.id;
+              const f = smoothedFeatures;
+              if (id.includes("flexion") || id.includes("abduction")) {
+                if (id.includes("right")) return f.rightArmElevationDeg;
+                if (id.includes("left")) return f.leftArmElevationDeg;
+                return f.bilateralArmElevationDeg;
+              }
+              return null;
+            })();
+
+            const SPIKE_THRESHOLD_DEG = 50;
+            if (
+              rawMetricThisFrame !== null &&
+              prevMetricValueRef.current !== null &&
+              Math.abs(rawMetricThisFrame - prevMetricValueRef.current) > SPIKE_THRESHOLD_DEG
+            ) {
+              // Clamp the spiked field back to previous value so the interpreter
+              // sees a stable reading — do not update prevMetricValueRef this frame
+              const id = activePrescription.id;
+              const prev = prevMetricValueRef.current;
+              if (id.includes("flexion") || id.includes("abduction")) {
+                if (id.includes("right")) smoothedFeatures.rightArmElevationDeg = prev;
+                else if (id.includes("left")) smoothedFeatures.leftArmElevationDeg = prev;
+                else {
+                  smoothedFeatures.bilateralArmElevationDeg = prev;
+                  smoothedFeatures.rightArmElevationDeg = prev;
+                  smoothedFeatures.leftArmElevationDeg = prev;
+                }
+              }
+            } else if (rawMetricThisFrame !== null) {
+              prevMetricValueRef.current = rawMetricThisFrame;
             }
 
             // Run movement interpreter
@@ -534,6 +593,13 @@ export function useInferenceLoop() {
             // PHASE TRANSITION EVENTS
             // Fire coaching events at key phase transitions
             // ------------------------------------------------
+
+            // Cancel any in-flight framing evaluation the moment patient
+            // starts moving — prevents stale API responses from interrupting
+            // active reps with "step back" instructions mid-hold
+            if (prevPhase === "ready" && currentPhase === "lifting") {
+              framingCallbacks.cancelPendingEval();
+            }
 
             // Hold just started
             if (
@@ -620,14 +686,20 @@ export function useInferenceLoop() {
             });
 
             // ------------------------------------------------
-            // FEED FRAMING MONITOR (throttled inside hook)
+            // FEED FRAMING MONITOR (ready phase only)
             // ------------------------------------------------
-            framingCallbacks.evaluateFraming(
-              normalized,
-              smoothedFeatures,
-              activePrescription,
-              nowMs
-            );
+            // Critical fix: framing evaluator must NEVER fire during active
+            // reps (lifting/holding/lowering). It calls Claude API and disrupts
+            // the session mid-rep. Gate to ready phase only — one-time check
+            // per exercise is sufficient and was already the clinical intent.
+            if (currentPhase === "ready") {
+              framingCallbacks.evaluateFraming(
+                normalized,
+                smoothedFeatures,
+                activePrescription,
+                nowMs
+              );
+            }
 
             // ------------------------------------------------
             // READINESS FOR LIVE OBSERVATION PANEL
