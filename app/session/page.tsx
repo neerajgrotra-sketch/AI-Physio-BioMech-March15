@@ -27,6 +27,8 @@ interface SupabaseSessionBlock {
     sequence_order: number;
     reps_override: number | null;
     hold_ms_override: number | null;
+    rom_target_degrees: number | null;
+    rom_encourage_degrees: number | null;
     exercise_templates: {
       slug: string;
       display_name: string;
@@ -70,6 +72,8 @@ function buildPrescription(
   romStart: number | null = null,
   romNorm: number | null = null,
   romAcceptableMin: number | null = null,
+  romTargetDegrees: number | null = null,
+  romEncourageDegrees: number | null = null,
 ): ExercisePrescription | null {
   const hold = {
     required: holdMsOverride > 0,
@@ -93,7 +97,8 @@ function buildPrescription(
   const _romNorm = romNorm ?? 160;
   const _romMin = romAcceptableMin ?? 110;
   const startThresh = _romStart + 15;
-  const targetThresh = _romMin;
+  // Physio override wins over population-level rom_acceptable_min
+  const targetThresh = romTargetDegrees ?? _romMin;
   const finishThresh = _romStart + 20;
 
   // Extra fields passed through for calibration and debug logging
@@ -103,6 +108,10 @@ function buildPrescription(
     romAcceptableMin: _romMin,
     romNormDegrees: _romNorm,
     romStartDegrees: _romStart,
+    // Physio-set patient-specific ROM target (null = use population default)
+    romTargetDegrees: romTargetDegrees ?? null,
+    // AI encourage-to target: if patient reaches targetThreshold, coach toward this
+    encourageThreshold: romEncourageDegrees ?? null,
   };
 
   const coaching = {
@@ -500,6 +509,8 @@ export default async function SessionPage({ searchParams }: PageProps) {
           sequence_order,
           reps_override,
           hold_ms_override,
+          rom_target_degrees,
+          rom_encourage_degrees,
           exercise_templates (
             slug,
             display_name,
@@ -599,7 +610,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         if (!tmpl) continue;
         const reps = ex.reps_override ?? tmpl.default_reps;
         const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null);
+        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null, ex.rom_target_degrees ?? null, ex.rom_encourage_degrees ?? null);
         if (prescription) mapped.push(prescription);
       }
     }
