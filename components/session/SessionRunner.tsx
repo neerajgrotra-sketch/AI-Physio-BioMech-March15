@@ -447,7 +447,8 @@ type RepCycleEntry = {
   id: string; time: string; event: string;
   metricValue: number | null; targetThreshold: number | null;
   startThreshold: number | null; romAcceptableMin: number | null;
-  romNormDegrees: number | null; repCount: number; detail: string;
+  romNormDegrees: number | null; romTargetDegrees: number | null;
+  encourageThreshold: number | null; repCount: number; detail: string;
 };
 
 export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
@@ -660,10 +661,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const tgtThresh = prescription?.targetThreshold ?? null;
       const romMin = (prescription as any)?.romAcceptableMin ?? null;
       const romNorm = (prescription as any)?.romNormDegrees ?? null;
+      const romTarget = (prescription as any)?.romTargetDegrees ?? null;
+      const encourage = (prescription as any)?.encourageThreshold ?? null;
       writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + (exerciseCtx?.repCount ?? "?"));
       writeDebugLog("success", "REP_CYCLE",
         "✓ REP COMPLETE #" + ((exerciseCtx?.repCount ?? 0) + 1),
-        "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | romMin=" + (romMin ?? "?") + "°"
+        "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget ?? "population") + "° | romMin=" + (romMin ?? "?") + "°"
       );
       const rcEntryRep: RepCycleEntry = {
         id: `${nowMs}-${Math.random().toString(36).slice(2,5)}`,
@@ -672,8 +675,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         metricValue: metricVal, targetThreshold: tgtThresh,
         startThreshold: prescription?.startThreshold ?? null,
         romAcceptableMin: romMin, romNormDegrees: romNorm,
+        romTargetDegrees: romTarget, encourageThreshold: encourage,
         repCount: (exerciseCtx?.repCount ?? 0) + 1,
-        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
+        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget !== null ? romTarget + "°" : "population") + " | encourage=" + (encourage !== null ? encourage + "°" : "none") + " | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
       };
       repCycleLogRef.current = [rcEntryRep, ...repCycleLogRef.current].slice(0, 100);
       setRepCycleLog([...repCycleLogRef.current]);
@@ -700,10 +704,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const strtThresh = prescription?.startThreshold ?? null;
       const romMin = (prescription as any)?.romAcceptableMin ?? null;
       const romNorm = (prescription as any)?.romNormDegrees ?? null;
+      const romTarget = (prescription as any)?.romTargetDegrees ?? null;
+      const encourage = (prescription as any)?.encourageThreshold ?? null;
       writeDebugLog("info", "COACHING", "Hold started (" + holdRequiredMs + "ms)");
       writeDebugLog("success", "REP_CYCLE",
         "⏱ HOLD START | metric=" + (metricVal?.toFixed(1) ?? "?") + "° targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "°",
-        "romAcceptableMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "° | startThresh=" + (strtThresh ?? "?") + "° | rep=" + (exerciseCtx?.repCount ?? "?") + " | ex=" + (prescription?.id ?? "?")
+        "physioTarget=" + (romTarget !== null ? romTarget + "°" : "population") + " | encourage=" + (encourage !== null ? encourage + "°" : "none") + " | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "° | startThresh=" + (strtThresh ?? "?") + "° | rep=" + (exerciseCtx?.repCount ?? "?") + " | ex=" + (prescription?.id ?? "?")
       );
       // Add to rep cycle log
       const rcEntry: RepCycleEntry = {
@@ -712,8 +718,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         event: "HOLD START",
         metricValue: metricVal, targetThreshold: tgtThresh,
         startThreshold: strtThresh, romAcceptableMin: romMin, romNormDegrees: romNorm,
+        romTargetDegrees: romTarget, encourageThreshold: encourage,
         repCount: exerciseCtx?.repCount ?? 0,
-        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
+        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget !== null ? romTarget + "°" : "population") + " | encourage=" + (encourage !== null ? encourage + "°" : "none") + " | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
       };
       repCycleLogRef.current = [rcEntry, ...repCycleLogRef.current].slice(0, 100);
       setRepCycleLog([...repCycleLogRef.current]);
@@ -1762,28 +1769,72 @@ Reply with only the summary text, no JSON, no formatting.`;
           </div>
 
           <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            {combinedQueue.map((item, i) => (
-              <div key={i} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                padding: "10px 14px", borderRadius: 8,
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.05)"
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{
-                    width: 22, height: 22, borderRadius: "50%",
-                    background: "rgba(124,198,255,0.12)", color: "#7cc6ff",
-                    fontSize: 11, fontWeight: 700,
-                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
-                  }}>{i + 1}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "white" }}>{item.displayName}</span>
+            {combinedQueue.map((item, i) => {
+              const p = item.prescription as any;
+              const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
+              const romNorm = p.romNormDegrees ?? null;
+              const romStart = p.romStartDegrees ?? 0;
+              const encourage = p.encourageThreshold ?? null;
+              const hasRom = romTarget !== null || romNorm !== null;
+              return (
+                <div key={i} style={{
+                  padding: "10px 14px", borderRadius: 8,
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.05)"
+                }}>
+                  {/* Row 1: name + reps/hold */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: hasRom ? 8 : 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{
+                        width: 22, height: 22, borderRadius: "50%",
+                        background: "rgba(124,198,255,0.12)", color: "#7cc6ff",
+                        fontSize: 11, fontWeight: 700,
+                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                      }}>{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "white" }}>{item.displayName}</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: "#7a88a8" }}>
+                      {item.prescription.repTarget} reps
+                      {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
+                    </span>
+                  </div>
+                  {/* Row 2: ROM targets — only when data available */}
+                  {hasRom && (
+                    <div style={{
+                      display: "flex", gap: 8, flexWrap: "wrap" as const,
+                      borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 7
+                    }}>
+                      {/* Rest baseline */}
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.05)", color: "#7a88a8" }}>
+                        Rest: {romStart}°
+                      </span>
+                      {/* Physio target (Expected ROM) */}
+                      {romTarget !== null && (
+                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(210,153,34,0.15)", color: "#d29922", fontWeight: 600 }}>
+                          🎯 Target: {romTarget}°
+                        </span>
+                      )}
+                      {/* Population norm reference */}
+                      {romNorm !== null && (
+                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(124,198,255,0.08)", color: "#7cc6ff" }}>
+                          Norm: {romNorm}°
+                        </span>
+                      )}
+                      {/* AI encourage-to target */}
+                      {encourage !== null ? (
+                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(63,185,80,0.15)", color: "#3fb950", fontWeight: 600 }}>
+                          💬 AI push-to: {encourage}°
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.04)", color: "#484f58", fontStyle: "italic" as const }}>
+                          No AI push target
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <span style={{ fontSize: 12, color: "#7a88a8" }}>
-                  {item.prescription.repTarget} reps
-                  {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <button
@@ -1951,7 +2002,7 @@ Reply with only the summary text, no JSON, no formatting.`;
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.08em" }}>REP CYCLE LOG</span>
             <span style={{ fontSize: 11, color: "#7a88a8" }}>{repCycleLog.length} events</span>
-            <span style={{ fontSize: 10, color: "#4ade80", opacity: 0.7 }}>metric · threshold · romMin · romNorm</span>
+            <span style={{ fontSize: 10, color: "#4ade80", opacity: 0.7 }}>metric · thresh · physioTarget · encourage · romMin · romNorm</span>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button onClick={e => { e.stopPropagation(); const text = repCycleLog.map(e => `[${e.time}] [${e.event}] rep=${e.repCount} | ${e.detail}`).join("\n"); copyToClipboard(text); }} style={{ background: "rgba(74,222,128,0.15)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy</button>
@@ -1960,26 +2011,41 @@ Reply with only the summary text, no JSON, no formatting.`;
           </div>
         </div>
         {repCycleOpen && (
-          <div style={{ maxHeight: 320, overflowY: "auto", padding: 10, display: "grid", gap: 4 }}>
+          <div style={{ maxHeight: 400, overflowY: "auto", padding: 10, display: "grid", gap: 4 }}>
             {repCycleLog.length === 0 ? (
               <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>No rep events yet. Begin a session and perform reps.</div>
             ) : repCycleLog.map(entry => {
               const isHold = entry.event === "HOLD START";
               const col = isHold ? "#4ade80" : entry.event === "REP COMPLETE" ? "#7cc6ff" : "#ff8f8f";
+              const metricAboveTarget = entry.metricValue !== null && entry.targetThreshold !== null && entry.metricValue >= entry.targetThreshold;
+              const metricAboveEncourage = entry.encourageThreshold !== null && entry.metricValue !== null && entry.metricValue >= entry.encourageThreshold;
               return (
                 <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "6px 10px", border: `1px solid ${col}20` }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
                     <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>{entry.time}</span>
                     <span style={{ fontSize: 11, fontWeight: 700, color: col, padding: "1px 6px", borderRadius: 4, background: `${col}20`, flexShrink: 0 }}>{entry.event}</span>
                     <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>rep {entry.repCount}</span>
                   </div>
-                  <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: entry.metricValue !== null && entry.targetThreshold !== null && entry.metricValue >= entry.targetThreshold ? "#4ade80" : "#ff8f8f" }}>
+                  <div style={{ marginTop: 4, display: "flex", gap: 10, flexWrap: "wrap" as const }}>
+                    {/* Metric vs target */}
+                    <span style={{ fontSize: 11, color: metricAboveTarget ? "#4ade80" : "#ff8f8f" }}>
                       metric: <strong>{entry.metricValue?.toFixed(1) ?? "?"}°</strong>
                     </span>
-                    <span style={{ fontSize: 11, color: "#7cc6ff" }}>targetThresh: <strong>{entry.targetThreshold?.toFixed(1) ?? "?"}°</strong></span>
+                    <span style={{ fontSize: 11, color: "#7cc6ff" }}>
+                      thresh: <strong>{entry.targetThreshold?.toFixed(1) ?? "?"}°</strong>
+                    </span>
+                    {/* Physio override indicator */}
+                    <span style={{ fontSize: 11, color: entry.romTargetDegrees !== null ? "#d29922" : "#484f58" }}>
+                      physio: <strong>{entry.romTargetDegrees !== null ? `${entry.romTargetDegrees}°` : "population"}</strong>
+                    </span>
+                    {/* Encourage threshold */}
+                    <span style={{ fontSize: 11, color: entry.encourageThreshold !== null ? (metricAboveEncourage ? "#3fb950" : "#a78bfa") : "#484f58" }}>
+                      push-to: <strong>{entry.encourageThreshold !== null ? `${entry.encourageThreshold}°` : "—"}</strong>
+                      {metricAboveEncourage && <span style={{ color: "#3fb950", marginLeft: 4 }}>✓ reached</span>}
+                    </span>
+                    {/* Population reference values */}
                     <span style={{ fontSize: 11, color: "#ffcc80" }}>romMin: <strong>{entry.romAcceptableMin ?? "?"}°</strong></span>
-                    <span style={{ fontSize: 11, color: "#a78bfa" }}>romNorm: <strong>{entry.romNormDegrees ?? "?"}°</strong></span>
+                    <span style={{ fontSize: 11, color: "#a78bfa" }}>norm: <strong>{entry.romNormDegrees ?? "?"}°</strong></span>
                   </div>
                 </div>
               );
