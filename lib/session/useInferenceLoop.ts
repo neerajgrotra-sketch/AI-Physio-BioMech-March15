@@ -506,15 +506,23 @@ export function useInferenceLoop() {
                   const effectiveTarget = physioTarget ?? romMin;
 
                   if (effectiveTarget != null) {
-                    // startThreshold: just above TF's resting read — triggers rep detection
-                    const start = romStart + offset + 10;
-                    // targetThreshold: physio override if set, otherwise population min
+                    // All thresholds derived directly from measured baseline.
+                    // baseline is the median TF reading at anatomical rest.
+                    //
+                    // startThreshold: must be comfortably above baseline noise.
+                    // TF resting jitter is ±3–5°, so +15° gives clear separation.
+                    // (was +10, caused READY↔LIFTING thrashing when rest was 18–21°)
+                    const start = baseline + 15;
+
+                    // targetThreshold: physio override + offset if set, else population min + offset.
+                    // offset = baseline - romStart accounts for TF's zero-point shift.
                     const target = effectiveTarget + offset;
-                    // Fix A: finishThreshold must be ABOVE the resting metric, not below it.
-                    // Patient rests at ~baseline. Setting finish below baseline means LOWERING
-                    // never resolves because the arms never drop that far.
-                    // Use offset + 5 (5° above anatomical rest + TF offset) as the floor.
-                    const finish = Math.max(0, romStart + offset + 5);
+
+                    // finishThreshold: must be above the resting noise floor.
+                    // Patient at rest reads baseline ± 3–5°. Setting finish at
+                    // baseline + 10 ensures LOWERING resolves when arms are genuinely down.
+                    // (was +5, caused 30-second LOWERING stalls when rest was 18–21°)
+                    const finish = Math.max(0, baseline + 10);
 
                     (activePrescription as any).startThreshold = start;
                     (activePrescription as any).targetThreshold = target;
