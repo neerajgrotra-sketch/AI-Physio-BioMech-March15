@@ -41,7 +41,6 @@ import { usePatientContext } from "@/lib/patient/usePatientContext";
 import { createDefaultPatientProfile } from "@/lib/patient/patientTypes";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getBodyFrame } from "@/lib/pose/bodyFrame";
-import { computeMatchScore } from "@/lib/pose/poseBuilders";
 import { drawLive, drawHoldRing } from "@/lib/pose/ghostRenderer";
 import { poseFrameToLandmarkArray, mirrorLandmarks } from "@/lib/pose/poseFrameBridge";
 
@@ -782,8 +781,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   }).current;
 
   const framingCallbacks = useMemo(() => ({
-    evaluateFraming: framingIntelligence.evaluateFraming
-  }), [framingIntelligence.evaluateFraming]);
+    evaluateFraming: framingIntelligence.evaluateFraming,
+    cancelPendingEval: framingIntelligence.cancelPendingEval,
+  }), [framingIntelligence.evaluateFraming, framingIntelligence.cancelPendingEval]);
 
   // ============================================================
   // EXERCISE COMPLETE
@@ -1187,7 +1187,20 @@ Reply with only the summary text, no JSON, no formatting.`;
       //
       // This eliminates all size instability and tilt/snap issues.
       // The ghost is a clean leading indicator, not a follower.
-      const score = computeMatchScore(lms, slug, W, H);
+
+      // ── ROM score: elevation-based, patient-specific ─────────────────────
+      // Replaces computeMatchScore (hip landmarks — always ~0% for standing
+      // patients because hips are out of frame).
+      // score = (metric - restingBaseline) / (targetThreshold - restingBaseline)
+      // clamped 0–1. Ghost turns fully green when score >= 85%.
+      const activePxMetric = inferenceLoop.activeMetricValue;
+      const calibBaseline = inferenceLoop.calibrationBaselineRef.current;
+      const activePxPrescription = sessionQueue.getActivePrescription();
+      const tgtThreshForScore = activePxPrescription?.targetThreshold ?? null;
+      let score = 0;
+      if (activePxMetric !== null && tgtThreshForScore !== null && tgtThreshForScore > calibBaseline) {
+        score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThreshForScore - calibBaseline)));
+      }
       setGhostScore(score);
 
       // Shoulder anchors — most reliable landmarks at all arm positions
@@ -1416,6 +1429,71 @@ Reply with only the summary text, no JSON, no formatting.`;
           ctx.fillStyle = col; ctx.fill();
           ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
         }
+      }
+
+      // ── ROM score ring — top-left corner ─────────────────────────────────
+      // Mirror of hold ring (top-right). Shows patient's current ROM as a
+      // percentage of their target. Orange→yellow→green as score improves.
+      // Dimmed during ready phase; full opacity during lifting/holding.
+      {
+        const romPct = score; // 0–1 from elevation formula above
+        const romRadius = Math.min(W, H) * 0.13;
+        const romStrokeW = romRadius * 0.14;
+        const romCx = romRadius + romStrokeW * 2 + 12; // top-left
+        const romCy = romRadius + romStrokeW * 2 + 12;
+        const isActivePhase = infPhase === "lifting" || infPhase === "holding" || infPhase === "lowering";
+        const ringOpacity = isActivePhase ? 1.0 : 0.35;
+
+        // Colour: orange (0%) → yellow (50%) → green (100%)
+        const rRom = romPct < 0.5
+          ? 210
+          : Math.floor(210 + (63 - 210) * ((romPct - 0.5) / 0.5));
+        const gRom = romPct < 0.5
+          ? Math.floor(100 + (185 - 100) * (romPct / 0.5))
+          : Math.floor(185 + (222 - 185) * ((romPct - 0.5) / 0.5));
+        const bRom = romPct < 0.5 ? 34 : Math.floor(34 + (128 - 34) * ((romPct - 0.5) / 0.5));
+        const ringColor = `rgba(${rRom},${gRom},${bRom},${ringOpacity})`;
+
+        ctx.save();
+        ctx.globalAlpha = ringOpacity;
+
+        // Dark backdrop
+        ctx.beginPath();
+        ctx.arc(romCx, romCy, romRadius + romStrokeW * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(8,12,20,0.80)";
+        ctx.fill();
+
+        // Track ring
+        ctx.beginPath();
+        ctx.arc(romCx, romCy, romRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.10)";
+        ctx.lineWidth = romStrokeW;
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        // Progress arc
+        if (romPct > 0) {
+          ctx.beginPath();
+          ctx.arc(romCx, romCy, romRadius, -Math.PI / 2, -Math.PI / 2 + romPct * Math.PI * 2);
+          ctx.strokeStyle = ringColor;
+          ctx.lineWidth = romStrokeW;
+          ctx.lineCap = "round";
+          ctx.stroke();
+        }
+
+        // Percentage number
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `800 ${Math.round(romRadius * 0.72)}px system-ui, sans-serif`;
+        ctx.fillText(`${Math.round(romPct * 100)}`, romCx, romCy - romRadius * 0.08);
+
+        // ROM label
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.font = `600 ${Math.round(romRadius * 0.28)}px system-ui, sans-serif`;
+        ctx.fillText("ROM %", romCx, romCy + romRadius * 0.45);
+
+        ctx.restore();
       }
 
       // ── Hold countdown ring — top-right corner ───────────────────────────
