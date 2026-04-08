@@ -463,6 +463,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostHoldMsRef      = useRef<number>(0);
   const ghostPhaseInfRef    = useRef<string>("ready");  // inferenceLoop.phase
   const ghostHoldRemRef     = useRef<number|null>(null); // inferenceLoop.holdRemainingMs
+  // ROM score ring: kept current via render-time assignment (same pattern as ghostHoldMsRef)
+  const ghostTargetThreshRef  = useRef<number | null>(null);
+  const ghostCalibBaselineRef = useRef<number>(0);
   // Auto-frame viewport: CSS transform applied to the camera container div
   const cameraContainerRef = useRef<HTMLDivElement | null>(null);
   const vpScaleRef  = useRef(1);
@@ -546,6 +549,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostFrameRef.current       = inferenceLoop.frame;
   ghostSlugRef.current        = sessionQueue.getActivePrescription()?.id ?? "";
   ghostHoldMsRef.current      = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
+  ghostTargetThreshRef.current  = sessionQueue.getActivePrescription()?.targetThreshold ?? null;
+  ghostCalibBaselineRef.current = inferenceLoop.calibrationBaseline;
   ghostPhaseInfRef.current    = inferenceLoop.phase;
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
   ghostRepCountRef.current    = inferenceLoop.repCount;
@@ -1189,14 +1194,13 @@ Reply with only the summary text, no JSON, no formatting.`;
       // The ghost is a clean leading indicator, not a follower.
 
       // ── ROM score: elevation-based, patient-specific ─────────────────────
-      // Replaces computeMatchScore (hip landmarks — always ~0% for standing
-      // patients because hips are out of frame).
+      // Uses refs (not closure values) — rAF loop holds stale closures over
+      // sessionQueue and inferenceLoop state. Refs kept current at render time.
       // score = (metric - restingBaseline) / (targetThreshold - restingBaseline)
-      // clamped 0–1. Ghost turns fully green when score >= 85%.
+      // clamped 0-1. Ghost turns fully green when score >= 85%.
       const activePxMetric = inferenceLoop.activeMetricValue;
-      const calibBaseline = inferenceLoop.calibrationBaseline;
-      const activePxPrescription = sessionQueue.getActivePrescription();
-      const tgtThreshForScore = activePxPrescription?.targetThreshold ?? null;
+      const calibBaseline = ghostCalibBaselineRef.current;
+      const tgtThreshForScore = ghostTargetThreshRef.current;
       let score = 0;
       if (activePxMetric !== null && tgtThreshForScore !== null && tgtThreshForScore > calibBaseline) {
         score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThreshForScore - calibBaseline)));
