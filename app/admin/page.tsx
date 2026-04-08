@@ -35,7 +35,11 @@ interface SessionTemplate {
 interface SessionTemplateExercise {
   id: string; template_id: string; exercise_template_id: string;
   sequence_order: number; default_reps: number | null; default_hold_ms: number | null;
-  exercise_template?: { id: string; display_name: string; default_reps: number; default_hold_ms: number; exercise_type: string; };
+  exercise_template?: {
+    id: string; display_name: string; default_reps: number; default_hold_ms: number; exercise_type: string;
+    rom_start_degrees: number | null; rom_norm_degrees: number | null;
+    rom_max_degrees: number | null; rom_acceptable_min: number | null;
+  };
 }
 
 interface PrescribedSession {
@@ -441,7 +445,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
   const [tagFilter, setTagFilter] = useState<string>("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
-  const [overrides, setOverrides] = useState<{ reps: number; hold_ms: number; note: string; }[]>([]);
+  const [overrides, setOverrides] = useState<{ reps: number; hold_ms: number; note: string; rom_target: number | null; rom_encourage: number | null; }[]>([]);
   const [saving, setSaving] = useState(false);
 
   const filteredTemplates = templates.filter(t => {
@@ -456,6 +460,8 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
       reps: ex.default_reps ?? ex.exercise_template?.default_reps ?? 6,
       hold_ms: ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 2000,
       note: "",
+      rom_target: ex.exercise_template?.rom_acceptable_min ?? null,
+      rom_encourage: null,
     })));
     setStep("override");
   };
@@ -500,6 +506,8 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
           reps_override: overrides[i]?.reps ?? null,
           hold_ms_override: overrides[i]?.hold_ms ?? null,
           coaching_notes: overrides[i]?.note || null,
+          rom_target_degrees: overrides[i]?.rom_target ?? null,
+          rom_encourage_degrees: overrides[i]?.rom_encourage ?? null,
         }))
       );
       if (eErr) throw eErr;
@@ -551,30 +559,132 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
         <button onClick={() => setStep("pick")} style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 13, padding: 0 }}>← Back</button>
         <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{selectedTemplate?.title}</div>
       </div>
-      <div style={{ fontSize: 12, color: C.textMuted }}>Adjust reps and hold duration per exercise if needed for {patient.full_name}.</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" }}>
-        {selectedTemplate?.exercises.sort((a, b) => a.sequence_order - b.sequence_order).map((ex, i) => (
-          <div key={ex.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>{i + 1}. {ex.exercise_template?.display_name}</div>
-            <div style={{ display: "flex", gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Reps</label>
-                <input type="number" value={overrides[i]?.reps ?? 6} min={1} max={30} onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, reps: parseInt(e.target.value) || 1 } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+      <div style={{ fontSize: 12, color: C.textMuted }}>Adjust reps, hold duration, and ROM targets per exercise for {patient.full_name}.</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 480, overflowY: "auto" }}>
+        {selectedTemplate?.exercises.sort((a, b) => a.sequence_order - b.sequence_order).map((ex, i) => {
+          const romStart = ex.exercise_template?.rom_start_degrees ?? 0;
+          const romNorm = ex.exercise_template?.rom_norm_degrees ?? null;
+          const romMax = ex.exercise_template?.rom_max_degrees ?? romNorm ?? 180;
+          const romMin = ex.exercise_template?.rom_acceptable_min ?? null;
+          const hasRom = romNorm !== null;
+          const currentTarget = overrides[i]?.rom_target ?? romMin ?? romNorm ?? null;
+          const currentEncourage = overrides[i]?.rom_encourage ?? null;
+          return (
+            <div key={ex.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>{i + 1}. {ex.exercise_template?.display_name}</div>
+
+              {/* Row 1: Reps / Hold / Note */}
+              <div style={{ display: "flex", gap: 12, marginBottom: hasRom ? 12 : 0 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Reps</label>
+                  <input type="number" value={overrides[i]?.reps ?? 6} min={1} max={30} onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, reps: parseInt(e.target.value) || 1 } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Hold (s)</label>
+                  <input type="number" value={msToSeconds(overrides[i]?.hold_ms ?? 2000)} min={0} max={10} step={0.5} onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, hold_ms: secondsToMs(e.target.value) } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                </div>
+                <div style={{ flex: 2 }}>
+                  <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Clinical Note</label>
+                  <input value={overrides[i]?.note ?? ""} placeholder="Optional note…" onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, note: e.target.value } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Hold (s)</label>
-                <input type="number" value={msToSeconds(overrides[i]?.hold_ms ?? 2000)} min={0} max={10} step={0.5} onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, hold_ms: secondsToMs(e.target.value) } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-              </div>
-              <div style={{ flex: 2 }}>
-                <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Clinical Note</label>
-                <input value={overrides[i]?.note ?? ""} placeholder="Optional note…" onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, note: e.target.value } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-              </div>
+
+              {/* Row 2: ROM sliders — only shown when template has ROM data */}
+              {hasRom && (
+                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+
+                  {/* Expected ROM slider */}
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <label style={{ fontSize: 11, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 600 }}>
+                        Expected ROM — hold fires here
+                      </label>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>{currentTarget ?? "—"}°</span>
+                    </div>
+                    <div style={{ position: "relative", height: 24, display: "flex", alignItems: "center" }}>
+                      {/* Population norm tick */}
+                      {romNorm !== null && (
+                        <div style={{
+                          position: "absolute",
+                          left: `${Math.round(((romNorm - romStart) / (romMax - romStart)) * 100)}%`,
+                          top: 0, bottom: 0, width: 2,
+                          background: C.textDim,
+                          borderRadius: 1,
+                          pointerEvents: "none",
+                        }} title={`Population norm: ${romNorm}°`} />
+                      )}
+                      <input
+                        type="range"
+                        min={romStart}
+                        max={romNorm ?? romMax}
+                        step={5}
+                        value={currentTarget ?? (romMin ?? romNorm ?? romStart)}
+                        onChange={e => {
+                          const val = parseInt(e.target.value);
+                          setOverrides(prev => prev.map((o, j) => {
+                            if (j !== i) return o;
+                            // If encourage is set and now <= new target, clear it
+                            const newEncourage = o.rom_encourage !== null && o.rom_encourage <= val ? null : o.rom_encourage;
+                            return { ...o, rom_target: val, rom_encourage: newEncourage };
+                          }));
+                        }}
+                        style={{ width: "100%", accentColor: C.orange, cursor: "pointer" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginTop: 2 }}>
+                      <span>{romStart}° (rest)</span>
+                      {romNorm !== null && <span style={{ color: C.textDim }}>norm {romNorm}°</span>}
+                    </div>
+                  </div>
+
+                  {/* Encourage-to ROM slider */}
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <label style={{ fontSize: 11, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 600 }}>
+                        Encourage-to ROM — AI coaching target
+                      </label>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: currentEncourage !== null ? C.green : C.textDim }}>
+                          {currentEncourage !== null ? `${currentEncourage}°` : "Not set"}
+                        </span>
+                        {currentEncourage !== null && (
+                          <button
+                            onClick={() => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, rom_encourage: null } : o))}
+                            style={{ background: "none", border: "none", color: C.textDim, cursor: "pointer", fontSize: 11, padding: "0 2px", fontFamily: "inherit" }}
+                          >clear</button>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ position: "relative", height: 24, display: "flex", alignItems: "center" }}>
+                      <input
+                        type="range"
+                        min={currentTarget ?? romMin ?? romStart}
+                        max={romMax}
+                        step={5}
+                        value={currentEncourage ?? (currentTarget !== null ? Math.min((currentTarget ?? 0) + 10, romMax) : romMax)}
+                        onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, rom_encourage: parseInt(e.target.value) } : o))}
+                        style={{ width: "100%", accentColor: C.green, cursor: "pointer", opacity: currentEncourage !== null ? 1 : 0.4 }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginTop: 2 }}>
+                      <span>Above expected</span>
+                      <span>{romMax}° (max)</span>
+                    </div>
+                    {currentEncourage === null && (
+                      <div style={{ marginTop: 4, fontSize: 11, color: C.textDim }}>
+                        Drag to set — AI will encourage patient to push further when they reach Expected ROM.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <Btn onClick={assign} variant="primary" disabled={saving} fullWidth>{saving ? "Assigning…" : `Assign Protocol to ${patient.full_name}`}</Btn>
     </div>
+
   );
 }
 
@@ -917,7 +1027,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     setLoading(true);
     const [{ data: et }, { data: st }] = await Promise.all([
       supabase.from("exercise_templates").select("*").order("display_name"),
-      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, slug, clinical_name, display_name, default_reps, default_hold_ms))").order("created_at", { ascending: false }),
+      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, slug, clinical_name, display_name, default_reps, default_hold_ms, rom_start_degrees, rom_norm_degrees, rom_max_degrees, rom_acceptable_min))").order("created_at", { ascending: false }),
     ]);
     if (et) { setExerciseTemplates(et); if (et.length > 0) setSelectedExTemplateId(et[0].id); }
     if (st) setSavedTemplates(st.map((t: Record<string, unknown>) => ({
@@ -1558,7 +1668,7 @@ export default function AdminPage() {
         ),
         prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
       `).order("created_at", { ascending: false }),
-      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms))").order("title"),
+      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms, rom_start_degrees, rom_norm_degrees, rom_max_degrees, rom_acceptable_min))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
       // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
