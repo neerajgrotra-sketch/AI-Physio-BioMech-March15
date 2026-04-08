@@ -79,9 +79,24 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
   }, []);
 
   // ----------------------------------------------------------
+  // CANCEL PENDING EVALUATION
+  // Call when phase transitions out of ready (→ lifting).
+  // Prevents stale async API responses from updating the
+  // framing panel during active reps.
+  // ----------------------------------------------------------
+
+  const cancelPendingEval = useCallback(() => {
+    evaluatorRef.current.cancel();
+  }, []);
+
+  // ----------------------------------------------------------
   // EVALUATE FRAMING
   // Call from the inference loop every frame.
   // FramingMonitor internally throttles to every 2 seconds.
+  // Only call this when phase === 'ready' — the inference loop
+  // already gates this, but we also cancel any in-flight eval
+  // the moment we detect a non-ready phase to prevent stale
+  // async responses from disrupting active reps.
   // ----------------------------------------------------------
 
   const evaluateFraming = useCallback(
@@ -288,6 +303,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     shouldPauseExercise,
     evaluateFraming,
     forcePreExerciseCheck,
-    reset
+    reset,
+    cancelPendingEval,
   };
 }
