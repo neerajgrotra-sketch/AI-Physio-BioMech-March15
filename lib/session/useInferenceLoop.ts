@@ -803,8 +803,10 @@ export function useInferenceLoop() {
     activeMetricValue,
     lastPrimaryIssue,
     liveObservation,
-    // Calibrated resting baseline (degrees) — for ROM score ring
+    // Calibrated resting baseline (degrees) as state — triggers re-render when set
     calibrationBaseline,
+    // Also expose as ref — rAF loop reads .current synchronously without waiting for re-render
+    calibrationBaselineRef,
 
     // Actions
     startLoop,
