@@ -33,22 +33,36 @@ function average(values: Array<number | null>): number | null {
 }
 
 /**
- * Returns arm elevation relative to the body:
+ * Returns arm elevation relative to the body using the UPPER ARM (shoulder→elbow).
+ * This matches clinical goniometric measurement of shoulder flexion/abduction ROM:
+ * - Physio places goniometer at shoulder joint
+ * - Moving arm aligned with humerus (upper arm), NOT the forearm or wrist
+ *
  * - arm hanging down ≈ 0°
  * - arm at shoulder height ≈ 90°
  * - arm straight overhead ≈ 180°
  *
- * Screen coordinates:
- * - y increases downward
+ * Screen coordinates: y increases downward.
+ *
+ * Uses elbow as the distal landmark (upper arm vector).
+ * Falls back to wrist if elbow is not visible (null).
  */
-function armElevationDeg(shoulder: PoseLandmark, wrist: PoseLandmark): number {
-  const vx = wrist.x - shoulder.x;
-  const vy = wrist.y - shoulder.y;
+function armElevationDeg(
+  shoulder: PoseLandmark,
+  elbow: PoseLandmark | null,
+  wrist: PoseLandmark | null
+): number | null {
+  // Prefer elbow (clinical upper-arm measurement), fall back to wrist
+  const distal = elbow ?? wrist;
+  if (!distal) return null;
+
+  const vx = distal.x - shoulder.x;
+  const vy = distal.y - shoulder.y;
 
   const mag = Math.sqrt(vx * vx + vy * vy);
   if (mag < 1e-6) return 0;
 
-  // Compare arm vector to straight-down direction (0, 1)
+  // Compare upper-arm vector to straight-down direction (0, 1)
   const cosine = Math.max(-1, Math.min(1, vy / mag));
   const angle = Math.acos(cosine);
 
@@ -150,10 +164,10 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
   const rightAnkle = getLandmark(frame, "right_ankle");
 
   const rightArmElevationDeg =
-    rightShoulder && rightWrist ? armElevationDeg(rightShoulder, rightWrist) : null;
+    rightShoulder ? armElevationDeg(rightShoulder, rightElbow, rightWrist) : null;
 
   const leftArmElevationDeg =
-    leftShoulder && leftWrist ? armElevationDeg(leftShoulder, leftWrist) : null;
+    leftShoulder ? armElevationDeg(leftShoulder, leftElbow, leftWrist) : null;
 
   const bilateralArmElevationDeg = average([rightArmElevationDeg, leftArmElevationDeg]);
 
