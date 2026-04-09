@@ -1211,6 +1211,22 @@ Reply with only the summary text, no JSON, no formatting.`;
       }
       setGhostScore(score);
 
+      // ── SCORE DEBUG LOG (fires every ~2s) ──────────────────────────────
+      // If score is stuck at 0%, this log shows WHY:
+      // - calibBaseline=0 → calibrationBaselineRef not getting updated (ref identity issue)
+      // - tgtThreshForScore=null → ghostPrescriptionRef.current is null (prescription not set)
+      // - tgtThreshForScore <= calibBaseline → baseline > target (bad calibration)
+      if (Math.floor(now / 2000) !== Math.floor((now - 16) / 2000)) {
+        console.log(
+          `[SCORE DEBUG] score=${Math.round(score * 100)}%` +
+          ` | metric=${activePxMetric?.toFixed(1) ?? "null"}°` +
+          ` | calibBaseline=${calibBaseline.toFixed(1)}°` +
+          ` | tgtThresh=${tgtThreshForScore?.toFixed(1) ?? "null"}°` +
+          ` | prescriptionNull=${ghostPrescriptionRef.current === null}` +
+          ` | calibBaselineRefIdentity=${inferenceLoop.calibrationBaselineRef === null ? "NULL REF" : "ok"}`
+        );
+      }
+
       // Shoulder anchors — most reliable landmarks at all arm positions
       const lsLm = lms[11]; const rsLm = lms[12];
       const lsVis = !!lsLm && (lsLm.visibility ?? 1) > 0.25;
