@@ -466,6 +466,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // ROM score ring: kept current via render-time assignment (same pattern as ghostHoldMsRef)
   const ghostTargetThreshRef  = useRef<number | null>(null);
   const ghostCalibBaselineRef = useRef<number>(0);
+  // Direct ref to active prescription object — reads post-calibration mutated targetThreshold
+  const ghostPrescriptionRef  = useRef<import("@/lib/types/exercise").ExercisePrescription | null>(null);
   // Auto-frame viewport: CSS transform applied to the camera container div
   const cameraContainerRef = useRef<HTMLDivElement | null>(null);
   const vpScaleRef  = useRef(1);
@@ -550,7 +552,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostSlugRef.current        = sessionQueue.getActivePrescription()?.id ?? "";
   ghostHoldMsRef.current      = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
   ghostTargetThreshRef.current  = sessionQueue.getActivePrescription()?.targetThreshold ?? null;
-  ghostCalibBaselineRef.current = inferenceLoop.calibrationBaseline;
+  ghostPrescriptionRef.current  = sessionQueue.getActivePrescription() ?? null;
+  // ghostCalibBaselineRef not needed — reading inferenceLoop.calibrationBaselineRef.current directly in tick
   ghostPhaseInfRef.current    = inferenceLoop.phase;
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
   ghostRepCountRef.current    = inferenceLoop.repCount;
@@ -1194,13 +1197,14 @@ Reply with only the summary text, no JSON, no formatting.`;
       // The ghost is a clean leading indicator, not a follower.
 
       // ── ROM score: elevation-based, patient-specific ─────────────────────
-      // Uses refs (not closure values) — rAF loop holds stale closures over
-      // sessionQueue and inferenceLoop state. Refs kept current at render time.
-      // score = (metric - restingBaseline) / (targetThreshold - restingBaseline)
-      // clamped 0-1. Ghost turns fully green when score >= 85%.
+      // Both values read from refs that hold live object references.
+      // calibrationBaselineRef: mutated in-place by useInferenceLoop when calibration completes.
+      // ghostPrescriptionRef: points to the same prescription object that calibration mutates.
+      // So both always reflect post-calibration values without any re-render dependency.
+      // score = (metric - restingBaseline) / (targetThreshold - restingBaseline), clamped 0-1.
       const activePxMetric = inferenceLoop.activeMetricValue;
-      const calibBaseline = ghostCalibBaselineRef.current;
-      const tgtThreshForScore = ghostTargetThreshRef.current;
+      const calibBaseline = inferenceLoop.calibrationBaselineRef.current;
+      const tgtThreshForScore = ghostPrescriptionRef.current?.targetThreshold ?? null;
       let score = 0;
       if (activePxMetric !== null && tgtThreshForScore !== null && tgtThreshForScore > calibBaseline) {
         score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThreshForScore - calibBaseline)));
