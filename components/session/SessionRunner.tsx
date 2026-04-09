@@ -1503,17 +1503,39 @@ Reply with only the summary text, no JSON, no formatting.`;
           ctx.stroke();
         }
 
-        // Percentage number
+        // Percentage number — shifted up slightly to make room for phase label
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = "#ffffff";
         ctx.font = `800 ${Math.round(romRadius * 0.72)}px system-ui, sans-serif`;
-        ctx.fillText(`${Math.round(romPct * 100)}`, romCx, romCy - romRadius * 0.08);
+        ctx.fillText(`${Math.round(romPct * 100)}`, romCx, romCy - romRadius * 0.18);
 
-        // ROM label
-        ctx.fillStyle = "rgba(255,255,255,0.55)";
-        ctx.font = `600 ${Math.round(romRadius * 0.28)}px system-ui, sans-serif`;
-        ctx.fillText("ROM %", romCx, romCy + romRadius * 0.45);
+        // Phase label — replaces static "ROM %" text, shows current action
+        // Colours match the old DOM badge
+        const phaseLabel = (() => {
+          if (!sessionQueue.sessionStarted) return "ROM %";
+          switch (infPhase) {
+            case "lifting":  return "Raise \u2191";
+            case "holding":  return "Hold";
+            case "lowering": return "Lower \u2193";
+            case "ready":    return "Ready";
+            case "complete": return "Done \u2713";
+            default:         return "ROM %";
+          }
+        })();
+        const phaseLabelColor = (() => {
+          switch (infPhase) {
+            case "lifting":  return `rgba(124,198,255,${ringOpacity})`;
+            case "holding":  return `rgba(74,222,128,${ringOpacity})`;
+            case "lowering": return `rgba(251,191,36,${ringOpacity})`;
+            case "ready":    return `rgba(155,231,176,${ringOpacity})`;
+            case "complete": return `rgba(74,222,128,${ringOpacity})`;
+            default:         return `rgba(255,255,255,0.55)`;
+          }
+        })();
+        ctx.fillStyle = phaseLabelColor;
+        ctx.font = `700 ${Math.round(romRadius * 0.28)}px system-ui, sans-serif`;
+        ctx.fillText(phaseLabel, romCx, romCy + romRadius * 0.42);
 
         ctx.restore();
       }
@@ -1727,16 +1749,7 @@ Reply with only the summary text, no JSON, no formatting.`;
               width={640} height={480}
               style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
             />
-            {/* Phase indicator badge — top left, hidden during hold (ring takes over) */}
-            {sessionQueue.sessionStarted && ghostPhase !== "holding" && (
-              <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(13,17,23,0.78)", backdropFilter: "blur(8px)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(124,198,255,0.3)" }}>
-                {ghostPhase === "demo" && <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa" }}>Watch</div>}
-                {ghostPhase === "attempt" && ghostPhaseInfRef.current === "lifting" && <div style={{ fontSize: 12, fontWeight: 700, color: "#7cc6ff" }}>Raise ↑</div>}
-                {ghostPhase === "attempt" && ghostPhaseInfRef.current === "lowering" && <div style={{ fontSize: 12, fontWeight: 700, color: "#fbbf24" }}>Lower ↓</div>}
-                {ghostPhase === "attempt" && ghostPhaseInfRef.current === "ready" && <div style={{ fontSize: 12, fontWeight: 700, color: "#9be7b0" }}>Ready</div>}
-                {ghostPhase === "rep_complete" && <div style={{ fontSize: 12, fontWeight: 700, color: "#4ade80" }}>✓ Rep!</div>}
-              </div>
-            )}
+            {/* Phase indicator badge — drawn inside ROM ring on canvas, not as DOM overlay */}
           </div>
 
           {inferenceLoop.engineError && (
