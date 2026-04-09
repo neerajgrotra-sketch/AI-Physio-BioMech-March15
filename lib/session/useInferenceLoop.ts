@@ -538,6 +538,24 @@ export function useInferenceLoop() {
                     if (activePrescription.target) {
                       activePrescription.target.tolerance = holdTolerance;
                     }
+
+                    // ── CALIBRATION DEBUG LOG ──────────────────────────────
+                    // This fires ONCE per exercise after calibration completes.
+                    // If you see wrong threshold values here, the calibration
+                    // window captured bad samples (patient was moving).
+                    console.log(
+                      `[CALIBRATION COMPLETE] ex=${activePrescription.id}` +
+                      ` | baseline=${baseline.toFixed(1)}°` +
+                      ` | offset=${offset.toFixed(1)}°` +
+                      ` | samples=${samples.length}` +
+                      ` | start=${start.toFixed(1)}°` +
+                      ` | target=${target.toFixed(1)}°` +
+                      ` | finish=${finish.toFixed(1)}°` +
+                      ` | holdTolerance=${holdTolerance.toFixed(1)}°` +
+                      ` | holdFloor=${holdSustainFloor.toFixed(1)}°` +
+                      ` | physioTarget=${physioTarget ?? "population"}` +
+                      ` | verify: prescription.finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°`
+                    );
                   }
                 } else {
                   // Not enough samples — mark complete to avoid blocking
@@ -642,13 +660,30 @@ export function useInferenceLoop() {
 
             // Rep just completed
             if (output.repState.justCompletedRep) {
+              // ── REP RESOLUTION DEBUG LOG ───────────────────────────────
+              // Confirms what finishThreshold was when LOWERING resolved.
+              // If this shows a high value (~110+), calibration write didn't stick.
+              console.log(
+                `[REP COMPLETE] rep=${output.repState.repCount}` +
+                ` | metric=${output.activeMetricValue?.toFixed(1) ?? "?"}°` +
+                ` | finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°` +
+                ` | targetThreshold=${activePrescription.targetThreshold.toFixed(1)}°` +
+                ` | startThreshold=${activePrescription.startThreshold.toFixed(1)}°` +
+                ` | calib_baseline=${calibrationBaselineRef.current.toFixed(1)}°`
+              );
               coachingCallbacks.onRepCompleted(nowMs);
             }
 
             // Rep just failed
             if (output.repState.justFailedRep) {
-              const reason =
-                output.repState.lastRepEvaluation.reason ?? "unknown";
+              const reason = output.repState.lastRepEvaluation.reason ?? "unknown";
+              console.log(
+                `[REP FAILED] reason=${reason}` +
+                ` | metric=${output.activeMetricValue?.toFixed(1) ?? "?"}°` +
+                ` | finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°` +
+                ` | targetThreshold=${activePrescription.targetThreshold.toFixed(1)}°` +
+                ` | calib_baseline=${calibrationBaselineRef.current.toFixed(1)}°`
+              );
               coachingCallbacks.onRepFailed(reason, nowMs);
             }
 
