@@ -506,23 +506,27 @@ export function useInferenceLoop() {
                   const effectiveTarget = physioTarget ?? romMin;
 
                   if (effectiveTarget != null) {
-                    // All thresholds derived directly from measured baseline.
-                    // baseline is the median TF reading at anatomical rest.
-                    //
                     // startThreshold: must be comfortably above baseline noise.
                     // TF resting jitter is ±3–5°, so +15° gives clear separation.
-                    // (was +10, caused READY↔LIFTING thrashing when rest was 18–21°)
                     const start = baseline + 15;
 
-                    // targetThreshold: physio override + offset if set, else population min + offset.
-                    // offset = baseline - romStart accounts for TF's zero-point shift.
+                    // targetThreshold: used to TRIGGER hold entry (TOP phase).
+                    // Uses physio override if set, otherwise population min.
+                    // This is what the patient must reach for the hold to start.
                     const target = effectiveTarget + offset;
 
-                    // finishThreshold: must be above the resting noise floor.
-                    // Patient at rest reads baseline ± 3–5°. Setting finish at
-                    // baseline + 10 ensures LOWERING resolves when arms are genuinely down.
-                    // (was +5, caused 30-second LOWERING stalls when rest was 18–21°)
+                    // finishThreshold: used during LOWERING to detect arms returned to rest.
+                    // Must be above resting noise floor (baseline ± 3-5°).
                     const finish = Math.max(0, baseline + 10);
+
+                    // CRITICAL: Also set target.tolerance on the prescription so HOLDING
+                    // phase allows metric to drop from physio target back toward romMin
+                    // without immediately failing. Without this, a physio target of 135°+
+                    // calibrated offset makes hold impossible to sustain.
+                    // holdSustainFloor = romAcceptableMin + offset (population-level floor)
+                    // tolerance = target - holdSustainFloor (gap between trigger and floor)
+                    const holdSustainFloor = (romMin ?? 110) + offset;
+                    const holdTolerance = Math.max(10, target - holdSustainFloor);
 
                     (activePrescription as any).startThreshold = start;
                     (activePrescription as any).targetThreshold = target;
@@ -530,6 +534,10 @@ export function useInferenceLoop() {
                     activePrescription.startThreshold = start;
                     activePrescription.targetThreshold = target;
                     activePrescription.finishThreshold = finish;
+                    // Update tolerance so hold sustains down to romAcceptableMin + offset
+                    if (activePrescription.target) {
+                      activePrescription.target.tolerance = holdTolerance;
+                    }
                   }
                 } else {
                   // Not enough samples — mark complete to avoid blocking
