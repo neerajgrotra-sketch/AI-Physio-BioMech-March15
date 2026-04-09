@@ -468,6 +468,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostCalibBaselineRef = useRef<number>(0);
   // Direct ref to active prescription object — reads post-calibration mutated targetThreshold
   const ghostPrescriptionRef  = useRef<import("@/lib/types/exercise").ExercisePrescription | null>(null);
+  // Active metric value — state is stale in rAF closure, must use ref
+  const ghostActiveMetricRef  = useRef<number | null>(null);
   // Auto-frame viewport: CSS transform applied to the camera container div
   const cameraContainerRef = useRef<HTMLDivElement | null>(null);
   const vpScaleRef  = useRef(1);
@@ -553,6 +555,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostHoldMsRef.current      = sessionQueue.getActivePrescription()?.hold.durationMs ?? 5000;
   ghostTargetThreshRef.current  = sessionQueue.getActivePrescription()?.targetThreshold ?? null;
   ghostPrescriptionRef.current  = sessionQueue.getActivePrescription() ?? null;
+  ghostActiveMetricRef.current  = inferenceLoop.activeMetricValue;
   // ghostCalibBaselineRef not needed — reading inferenceLoop.calibrationBaselineRef.current directly in tick
   ghostPhaseInfRef.current    = inferenceLoop.phase;
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
@@ -1198,11 +1201,11 @@ Reply with only the summary text, no JSON, no formatting.`;
 
       // ── ROM score: elevation-based, patient-specific ─────────────────────
       // Both values read from refs that hold live object references.
-      // calibrationBaselineRef: mutated in-place by useInferenceLoop when calibration completes.
-      // ghostPrescriptionRef: points to the same prescription object that calibration mutates.
-      // So both always reflect post-calibration values without any re-render dependency.
-      // score = (metric - restingBaseline) / (targetThreshold - restingBaseline), clamped 0-1.
-      const activePxMetric = inferenceLoop.activeMetricValue;
+      // ALL inferenceLoop state values are stale in the rAF closure — must use refs.
+      // ghostActiveMetricRef: current activeMetricValue, assigned at render time
+      // calibrationBaselineRef: mutated in-place by useInferenceLoop when calibration completes
+      // ghostPrescriptionRef: same prescription object calibration mutates in-place
+      const activePxMetric = ghostActiveMetricRef.current;
       const calibBaseline = inferenceLoop.calibrationBaselineRef.current;
       const tgtThreshForScore = ghostPrescriptionRef.current?.targetThreshold ?? null;
       let score = 0;
@@ -1212,18 +1215,13 @@ Reply with only the summary text, no JSON, no formatting.`;
       setGhostScore(score);
 
       // ── SCORE DEBUG LOG (fires every ~2s) ──────────────────────────────
-      // If score is stuck at 0%, this log shows WHY:
-      // - calibBaseline=0 → calibrationBaselineRef not getting updated (ref identity issue)
-      // - tgtThreshForScore=null → ghostPrescriptionRef.current is null (prescription not set)
-      // - tgtThreshForScore <= calibBaseline → baseline > target (bad calibration)
       if (Math.floor(now / 2000) !== Math.floor((now - 16) / 2000)) {
         console.log(
           `[SCORE DEBUG] score=${Math.round(score * 100)}%` +
           ` | metric=${activePxMetric?.toFixed(1) ?? "null"}°` +
           ` | calibBaseline=${calibBaseline.toFixed(1)}°` +
           ` | tgtThresh=${tgtThreshForScore?.toFixed(1) ?? "null"}°` +
-          ` | prescriptionNull=${ghostPrescriptionRef.current === null}` +
-          ` | calibBaselineRefIdentity=${inferenceLoop.calibrationBaselineRef === null ? "NULL REF" : "ok"}`
+          ` | prescriptionNull=${ghostPrescriptionRef.current === null}`
         );
       }
 
