@@ -300,7 +300,7 @@ function RestScreenOverlay({ restMs, onDone }: { restMs: number; onDone: () => v
 // ============================================================
 // Shown when all exercises complete. AI summary + mobility score.
 
-function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone }: {
+function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onViewLogs }: {
   summary: {
     mobilityScore: number;
     durationMs: number;
@@ -310,6 +310,7 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone }: {
   patientName?: string;
   sessionTitle?: string;
   onDone: () => void;
+  onViewLogs: () => void;
 }) {
   const scoreColor = summary.mobilityScore >= 80 ? "#3fb950" : summary.mobilityScore >= 60 ? "#d29922" : "#f85149";
   const mins = Math.floor(summary.durationMs / 60000);
@@ -402,19 +403,33 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone }: {
           </div>
         </div>
 
-        {/* Done button */}
-        <button
-          onClick={onDone}
-          style={{
-            padding: "14px 0", width: "100%",
-            background: "#3fb950", color: "#0d1117",
-            border: "none", borderRadius: 10,
-            fontSize: 16, fontWeight: 800, cursor: "pointer",
-            fontFamily: "inherit", letterSpacing: 0.3,
-          }}
-        >
-          Done ✓
-        </button>
+        {/* Buttons */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button
+            onClick={onDone}
+            style={{
+              padding: "14px 0", width: "100%",
+              background: "#3fb950", color: "#0d1117",
+              border: "none", borderRadius: 10,
+              fontSize: 16, fontWeight: 800, cursor: "pointer",
+              fontFamily: "inherit", letterSpacing: 0.3,
+            }}
+          >
+            Done ✓
+          </button>
+          <button
+            onClick={onViewLogs}
+            style={{
+              padding: "11px 0", width: "100%",
+              background: "transparent", color: "#7d8590",
+              border: "1px solid #30363d", borderRadius: 10,
+              fontSize: 13, fontWeight: 600, cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            View Debug Logs
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2316,6 +2331,10 @@ Reply with only the summary text, no JSON, no formatting.`;
             if (prescriptionId) {
               window.location.href = `/patient?id=${patientId ?? ""}`;
             }
+          }}
+          onViewLogs={() => {
+            setSessionSummary(null);
+            // Overlay dismissed — debug panels are now visible underneath
           }}
         />
       )}
