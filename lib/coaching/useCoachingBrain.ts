@@ -150,15 +150,14 @@ function cancelSpeech() {
 }
 
 // ============================================================
-// REP COMPLETION CUES
+// CUE ROTATION HELPERS
 // ============================================================
-// Immediate deterministic spoken acknowledgement the moment
-// a rep completes. No API call — fires within 50ms.
-// Rotates through short phrases so it does not feel robotic.
-// Special cues for first rep, halfway, and final rep.
+// All cue selection is deterministic — no API call.
+// Rotation is index-based so the same rep always gets the
+// same cue within a session (consistent, not random).
 // ============================================================
 
-const REP_CUES_GENERAL = [
+const FALLBACK_SUCCESS_CUES = [
   "Good.",
   "That's it.",
   "Nice.",
@@ -166,15 +165,40 @@ const REP_CUES_GENERAL = [
   "Good rep.",
 ];
 
+const FALLBACK_HOLD_CUES = [
+  "Hold it there.",
+  "Hold there.",
+  "Stay there.",
+  "Good, hold.",
+  "Keep it up.",
+];
+
+const HESITATION_CUES = [
+  "Take your time — begin when ready.",
+  "Whenever you're ready.",
+  "No rush — start when you feel ready.",
+  "Ready when you are.",
+  "Take a breath and go when ready.",
+];
+
+/** Pick from an array by rep index. Falls back to fallbacks if array is empty. */
+function pickCue(variants: string[], fallbacks: string[], index: number): string {
+  const pool = variants.length > 0 ? variants : fallbacks;
+  return pool[index % pool.length];
+}
+
 function getImmediateRepCue(
   repNumber: number,   // 0-indexed rep just completed
   repTarget: number,
-  failedRepCount: number
+  failedRepCount: number,
+  successVariants: string[],
+  successFirst?: string
 ): string {
   const completedCount = repNumber + 1; // 1-indexed for display
 
-  // First rep
+  // First rep — use success_first from DB if available
   if (repNumber === 0) {
+    if (successFirst) return successFirst;
     return failedRepCount > 0
       ? "Good — that one counted."
       : "Good form on the first one.";
@@ -195,8 +219,8 @@ function getImmediateRepCue(
     return "One more.";
   }
 
-  // Rotate through general cues based on rep number
-  return REP_CUES_GENERAL[repNumber % REP_CUES_GENERAL.length];
+  // Rotate through DB success_rotating variants
+  return pickCue(successVariants, FALLBACK_SUCCESS_CUES, repNumber);
 }
 
 // ============================================================
@@ -679,13 +703,22 @@ export function useCoachingBrain() {
       const hesitationMs = nowMs - lastRepCompletedAtMsRef.current;
       if (hesitationMs >= HESITATION_THRESHOLD_MS) {
         hesitationFiredRef.current = true;
-        triggerCoachingDecision({
-          trigger: "hesitation_detected",
-          prescription,
-          patientProfile,
-          exerciseContext,
-          nowMs
+        // Win 2: hesitation_detected is now deterministic — no API call.
+        // Rotate through HESITATION_CUES based on how many times we've
+        // hesitated this exercise (use repCount as rotation index).
+        const hesitationCue = pickCue(HESITATION_CUES, HESITATION_CUES, exerciseContext.repCount);
+        const hMs = nowMs;
+        recordMessage({ source: "deterministic", trigger: "hesitation_detected", text: hesitationCue, tone: "encouraging", nowMs: hMs });
+        setPanelState({
+          message: hesitationCue,
+          tone: "encouraging",
+          isThinking: false,
+          source: "deterministic",
+          setAtMs: hMs
         });
+        if (voiceEnabledRef.current) {
+          speakMessage(sanitizeForSpeech(hesitationCue), 0.92);
+        }
       }
     }
 
@@ -708,46 +741,42 @@ export function useCoachingBrain() {
     lastRepCompletedAtMsRef.current = params.nowMs;
     hesitationFiredRef.current = false;
 
-    // Check if this is the final rep — exercise_completing will handle the
-    // summary, so skip the AI rep_completed call to avoid double messages
-    const isFinalRep = params.exerciseContext.repCount + 1 >= params.prescription.repTarget;
-
-    // IMMEDIATE deterministic rep completion cue
-    // Fires within ~50ms — no API call
     const completedRepNumber = params.exerciseContext.repCount;
     const repTarget = params.prescription.repTarget;
     const failedReps = params.exerciseContext.failedReps;
+    const successVariants = params.prescription.coaching.successVariants ?? [];
+    const successFirst = params.prescription.coaching.successFirst;
+
+    // IMMEDIATE deterministic rep completion cue — no API call.
+    // Uses DB success_rotating variants for per-exercise variation.
+    // Win 1: full array rotation instead of always index 0.
+    // Win 2: no API call — deterministic cue IS the coaching response.
     const immediateCue = getImmediateRepCue(
       completedRepNumber,
       repTarget,
-      failedReps
+      failedReps,
+      successVariants,
+      successFirst
     );
 
-    // Show in panel immediately
+    const setAtMs = params.nowMs;
+    recordMessage({ source: "deterministic", trigger: "rep_completed", text: immediateCue, tone: "encouraging", nowMs: setAtMs });
+
     setPanelState({
       message: immediateCue,
       tone: "encouraging",
       isThinking: false,
       source: "deterministic",
-      setAtMs: params.nowMs
+      setAtMs
     });
 
-    // Speak immediately
     if (voiceEnabledRef.current) {
       speakMessage(sanitizeForSpeech(immediateCue), 0.95);
     }
 
     repCountAtLastCompletionRef.current = completedRepNumber;
-
-    // Fire AI for detailed follow-up coaching (arrives 2-3s later)
-    // Skip on final rep — exercise_completing handles the summary instead
-    if (!isFinalRep) {
-      triggerCoachingDecision({
-        trigger: "rep_completed",
-        ...params
-      });
-    }
-  }, [triggerCoachingDecision]);
+    // API calls reserved for rep_failed and exercise_started only.
+  }, []);
 
   const onRepFailed = useCallback((params: {
     prescription: ExercisePrescription;
@@ -774,10 +803,11 @@ export function useCoachingBrain() {
     nowMs: number;
   }) => {
     // Hold cues are DETERMINISTIC — no API call.
-    // This eliminates the hold/rep_failed race condition.
-    // The hold text comes directly from the prescription.
-    const holdText = params.prescription.coaching.hold ?? "Hold it there.";
-    const message = holdText;
+    // Win 1: rotates through holdVariants from DB coaching_strings.hold array
+    // so each hold gets a different cue across the set.
+    const holdVariants = params.prescription.coaching.holdVariants ?? [];
+    const repIndex = params.exerciseContext.repCount;
+    const message = pickCue(holdVariants, FALLBACK_HOLD_CUES, repIndex);
 
     // Only show if not currently showing a more important message
     setPanelState(prev => {
@@ -879,8 +909,10 @@ function getFallbackText(
   failureReason: string | null
 ): string | null {
   switch (trigger) {
+    // rep_completed and hesitation_detected are now fully deterministic —
+    // they never reach Claude so no fallback needed.
     case "rep_completed":
-      return prescription.coaching.success;
+      return null;
 
     case "rep_failed":
       if (failureReason === "failed_height")
@@ -897,10 +929,10 @@ function getFallbackText(
       return prescription.coaching.intro;
 
     case "exercise_completing":
-      return "Well done — exercise complete.";
+      return prescription.coaching.exerciseComplete ?? "Well done — exercise complete.";
 
     case "hesitation_detected":
-      return "Take your time — begin when ready.";
+      return null;
 
     case "hold_started":
       return prescription.coaching.hold;
