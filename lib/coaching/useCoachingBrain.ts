@@ -789,6 +789,13 @@ export function useCoachingBrain() {
     activeCallIdRef.current = null;
     activePriorityRef.current = 0;
 
+    // Reset hesitation clock after a failure — the rep_failed API call
+    // handles this moment. Without this, hesitation fires immediately
+    // on the next READY entry because lastRepCompletedAtMsRef still
+    // holds the timestamp from the previous successful rep.
+    lastRepCompletedAtMsRef.current = params.nowMs;
+    hesitationFiredRef.current = true; // suppress until patient attempts next rep
+
     triggerCoachingDecision({
       trigger: "rep_failed",
       ...params
