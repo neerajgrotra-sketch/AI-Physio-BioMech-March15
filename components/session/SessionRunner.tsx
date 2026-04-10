@@ -658,13 +658,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // CALLBACKS
   // ============================================================
 
-  const readinessEvaluator = useCallback((frame: any, features: any, prescription: any) => {
+  // Per-exercise accumulators for session results writing
+  // Key = sequence index in queue, value = array of per-rep values
+  const exercisePeakMetricsRef = useRef<Record<number, number[]>>({});
+  const exerciseHoldDurationsRef = useRef<Record<number, number[]>>({});
     const r = evaluateReadiness({ frame, features, prescription, averageBrightness: null });
     return { ready: r.ready, message: r.message };
   }, []);
 
   const coachingCallbacks = useMemo(() => ({
-    onRepCompleted: (nowMs: number) => {
+    onRepCompleted: (nowMs: number, peakMetric: number | null, holdDurationMs: number | null) => {
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       const metricVal = inferenceLoop.activeMetricValue;
@@ -676,7 +679,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + (exerciseCtx?.repCount ?? "?"));
       writeDebugLog("success", "REP_CYCLE",
         "✓ REP COMPLETE #" + ((exerciseCtx?.repCount ?? 0) + 1),
-        "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget ?? "population") + "° | romMin=" + (romMin ?? "?") + "°"
+        "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | peak=" + (peakMetric?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget ?? "population") + "° | romMin=" + (romMin ?? "?") + "°"
       );
       const rcEntryRep: RepCycleEntry = {
         id: `${nowMs}-${Math.random().toString(36).slice(2,5)}`,
@@ -687,15 +690,31 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         romAcceptableMin: romMin, romNormDegrees: romNorm,
         romTargetDegrees: romTarget, encourageThreshold: encourage,
         repCount: (exerciseCtx?.repCount ?? 0) + 1,
-        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget !== null ? romTarget + "°" : "population") + " | encourage=" + (encourage !== null ? encourage + "°" : "none") + " | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
+        detail: "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | peak=" + (peakMetric?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget !== null ? romTarget + "°" : "population") + " | encourage=" + (encourage !== null ? encourage + "°" : "none") + " | romMin=" + (romMin ?? "?") + "° | romNorm=" + (romNorm ?? "?") + "°",
       };
       repCycleLogRef.current = [rcEntryRep, ...repCycleLogRef.current].slice(0, 100);
       setRepCycleLog([...repCycleLogRef.current]);
       if (!prescription || !exerciseCtx) { writeDebugLog("error", "COACHING", "onRepCompleted BLOCKED — null ctx or prescription"); return; }
       recordRepCompleted(exerciseCtx.repCount, nowMs);
-      patientContext.recordRepOutcome("success", null, null);
+
+      // Accumulate peak metric and hold duration for this exercise
+      const queueIdx = sessionQueue.getActiveQueueIndex?.() ?? 0;
+      if (peakMetric !== null) {
+        if (!exercisePeakMetricsRef.current[queueIdx]) exercisePeakMetricsRef.current[queueIdx] = [];
+        exercisePeakMetricsRef.current[queueIdx].push(peakMetric);
+      }
+      if (holdDurationMs !== null) {
+        if (!exerciseHoldDurationsRef.current[queueIdx]) exerciseHoldDurationsRef.current[queueIdx] = [];
+        exerciseHoldDurationsRef.current[queueIdx].push(holdDurationMs);
+      }
+
+      // recordRepOutcome increments repCount inside patientContext.
+      // Call it BEFORE passing context to coachingBrain so the brain
+      // receives the already-incremented count — fixes off-by-one.
+      patientContext.recordRepOutcome("success", null, holdDurationMs);
+      const updatedCtx = patientContext.getCurrentExerciseContext();
       writeDebugLog("info", "COACHING", "Calling coachingBrain.onRepCompleted");
-      coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
+      if (updatedCtx) coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: updatedCtx, nowMs });
     },
     onRepFailed: (failureReason: string, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
@@ -784,7 +803,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   }, [coachingCallbacks]);
 
   const stableCoachingCallbacks = useRef({
-    onRepCompleted: (nowMs: number) => coachingCallbacksRef.current.onRepCompleted(nowMs),
+    onRepCompleted: (nowMs: number, peakMetric: number | null, holdDurationMs: number | null) => coachingCallbacksRef.current.onRepCompleted(nowMs, peakMetric, holdDurationMs),
     onRepFailed: (reason: string, nowMs: number) => coachingCallbacksRef.current.onRepFailed(reason, nowMs),
     onHoldStarted: (ms: number, nowMs: number) => coachingCallbacksRef.current.onHoldStarted(ms, nowMs),
     onExerciseStarted: (nowMs: number) => coachingCallbacksRef.current.onExerciseStarted(nowMs),
@@ -958,6 +977,24 @@ Reply with only the summary text, no JSON, no formatting.`;
         const repTarget = ex.repTarget;
         const attempted = ex.successfulReps + ex.failedReps;
         const holdCompliance = repTarget > 0 ? ex.successfulReps / repTarget : null;
+
+        // Aggregate per-rep peak metrics collected during the session
+        const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
+        const avgMetric = peakMetrics.length > 0
+          ? peakMetrics.reduce((a, b) => a + b, 0) / peakMetrics.length
+          : null;
+
+        // Aggregate per-rep hold durations collected during the session
+        const holdDurations = exerciseHoldDurationsRef.current[i] ?? [];
+        const avgHold = holdDurations.length > 0
+          ? holdDurations.reduce((a, b) => a + b, 0) / holdDurations.length
+          : null;
+
+        // target_metric_degrees = the calibrated physio target the patient was
+        // working toward — targetThreshold is post-calibration physio target,
+        // NOT target.targetValue which is romNorm (population norm, not the goal)
+        const targetMetric = queueItem?.prescription.targetThreshold ?? null;
+
         return {
           session_result_id: sessionResultId,
           template_id: null,
@@ -968,9 +1005,9 @@ Reply with only the summary text, no JSON, no formatting.`;
           reps_successful: ex.successfulReps,
           reps_failed: ex.failedReps,
           hold_compliance_rate: holdCompliance,
-          avg_hold_ms: null,
-          avg_metric_degrees: null,
-          target_metric_degrees: queueItem?.prescription.target?.targetValue ?? null,
+          avg_hold_ms: avgHold,
+          avg_metric_degrees: avgMetric,
+          target_metric_degrees: targetMetric,
           failed_hold_count: ex.failureReasons.hold,
           failed_height_count: ex.failureReasons.height,
           failed_balance_count: ex.failureReasons.balance,
