@@ -225,7 +225,7 @@ function buildMovementLines(
 // ============================================================
 
 export type CoachingEventCallbacks = {
-  onRepCompleted: (nowMs: number) => void;
+  onRepCompleted: (nowMs: number, peakMetric: number | null, holdDurationMs: number | null) => void;
   onRepFailed: (failureReason: string, nowMs: number) => void;
   onHoldStarted: (holdRequiredMs: number, nowMs: number) => void;
   onExerciseStarted: (nowMs: number) => void;
@@ -274,6 +274,11 @@ export function useInferenceLoop() {
   const holdEnteredAtMsRef = useRef<number | null>(null);
   // Spike filter: tracks previous frame metric to reject impossible jumps (>50° per frame)
   const prevMetricValueRef = useRef<number | null>(null);
+  // Peak metric reached during current rep (reset on READY→LIFTING, updated each LIFTING/HOLDING frame)
+  // Passed to onRepCompleted so session results can store the actual achieved ROM
+  const peakMetricThisRepRef = useRef<number | null>(null);
+  // Hold duration for current rep (ms) — captured when HOLDING→LOWERING transition fires
+  const lastHoldDurationMsRef = useRef<number | null>(null);
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -320,6 +325,8 @@ export function useInferenceLoop() {
     prevPhaseRef.current = "ready";
     holdEnteredAtMsRef.current = null;
     prevMetricValueRef.current = null; // reset spike filter on each exercise
+    peakMetricThisRepRef.current = null;
+    lastHoldDurationMsRef.current = null;
 
     // Reset calibration for new exercise
     calibrationSamplesRef.current = [];
@@ -638,6 +645,8 @@ export function useInferenceLoop() {
             // active reps with "step back" instructions mid-hold
             if (prevPhase === "ready" && currentPhase === "lifting") {
               framingCallbacks.cancelPendingEval();
+              // Reset peak metric tracker for this new rep
+              peakMetricThisRepRef.current = null;
             }
 
             // Hold just started
@@ -653,25 +662,35 @@ export function useInferenceLoop() {
               );
             }
 
-            // Hold ended — reset entry time
+            // Hold ended — capture duration then reset entry time
             if (prevPhase === "holding" && currentPhase !== "holding") {
+              lastHoldDurationMsRef.current = holdEnteredAtMsRef.current !== null
+                ? nowMs - holdEnteredAtMsRef.current
+                : null;
               holdEnteredAtMsRef.current = null;
+            }
+
+            // Track peak metric during lifting and holding phases
+            if (currentPhase === "lifting" || currentPhase === "holding") {
+              const metricNow = output.activeMetricValue;
+              if (metricNow !== null && metricNow > (peakMetricThisRepRef.current ?? 0)) {
+                peakMetricThisRepRef.current = metricNow;
+              }
             }
 
             // Rep just completed
             if (output.repState.justCompletedRep) {
-              // ── REP RESOLUTION DEBUG LOG ───────────────────────────────
-              // Confirms what finishThreshold was when LOWERING resolved.
-              // If this shows a high value (~110+), calibration write didn't stick.
               console.log(
                 `[REP COMPLETE] rep=${output.repState.repCount}` +
                 ` | metric=${output.activeMetricValue?.toFixed(1) ?? "?"}°` +
+                ` | peak=${peakMetricThisRepRef.current?.toFixed(1) ?? "?"}°` +
+                ` | holdDuration=${lastHoldDurationMsRef.current ?? "?"}ms` +
                 ` | finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°` +
                 ` | targetThreshold=${activePrescription.targetThreshold.toFixed(1)}°` +
                 ` | startThreshold=${activePrescription.startThreshold.toFixed(1)}°` +
                 ` | calib_baseline=${calibrationBaselineRef.current.toFixed(1)}°`
               );
-              coachingCallbacks.onRepCompleted(nowMs);
+              coachingCallbacks.onRepCompleted(nowMs, peakMetricThisRepRef.current, lastHoldDurationMsRef.current);
             }
 
             // Rep just failed
