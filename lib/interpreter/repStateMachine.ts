@@ -148,6 +148,18 @@ export function updateRepState(
     }
 
     case "lowering": {
+      // Re-raise escape: patient lifted back up during lowering phase.
+      // Return to HOLDING so the state machine doesn't get stuck.
+      // Only escape if hold was satisfied — otherwise they aborted the rep
+      // and we want them to come all the way down to finishThreshold to fail it.
+      const loweringTolerance = prescription.target.tolerance ?? 0;
+      if (holdSatisfied && value >= prescription.targetThreshold - loweringTolerance) {
+        phase = "holding";
+        // Re-enter holding — reset hold timer so they must hold again
+        enteredTopAtMs = nowMs;
+        break;
+      }
+
       if (value <= prescription.finishThreshold) {
         if (!everReachedTarget) {
           if (prescription.side === "both" && everHadBilateralParticipationGap) {
