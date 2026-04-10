@@ -20,6 +20,7 @@ export function createInitialRepState(): RuntimeRepState {
     enteredTopAtMs: null,
     enteredLoweringAtMs: null,
     holdSatisfied: false,
+    hasDescendedFromPeak: false,
     everReachedTarget: false,
 
     everViolatedIsolation: false,
@@ -50,6 +51,7 @@ export function updateRepState(
   let enteredTopAtMs = currentState.enteredTopAtMs;
   let enteredLoweringAtMs = currentState.enteredLoweringAtMs;
   let holdSatisfied = currentState.holdSatisfied;
+  let hasDescendedFromPeak = currentState.hasDescendedFromPeak;
   let everReachedTarget = currentState.everReachedTarget;
 
   let everViolatedIsolation = currentState.everViolatedIsolation;
@@ -93,6 +95,7 @@ export function updateRepState(
       enteredTopAtMs = null;
       enteredLoweringAtMs = null;
       holdSatisfied = false;
+      hasDescendedFromPeak = false;
       everReachedTarget = false;
       everViolatedIsolation = false;
       everHadBilateralParticipationGap = false;
@@ -112,6 +115,7 @@ export function updateRepState(
         phase = "ready";
         enteredTopAtMs = null;
         holdSatisfied = false;
+        hasDescendedFromPeak = false;
         everReachedTarget = false;
         everViolatedIsolation = false;
         everHadBilateralParticipationGap = false;
@@ -153,19 +157,27 @@ export function updateRepState(
     }
 
     case "lowering": {
-      // Re-raise escape: patient lifted back up during lowering phase.
-      // Gate: only check after 500ms in LOWERING to avoid immediate
-      // re-trigger on the frame where hold completes (patient still at peak).
       const loweringTolerance = prescription.target.tolerance ?? 0;
-      const msInLowering = enteredLoweringAtMs !== null ? nowMs - enteredLoweringAtMs : 0;
+
+      // Track when the metric first meaningfully drops below target during lowering.
+      // This is the only reliable signal that the patient has actually started lowering.
+      if (!hasDescendedFromPeak && value < prescription.targetThreshold - loweringTolerance) {
+        hasDescendedFromPeak = true;
+      }
+
+      // Re-raise escape: patient lifted back up during lowering phase.
+      // Only fires AFTER they have genuinely started descending (hasDescendedFromPeak).
+      // This prevents phantom re-triggers on the frame immediately after hold completes
+      // when the patient is still at peak height.
       if (
         holdSatisfied &&
-        msInLowering > 500 &&
+        hasDescendedFromPeak &&
         value >= prescription.targetThreshold - loweringTolerance
       ) {
         phase = "holding";
         enteredTopAtMs = nowMs;
         enteredLoweringAtMs = null;
+        hasDescendedFromPeak = false;
         break;
       }
 
@@ -205,6 +217,7 @@ export function updateRepState(
         enteredTopAtMs = null;
         enteredLoweringAtMs = null;
         holdSatisfied = false;
+        hasDescendedFromPeak = false;
         everReachedTarget = false;
         everViolatedIsolation = false;
         everHadBilateralParticipationGap = false;
@@ -228,6 +241,7 @@ export function updateRepState(
     enteredTopAtMs,
     enteredLoweringAtMs,
     holdSatisfied,
+    hasDescendedFromPeak,
     everReachedTarget,
 
     everViolatedIsolation,
