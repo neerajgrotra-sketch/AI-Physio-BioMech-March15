@@ -114,16 +114,32 @@ function buildPrescription(
     encourageThreshold: romEncourageDegrees ?? null,
   };
 
+  const holdRaw = coachingStrings.hold;
+  const holdVariants: string[] = Array.isArray(holdRaw)
+    ? (holdRaw as string[])
+    : typeof holdRaw === 'string'
+    ? [holdRaw]
+    : ['Hold it there.'];
+  const holdSingle = holdVariants[0] ?? 'Hold it there.';
+
+  const successRaw = coachingStrings.success_rotating;
+  const successVariants: string[] = Array.isArray(successRaw)
+    ? (successRaw as string[])
+    : typeof successRaw === 'string'
+    ? [successRaw]
+    : ['Good.'];
+  const successSingle = successVariants[0] ?? 'Good.';
+
   const coaching = {
     intro: (coachingStrings.intro as string) ?? 'Begin when ready.',
     lift: (coachingStrings.lift as string) ?? 'Lift to the target position.',
-    hold: Array.isArray(coachingStrings.hold)
-      ? (coachingStrings.hold as string[])[0] ?? 'Hold at the top.'
-      : (coachingStrings.hold as string) ?? 'Hold at the top.',
+    hold: holdSingle,
+    holdVariants,
     lower: (coachingStrings.lower as string) ?? 'Lower slowly.',
-    success: Array.isArray(coachingStrings.success_rotating)
-      ? (coachingStrings.success_rotating as string[])[0] ?? 'Good.'
-      : 'Good.',
+    success: successSingle,
+    successVariants,
+    successFirst: (coachingStrings.success_first as string) ?? undefined,
+    exerciseComplete: (coachingStrings.exercise_complete as string) ?? undefined,
     failedHeight:
       (coachingStrings.correction_height as string) ?? 'Lift a little higher.',
     failedHold:
