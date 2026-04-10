@@ -22,6 +22,7 @@ export type RuntimeRepState = {
   justCompletedHold: boolean;
 
   enteredTopAtMs: number | null;
+  enteredLoweringAtMs: number | null;  // used to gate re-raise escape
   holdSatisfied: boolean;
   everReachedTarget: boolean;
 
