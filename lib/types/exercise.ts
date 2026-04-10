@@ -143,9 +143,13 @@ export type FramingDeclaration = {
 export type ExerciseCoachingStrings = {
   intro: string;
   lift: string;
-  hold: string;
+  hold: string;              // single string — kept for backward compat
+  holdVariants: string[];    // full array from DB coaching_strings.hold
   lower: string;
-  success: string;
+  success: string;              // single string — kept for backward compat
+  successVariants: string[];    // full array from DB coaching_strings.success_rotating
+  successFirst?: string;        // from DB coaching_strings.success_first
+  exerciseComplete?: string;    // from DB coaching_strings.exercise_complete
   failedHeight: string;
   failedHold: string;
   failedBalance: string;
