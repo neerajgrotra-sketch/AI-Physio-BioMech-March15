@@ -662,6 +662,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // Key = sequence index in queue, value = array of per-rep values
   const exercisePeakMetricsRef = useRef<Record<number, number[]>>({});
   const exerciseHoldDurationsRef = useRef<Record<number, number[]>>({});
+
+  const readinessEvaluator = useCallback((frame: any, features: any, prescription: any) => {
     const r = evaluateReadiness({ frame, features, prescription, averageBrightness: null });
     return { ready: r.ready, message: r.message };
   }, []);
