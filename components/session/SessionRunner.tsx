@@ -678,7 +678,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const romNorm = (prescription as any)?.romNormDegrees ?? null;
       const romTarget = (prescription as any)?.romTargetDegrees ?? null;
       const encourage = (prescription as any)?.encourageThreshold ?? null;
-      writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + (exerciseCtx?.repCount ?? "?"));
+      writeDebugLog("info", "COACHING", "Rep completed event fired", "prescription=" + (prescription?.id ?? "null") + " ctx=" + (exerciseCtx ? "ok" : "null") + " repCount=" + ((exerciseCtx?.repCount ?? 0) + 1));
       writeDebugLog("success", "REP_CYCLE",
         "✓ REP COMPLETE #" + ((exerciseCtx?.repCount ?? 0) + 1),
         "metric=" + (metricVal?.toFixed(1) ?? "?") + "° | peak=" + (peakMetric?.toFixed(1) ?? "?") + "° | targetThresh=" + (tgtThresh?.toFixed(1) ?? "?") + "° | physioTarget=" + (romTarget ?? "population") + "° | romMin=" + (romMin ?? "?") + "°"
@@ -710,13 +710,13 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         exerciseHoldDurationsRef.current[queueIdx].push(holdDurationMs);
       }
 
-      // recordRepOutcome increments repCount inside patientContext.
-      // Call it BEFORE passing context to coachingBrain so the brain
-      // receives the already-incremented count — fixes off-by-one.
-      patientContext.recordRepOutcome("success", null, holdDurationMs);
-      const updatedCtx = patientContext.getCurrentExerciseContext();
+      // coachingBrain.onRepCompleted expects 0-indexed repCount (pre-increment).
+      // Pass exerciseCtx captured BEFORE recordRepOutcome increments it.
+      // recordRepOutcome is called after so patientContext sentiment/fatigue
+      // state stays accurate, but the brain gets the value it was designed for.
       writeDebugLog("info", "COACHING", "Calling coachingBrain.onRepCompleted");
-      if (updatedCtx) coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: updatedCtx, nowMs });
+      coachingBrain.onRepCompleted({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs });
+      patientContext.recordRepOutcome("success", null, holdDurationMs);
     },
     onRepFailed: (failureReason: string, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
