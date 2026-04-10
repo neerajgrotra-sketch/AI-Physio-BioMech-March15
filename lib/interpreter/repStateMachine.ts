@@ -18,6 +18,7 @@ export function createInitialRepState(): RuntimeRepState {
     justCompletedHold: false,
 
     enteredTopAtMs: null,
+    enteredLoweringAtMs: null,
     holdSatisfied: false,
     everReachedTarget: false,
 
@@ -47,6 +48,7 @@ export function updateRepState(
   let justCompletedHold = false;
 
   let enteredTopAtMs = currentState.enteredTopAtMs;
+  let enteredLoweringAtMs = currentState.enteredLoweringAtMs;
   let holdSatisfied = currentState.holdSatisfied;
   let everReachedTarget = currentState.everReachedTarget;
 
@@ -89,6 +91,7 @@ export function updateRepState(
       }
 
       enteredTopAtMs = null;
+      enteredLoweringAtMs = null;
       holdSatisfied = false;
       everReachedTarget = false;
       everViolatedIsolation = false;
@@ -135,6 +138,7 @@ export function updateRepState(
 
       if (value < prescription.targetThreshold - tolerance) {
         phase = "lowering";
+        enteredLoweringAtMs = nowMs;
       } else if (enteredTopAtMs !== null) {
         const heldForMs = nowMs - enteredTopAtMs;
 
@@ -142,6 +146,7 @@ export function updateRepState(
           holdSatisfied = true;
           justCompletedHold = true;
           phase = "lowering";
+          enteredLoweringAtMs = nowMs;
         }
       }
       break;
@@ -149,14 +154,18 @@ export function updateRepState(
 
     case "lowering": {
       // Re-raise escape: patient lifted back up during lowering phase.
-      // Return to HOLDING so the state machine doesn't get stuck.
-      // Only escape if hold was satisfied — otherwise they aborted the rep
-      // and we want them to come all the way down to finishThreshold to fail it.
+      // Gate: only check after 500ms in LOWERING to avoid immediate
+      // re-trigger on the frame where hold completes (patient still at peak).
       const loweringTolerance = prescription.target.tolerance ?? 0;
-      if (holdSatisfied && value >= prescription.targetThreshold - loweringTolerance) {
+      const msInLowering = enteredLoweringAtMs !== null ? nowMs - enteredLoweringAtMs : 0;
+      if (
+        holdSatisfied &&
+        msInLowering > 500 &&
+        value >= prescription.targetThreshold - loweringTolerance
+      ) {
         phase = "holding";
-        // Re-enter holding — reset hold timer so they must hold again
         enteredTopAtMs = nowMs;
+        enteredLoweringAtMs = null;
         break;
       }
 
@@ -194,6 +203,7 @@ export function updateRepState(
         }
 
         enteredTopAtMs = null;
+        enteredLoweringAtMs = null;
         holdSatisfied = false;
         everReachedTarget = false;
         everViolatedIsolation = false;
@@ -216,6 +226,7 @@ export function updateRepState(
     justCompletedHold,
 
     enteredTopAtMs,
+    enteredLoweringAtMs,
     holdSatisfied,
     everReachedTarget,
 
