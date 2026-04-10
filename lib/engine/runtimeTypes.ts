@@ -24,6 +24,7 @@ export type RuntimeRepState = {
   enteredTopAtMs: number | null;
   enteredLoweringAtMs: number | null;  // used to gate re-raise escape
   holdSatisfied: boolean;
+  hasDescendedFromPeak: boolean;       // true once metric drops below target during LOWERING
   everReachedTarget: boolean;
 
   everViolatedIsolation: boolean;
