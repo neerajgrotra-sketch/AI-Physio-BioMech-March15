@@ -576,6 +576,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
   ghostRepCountRef.current    = inferenceLoop.repCount;
   const framingIntelligence = useFramingIntelligence(patientProfile);
+  // Per-exercise landmark confidence — written to exercise_results at session end
+  const exerciseLandmarkConfidenceRef = useRef<Record<number, number | null>>({});
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
 
@@ -840,6 +842,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     const prescription = sessionQueue.getActivePrescription();
     const exerciseCtx = patientContext.getCurrentExerciseContext();
     writeDebugLog("success", "SESSION", `Exercise complete: ${prescription?.name ?? "?"}`);
+
+    // Capture landmark confidence before framing resets
+    const currentIdx = sessionQueue.queueIndex;
+    const confPct = framingIntelligence.getLandmarkConfidencePct();
+    exerciseLandmarkConfidenceRef.current[currentIdx] = confPct;
+    writeDebugLog("info", "RESULTS", `landmark_confidence_pct[${currentIdx}]=${confPct ?? "null"}`);
     if (prescription && exerciseCtx) {
       coachingBrain.onExerciseCompleting({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs: Date.now() });
     }
@@ -1030,6 +1038,7 @@ Reply with only the summary text, no JSON, no formatting.`;
           failed_balance_count: ex.failureReasons.balance,
           failed_isolation_count: ex.failureReasons.isolation,
           movement_timeline: null,
+          landmark_confidence_pct: exerciseLandmarkConfidenceRef.current[i] ?? null,
         };
       });
 
@@ -1064,6 +1073,7 @@ Reply with only the summary text, no JSON, no formatting.`;
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
     sessionStartedAtMsRef.current = Date.now();
+    exerciseLandmarkConfidenceRef.current = {};
     writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
     // Auto-check AI engine on session start
     checkAiEngine(true);
@@ -1779,18 +1789,37 @@ Reply with only the summary text, no JSON, no formatting.`;
 
         {/* CAMERA */}
         <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-          <div style={{
-            marginBottom: 10, padding: "8px 12px", borderRadius: 8,
-            fontSize: 13, fontWeight: 600,
-            background: framingPanelState.tone === "good" ? "rgba(100,220,150,0.12)" : framingPanelState.tone === "critical" ? "rgba(255,100,100,0.12)" : "rgba(255,180,80,0.12)",
-            color: framingPanelState.tone === "good" ? "#9be7b0" : framingPanelState.tone === "critical" ? "#ff8f8f" : "#ffcc80",
-            border: `1px solid ${framingPanelState.tone === "good" ? "rgba(100,220,150,0.3)" : framingPanelState.tone === "critical" ? "rgba(255,100,100,0.3)" : "rgba(255,180,80,0.3)"}`,
-            display: "flex", alignItems: "center", gap: 8
-          }}>
-            {framingPanelState.evaluating && <span style={{ fontSize: 10, opacity: 0.6 }}>●</span>}
-            {framingPanelState.message}
-            <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.4 }}>[{framingPanelState.severity}]</span>
-          </div>
+          {/* ── Framing pill — subtle, fades during active reps ── */}
+          {(() => {
+            const isActiveRep = ["lifting", "holding", "lowering", "top"].includes(inferenceLoop.phase);
+            const pillOpacity = isActiveRep ? 0.3 : 1;
+            const isGood = framingPanelState.tone === "good";
+            return (
+              <div style={{
+                marginBottom: 8,
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "4px 10px", borderRadius: 20,
+                background: isGood ? "rgba(63,185,80,0.10)" : "rgba(210,153,34,0.10)",
+                border: `1px solid ${isGood ? "rgba(63,185,80,0.25)" : "rgba(210,153,34,0.25)"}`,
+                fontSize: 12, fontWeight: 500,
+                color: isGood ? "#3fb950" : "#d29922",
+                opacity: pillOpacity,
+                transition: "opacity 0.4s ease",
+                maxWidth: "100%",
+              }}>
+                <div style={{
+                  width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                  background: isGood ? "#3fb950" : "#d29922",
+                }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {framingPanelState.message}
+                </span>
+                {framingPanelState.evaluating && (
+                  <span style={{ fontSize: 9, opacity: 0.5, flexShrink: 0 }}>●</span>
+                )}
+              </div>
+            );
+          })()}
 
           <div style={{ position: "relative" }}>
             <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
