@@ -3,12 +3,12 @@
 // ============================================================
 // M16 redesign:
 // - shouldPauseExercise removed — framing never blocks sessions
-// - Pre-exercise voice guidance: fires once after 2s delay
-//   (gives BlazePose time to warm up), max 2 attempts, 8s gap
-// - Live frame/features read from refs so delayed check gets
-//   current data, not stale data from call time
+// - Pre-exercise voice guidance: fires once after 2s delay,
+//   max 2 attempts, 8s gap
+// - Live frame/features read from refs (not stale call-time values)
 // - Mid-session: visual pill only, no voice, no blocking
 // - Tracks landmark_confidence_pct per exercise for physio dashboard
+// - Debug logging via console for tracing framing behaviour
 // ============================================================
 
 import { useRef, useState, useCallback } from "react";
@@ -25,9 +25,21 @@ import type { ExercisePrescription } from "@/lib/types/exercise";
 // CONSTANTS
 // ============================================================
 
-const INITIAL_CHECK_DELAY_MS      = 2000; // wait for BlazePose to warm up
-const PRE_EXERCISE_RETRY_DELAY_MS = 8000; // gap between voice attempts
-const PRE_EXERCISE_MAX_ATTEMPTS   = 2;    // max voice cues per exercise
+const INITIAL_CHECK_DELAY_MS      = 2000;
+const PRE_EXERCISE_RETRY_DELAY_MS = 8000;
+const PRE_EXERCISE_MAX_ATTEMPTS   = 2;
+
+// ============================================================
+// DEBUG LOGGER
+// ============================================================
+
+function framingLog(msg: string, detail?: string) {
+  const time = new Date().toLocaleTimeString("en-CA", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    fractionalSecondDigits: 2
+  });
+  console.log(`[FRAMING ${time}] ${msg}${detail ? " | " + detail : ""}`);
+}
 
 // ============================================================
 // PANEL STATE BUILDER
@@ -39,10 +51,10 @@ function buildPanelState(
   evaluating: boolean
 ): FramingPanelState {
   return {
-    tone: severity === "ok" ? "good" : "warning", // never "critical" in UI
+    tone: severity === "ok" ? "good" : "warning",
     message,
     evaluating,
-    exercisePaused: false, // always false — framing never pauses sessions
+    exercisePaused: false,
     severity
   };
 }
@@ -55,7 +67,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
   const monitorRef   = useRef(new FramingMonitor(2000));
   const evaluatorRef = useRef(new FramingEvaluator());
 
-  // UI state
   const [framingPanelState, setFramingPanelState] = useState<FramingPanelState>({
     tone: "warning",
     message: "Camera is off.",
@@ -64,29 +75,39 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     severity: "ok"
   });
 
-  // Live frame/features refs — updated every frame by evaluateFraming
-  // so delayed timeouts always read current data, not stale call-time values
+  // Live refs — updated every frame so delayed checks read current data
   const liveFrameRef        = useRef<PoseFrame | null>(null);
   const liveFeaturesRef     = useRef<MovementFeatures | null>(null);
   const livePrescriptionRef = useRef<ExercisePrescription | null>(null);
 
-  // Pre-exercise voice guidance state
+  // Pre-exercise voice state
   const preExerciseActiveRef = useRef(false);
   const voiceAttemptCountRef = useRef(0);
   const voiceTimeoutRef      = useRef<number | null>(null);
 
-  // Landmark confidence accumulator — reset per exercise
+  // Confidence accumulator
   const confidenceSamplesRef = useRef<number[]>([]);
 
   // ----------------------------------------------------------
   // SPEAK FRAMING CUE
-  // Waits for any active coaching speech to finish first.
+  // Speaks immediately — does NOT wait for coaching speech.
+  // Framing cue is a one-time positional instruction that
+  // should fire even if the intro is still playing.
+  // We cancel any current speech, speak framing cue, then
+  // coaching brain will resume on next trigger naturally.
   // ----------------------------------------------------------
 
   const speakFramingCue = useCallback((text: string) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      framingLog("speakFramingCue BLOCKED — no speechSynthesis");
+      return;
+    }
+    framingLog("speakFramingCue FIRING", `text="${text}" speaking=${window.speechSynthesis.speaking}`);
 
-    const doSpeak = () => {
+    // Cancel current speech so framing instruction isn't buried
+    window.speechSynthesis.cancel();
+
+    window.setTimeout(() => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate   = 0.92;
       utterance.pitch  = 1.0;
@@ -100,27 +121,13 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
         )
       );
       if (preferred) utterance.voice = preferred;
+      framingLog("speakFramingCue utterance queued", `voice=${preferred?.name ?? "default"}`);
       window.speechSynthesis.speak(utterance);
-    };
-
-    if (window.speechSynthesis.speaking) {
-      const poll = () => {
-        if (!preExerciseActiveRef.current) return;
-        if (window.speechSynthesis.speaking) {
-          window.setTimeout(poll, 300);
-        } else {
-          window.setTimeout(doSpeak, 400);
-        }
-      };
-      window.setTimeout(poll, 300);
-    } else {
-      doSpeak();
-    }
+    }, 100);
   }, []);
 
   // ----------------------------------------------------------
   // RUN FRAMING CHECK WITH LIVE DATA
-  // Reads current frame/features from refs — not stale values.
   // ----------------------------------------------------------
 
   const runFramingCheck = useCallback((prescription: ExercisePrescription) => {
@@ -128,20 +135,30 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     const features = liveFeaturesRef.current;
     const nowMs    = Date.now();
 
+    framingLog("runFramingCheck", `preExerciseActive=${preExerciseActiveRef.current} attempts=${voiceAttemptCountRef.current} personDetected=${frame?.personDetected ?? false}`);
+
+    if (!preExerciseActiveRef.current) {
+      framingLog("runFramingCheck SKIPPED — pre-exercise window closed");
+      return;
+    }
+
     if (!frame || !frame.personDetected || !features) {
       const msg = "Please step into the camera view.";
+      framingLog("runFramingCheck — no person", msg);
       setFramingPanelState(buildPanelState(msg, "warning", false));
-      if (preExerciseActiveRef.current &&
-          voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
+      if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
         voiceAttemptCountRef.current += 1;
+        framingLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, msg);
         speakFramingCue(msg);
       }
       return;
     }
 
     const status = monitorRef.current.forcePreExerciseCheck(frame, features, prescription, nowMs);
+    framingLog("runFramingCheck status", `adequate=${status.adequate} severity=${status.severity} fallback="${status.fallbackInstruction}"`);
 
     if (status.adequate) {
+      framingLog("runFramingCheck — adequate, no voice needed");
       setFramingPanelState(buildPanelState("Good position.", "ok", false));
       return;
     }
@@ -149,18 +166,21 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     const message = status.fallbackInstruction ?? "Adjust your position so I can see you clearly.";
     setFramingPanelState(buildPanelState(message, "warning", true));
 
-    if (preExerciseActiveRef.current &&
-        voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
+    if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
       voiceAttemptCountRef.current += 1;
+      framingLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, message);
       speakFramingCue(message);
+    } else {
+      framingLog("runFramingCheck — max attempts reached, no voice");
     }
 
-    // AI for a better instruction
+    // AI for better instruction
     const confidenceReport = buildConfidenceReport(frame, features, prescription, nowMs);
     evaluatorRef.current.evaluate(
       prescription, status, confidenceReport, patientProfile,
       (result) => {
         if (!result.isStillRelevant) return;
+        framingLog("AI framing result", `instruction="${result.patientInstruction}"`);
         setFramingPanelState(
           buildPanelState(result.patientInstruction ?? "Good position.", result.severity, false)
         );
@@ -176,6 +196,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
   // ----------------------------------------------------------
 
   const reset = useCallback((message = "Position yourself in view.") => {
+    framingLog("reset", message);
     monitorRef.current.reset();
     evaluatorRef.current.cancel();
     preExerciseActiveRef.current = false;
@@ -191,10 +212,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
 
   // ----------------------------------------------------------
   // CANCEL PENDING EVALUATION
-  // Called when patient starts moving — closes voice window.
+  // Called when patient starts moving (READY → LIFTING).
   // ----------------------------------------------------------
 
   const cancelPendingEval = useCallback(() => {
+    framingLog("cancelPendingEval — closing pre-exercise voice window");
     evaluatorRef.current.cancel();
     preExerciseActiveRef.current = false;
     if (voiceTimeoutRef.current !== null) {
@@ -238,8 +260,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
 
   // ----------------------------------------------------------
   // EVALUATE FRAMING
-  // Called every frame (ready phase only).
-  // Updates live refs so delayed checks read current data.
+  // Called every frame (ready phase only). Updates live refs.
   // ----------------------------------------------------------
 
   const evaluateFraming = useCallback((
@@ -248,7 +269,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     prescription: ExercisePrescription,
     nowMs: number
   ) => {
-    // Keep live refs current
     liveFrameRef.current    = frame;
     liveFeaturesRef.current = features;
 
@@ -265,7 +285,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     const message = status.fallbackInstruction ?? "Adjust your position.";
     setFramingPanelState(buildPanelState(message, "warning", status.triggerAiEvaluation));
 
-    // Mid-session: AI update only, never voice
     if (status.triggerAiEvaluation) {
       const confidenceReport = buildConfidenceReport(frame, features, prescription, nowMs);
       evaluatorRef.current.evaluate(
@@ -285,8 +304,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
 
   // ----------------------------------------------------------
   // FORCE PRE-EXERCISE CHECK
-  // Waits 2s for BlazePose to warm up, then evaluates using
-  // live frame data from refs. Schedules a second check 8s later.
+  // Waits 2s for BlazePose to warm up, then checks with live data.
   // ----------------------------------------------------------
 
   const forcePreExerciseCheck = useCallback((
@@ -295,16 +313,15 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     prescription: ExercisePrescription,
     nowMs: number
   ) => {
-    // Reset for new exercise
+    framingLog("forcePreExerciseCheck called", `ex=${prescription.id} personDetected=${frame?.personDetected ?? false}`);
+
     confidenceSamplesRef.current = [];
     livePrescriptionRef.current  = prescription;
     monitorRef.current.reset();
 
-    // Seed live refs with current values
     liveFrameRef.current    = frame;
     liveFeaturesRef.current = features;
 
-    // Open pre-exercise window
     preExerciseActiveRef.current = true;
     voiceAttemptCountRef.current = 0;
 
@@ -312,20 +329,19 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
       window.clearTimeout(voiceTimeoutRef.current);
     }
 
-    // Show neutral pill while waiting
     setFramingPanelState(buildPanelState("Checking your position…", "warning", true));
 
-    // First check after 2s — BlazePose should have a person by then
+    framingLog(`scheduling first check in ${INITIAL_CHECK_DELAY_MS}ms`);
+
     voiceTimeoutRef.current = window.setTimeout(() => {
       voiceTimeoutRef.current = null;
-      if (!preExerciseActiveRef.current) return;
-
+      framingLog("first check firing");
       runFramingCheck(prescription);
 
-      // Second check after another 8s if patient still hasn't moved
+      // Schedule second check only if still pre-exercise
       voiceTimeoutRef.current = window.setTimeout(() => {
         voiceTimeoutRef.current = null;
-        if (!preExerciseActiveRef.current) return;
+        framingLog("second check firing");
         runFramingCheck(prescription);
       }, PRE_EXERCISE_RETRY_DELAY_MS);
 
