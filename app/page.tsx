@@ -4,14 +4,92 @@ import { useEffect } from 'react';
 
 export default function LandingPage() {
   useEffect(() => {
-    const obs = new IntersectionObserver(
+    // Scroll reveal
+    const revealObs = new IntersectionObserver(
       (entries) => entries.forEach((e) => {
-        if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); }
+        if (e.isIntersecting) { e.target.classList.add('in'); revealObs.unobserve(e.target); }
       }),
       { threshold: 0.08 }
     );
-    document.querySelectorAll('.rv').forEach((el) => obs.observe(el));
-    return () => obs.disconnect();
+    document.querySelectorAll('.rv').forEach((el) => revealObs.observe(el));
+
+    // Count-up animation with easeOut
+    const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const animateCounter = (el: Element) => {
+      const target = parseFloat(el.getAttribute('data-target') || '0');
+      const suffix = el.getAttribute('data-suffix') || '';
+      const prefix = el.getAttribute('data-prefix') || '';
+      const decimals = parseInt(el.getAttribute('data-decimals') || '0');
+      const duration = 1600;
+      const startTime = performance.now();
+      const tick = (now: number) => {
+        const progress = Math.min((now - startTime) / duration, 1);
+        const val = easeOut(progress) * target;
+        el.textContent = prefix + val.toFixed(decimals) + suffix;
+        if (progress < 1) requestAnimationFrame(tick);
+        else el.textContent = prefix + target.toFixed(decimals) + suffix;
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const counterObs = new IntersectionObserver(
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { animateCounter(e.target); counterObs.unobserve(e.target); }
+      }),
+      { threshold: 0.5 }
+    );
+    document.querySelectorAll('.count-up').forEach((el) => counterObs.observe(el));
+
+    // Count-DOWN for <2s — animates from high number down to 2
+    const animateCountDown = (el: Element) => {
+      const from = parseFloat(el.getAttribute('data-from') || '5');
+      const to = parseFloat(el.getAttribute('data-to') || '2');
+      const suffix = el.getAttribute('data-suffix') || '';
+      const prefix = el.getAttribute('data-prefix') || '';
+      const decimals = parseInt(el.getAttribute('data-decimals') || '1');
+      const duration = 1600;
+      const startTime = performance.now();
+      const tick = (now: number) => {
+        const progress = Math.min((now - startTime) / duration, 1);
+        const val = from - easeOut(progress) * (from - to);
+        el.textContent = prefix + val.toFixed(decimals) + suffix;
+        if (progress < 1) requestAnimationFrame(tick);
+        else el.textContent = prefix + to.toFixed(decimals) + suffix;
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const countDownObs = new IntersectionObserver(
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { animateCountDown(e.target); countDownObs.unobserve(e.target); }
+      }),
+      { threshold: 0.5 }
+    );
+    document.querySelectorAll('.count-down').forEach((el) => countDownObs.observe(el));
+
+    // Staggered step cards — fire once when steps section enters view
+    const stepsContainer = document.querySelector('.steps');
+    if (stepsContainer) {
+      const staggerObs = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              const cards = e.target.querySelectorAll('.s-card');
+              cards.forEach((card, idx) => {
+                setTimeout(() => card.classList.add('s-in'), idx * 160);
+              });
+              staggerObs.unobserve(e.target);
+            }
+          });
+        },
+        { threshold: 0.15 }
+      );
+      staggerObs.observe(stepsContainer);
+    }
+
+
+    return () => { revealObs.disconnect(); counterObs.disconnect(); countDownObs.disconnect(); };
   }, []);
 
   const go = (id: string) => (e: React.MouseEvent) => {
@@ -365,6 +443,26 @@ export default function LandingPage() {
           margin-top: 6px; line-height: 1.55;
         }
 
+        /* HIPAA shimmer sweep */
+        .s-shimmer {
+          position: relative; overflow: hidden;
+        }
+        .s-shimmer::after {
+          content: '';
+          position: absolute; top: 0; left: -100%;
+          width: 60%; height: 100%;
+          background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(255,255,255,.18) 50%,
+            transparent 100%);
+          animation: shimmer 2.8s ease 0.6s infinite;
+        }
+        @keyframes shimmer {
+          0%   { left: -60%; }
+          60%  { left: 120%; }
+          100% { left: 120%; }
+        }
+
         /* ─────────────────────────────────────────
            SHARED SECTION CHROME
         ───────────────────────────────────────── */
@@ -392,35 +490,60 @@ export default function LandingPage() {
           color: var(--ink3); max-width: 460px; margin-bottom: 44px;
         }
 
-        /* ─────────────────────────────────────────
            HOW IT WORKS
         ───────────────────────────────────────── */
         .how-bg { background: var(--off); }
 
         .steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
 
+        /* stagger: each card slides up with increasing delay */
         .s-card {
           background: var(--w); border: 1px solid var(--bdr);
           border-radius: 14px; padding: 28px;
           position: relative; overflow: hidden;
+          opacity: 0; transform: translateY(24px);
+          transition: opacity 0.5s ease, transform 0.5s ease, border-color 0.2s, box-shadow 0.2s;
         }
+        .s-card.s-in { opacity: 1; transform: none; }
+        .s-card:hover { border-color: rgba(108,99,255,.2); box-shadow: 0 6px 24px rgba(108,99,255,.07); }
+
+        /* step number — gradient text, visible but not overpowering */
         .s-n {
-          position: absolute; top: 14px; right: 18px;
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 32px; height: 32px; border-radius: 8px;
+          background: var(--grad);
           font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 56px; font-weight: 800;
-          color: rgba(108,99,255,.04); line-height: 1;
+          font-size: 13px; font-weight: 800;
+          color: #fff;
+          margin-bottom: 16px;
+          flex-shrink: 0;
+        }
+
+        /* connector line between steps on desktop */
+        .steps-connector {
+          display: flex; align-items: flex-start;
+          gap: 0; position: relative;
+        }
+        .steps-connector::before {
+          content: '';
+          position: absolute;
+          top: 44px; left: calc(33.33% - 7px); right: calc(33.33% - 7px);
+          height: 1.5px;
+          background: linear-gradient(90deg, rgba(108,99,255,.3) 0%, rgba(0,194,199,.3) 100%);
+          z-index: 0;
           pointer-events: none;
         }
+
         .s-ico {
           width: 44px; height: 44px; border-radius: 11px;
           background: rgba(108,99,255,.07);
           border: 1px solid rgba(108,99,255,.12);
           display: flex; align-items: center; justify-content: center;
-          margin-bottom: 18px;
+          margin-bottom: 16px;
         }
         .s-card h3 {
           font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 16px; font-weight: 700;
+          font-size: 15px; font-weight: 700;
           color: var(--ink); margin-bottom: 8px;
         }
         .s-card p { font-size: 13px; line-height: 1.7; color: var(--ink3); }
@@ -593,7 +716,7 @@ export default function LandingPage() {
         @media (max-width: 700px) {
           .nav { padding: 0 16px; height: 54px; }
           .nav-links { display: none; }
-          .btn-soft { display: none; }
+          .btn-soft { border: none; background: none; padding: 6px 8px; color: var(--ink3); font-size: 13px; }
           .nav-word { font-size: 16px; }
 
           .hero { padding: 78px 20px 52px; }
@@ -613,6 +736,7 @@ export default function LandingPage() {
           .lead { font-size: 15px; margin-bottom: 32px; }
 
           .steps { grid-template-columns: 1fr; gap: 10px; }
+          .s-card { opacity: 1; transform: none; transition: opacity 0.5s ease, transform 0.5s ease; }
           .feat-grid { grid-template-columns: 1fr; }
           .f-card.wide { grid-column: span 1; grid-template-columns: 1fr; }
           .t-grid { grid-template-columns: 1fr; gap: 10px; }
@@ -656,7 +780,7 @@ export default function LandingPage() {
       <div className="hero">
         <div className="h-pill">
           <div className="h-dot"/>
-          Now in clinical pilot — Canada
+          Now in clinical pilot — North America
         </div>
 
         <h1 className="h-title">
@@ -739,17 +863,37 @@ export default function LandingPage() {
       {/* ── STATS BAND ── */}
       <div className="s-band">
         <div className="s-inner">
-          {[
-            {big:'94%',desc:'Patient session\ncompletion rate'},
-            {big:'3×',desc:'More movement\ndata per session'},
-            {big:'PIPEDA',desc:'Canada Central\ndata residency'},
-            {big:'<2s',desc:'AI coaching\nresponse latency'},
-          ].map((s,i)=>(
-            <div key={i} className="s-cell rv">
-              <div className="s-big">{s.big}</div>
-              <div className="s-desc">{s.desc.split('\n').map((l,j)=><span key={j}>{l}{j===0&&<br/>}</span>)}</div>
+
+          {/* 94% — counts up */}
+          <div className="s-cell rv">
+            <div className="s-big">
+              <span className="count-up" data-target="94" data-suffix="%" data-decimals="0">94%</span>
             </div>
-          ))}
+            <div className="s-desc"><span>Patient session</span><br/><span>completion rate</span></div>
+          </div>
+
+          {/* 3× — counts 1→3 */}
+          <div className="s-cell rv">
+            <div className="s-big">
+              <span className="count-up" data-target="3" data-suffix="×" data-decimals="0">3×</span>
+            </div>
+            <div className="s-desc"><span>More movement</span><br/><span>data per session</span></div>
+          </div>
+
+          {/* HIPAA — no counter, just fade in with a shimmer */}
+          <div className="s-cell rv">
+            <div className="s-big s-shimmer">HIPAA</div>
+            <div className="s-desc"><span>US &amp; Canada</span><br/><span>data residency</span></div>
+          </div>
+
+          {/* <2s — counts 5.0→2.0 then flips to <2s */}
+          <div className="s-cell rv">
+            <div className="s-big">
+              <span className="count-down" data-from="5.0" data-to="2" data-suffix="s" data-prefix="&lt;" data-decimals="1">&lt;2s</span>
+            </div>
+            <div className="s-desc"><span>AI coaching</span><br/><span>response latency</span></div>
+          </div>
+
         </div>
       </div>
 
@@ -768,9 +912,11 @@ export default function LandingPage() {
               {n:'03',title:'Physio reviews the intelligence',body:'Movement flags, compensation patterns, ROM trends, and AI-generated session summaries land in your dashboard — ready to act on.',
                 icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00C2C7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
             ].map((s,i)=>(
-              <div key={i} className="s-card rv">
-                <div className="s-n">{s.n}</div>
-                <div className="s-ico">{s.icon}</div>
+              <div key={i} className="s-card">
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'16px'}}>
+                  <div className="s-n">{s.n}</div>
+                  <div className="s-ico" style={{margin:0}}>{s.icon}</div>
+                </div>
                 <h3>{s.title}</h3>
                 <p>{s.body}</p>
               </div>
@@ -815,7 +961,7 @@ export default function LandingPage() {
               {cls:'ft',icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00C2C7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>,title:'BlazePose Movement Analysis',body:'Frame-level joint angle tracking runs locally in the browser via BlazePose — no video is stored or transmitted. ROM data accumulates per rep, per exercise, per session.'},
               {cls:'fb',icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4A90D9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>,title:'Mobile-first session runner',body:'Patients run sessions from any device. The layout adapts intelligently, keeping the camera view and exercise guidance always visible.'},
               {cls:'fv',icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6C63FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,title:'Protocol builder',body:'Build reusable exercise templates with sets, reps, hold durations, and rest periods. Apply protocols to any patient in seconds.'},
-              {cls:'ft',icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00C2C7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,title:'Patient notifications',body:'Automated session reminders and progress updates via email — with CASL-compliant consent tracking built in. SMS coming with full regulatory clearance.'},
+              {cls:'ft',icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00C2C7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,title:'Patient notifications',body:'Automated session reminders and progress updates via email — with CAN-SPAM & CASL-compliant consent tracking. SMS notifications with full regulatory clearance.'},
             ].map((f,i)=>(
               <div key={i} className="f-card rv">
                 <div className={`f-ico ${f.cls}`}>{f.icon}</div>
@@ -856,17 +1002,17 @@ export default function LandingPage() {
         <div className="c-inner">
           <div className="rv">
             <div className="eyebrow">Privacy &amp; compliance</div>
-            <h2 className="h2">Built for Canadian healthcare from day one.</h2>
+            <h2 className="h2">Built for North American healthcare from day one.</h2>
             <p style={{fontSize:'14px',lineHeight:'1.78',color:'var(--ink3)',maxWidth:'420px'}}>
-              All data is stored in Canada Central with full PIPEDA compliance. No video leaves the patient&apos;s device. Movement data is computed locally — only aggregated metrics are transmitted. Your data stays yours.
+              Built for HIPAA, PIPEDA, and state-level privacy regulations across the US and Canada. No video leaves the patient&apos;s device. Movement data is computed locally — only aggregated metrics are transmitted. Your data stays yours.
             </p>
           </div>
           <div className="c-badges rv">
             {[
-              {bg:'bg-g',s:'#10B981',t:'Canada Central data residency',p:<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>},
-              {bg:'bg-b',s:'#4A90D9',t:'PIPEDA compliant',p:<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></>},
+              {bg:'bg-g',s:'#10B981',t:'US & Canada data residency',p:<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>},
+              {bg:'bg-b',s:'#4A90D9',t:'HIPAA & PIPEDA compliant',p:<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></>},
               {bg:'bg-g',s:'#10B981',t:'No video stored or transmitted',p:<><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>},
-              {bg:'bg-v',s:'#6C63FF',t:'CASL email consent tracking',p:<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>},
+              {bg:'bg-v',s:'#6C63FF',t:'CAN-SPAM & CASL compliant',p:<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>},
               {bg:'bg-b',s:'#4A90D9',t:'Row-level database security',p:<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></>},
             ].map((b,i)=>(
               <div key={i} className="c-badge">
@@ -885,7 +1031,7 @@ export default function LandingPage() {
         <div className="cta-wrap">
           <div className="cta-box rv">
             <h2 className="cta-t">Ready to transform your clinic&apos;s outcomes?</h2>
-            <p className="cta-s">Join physiotherapists across Canada in the Rehably early access program.</p>
+            <p className="cta-s">Join clinics across North America in the Rehably early access program.</p>
             <div className="cta-btns">
               <a href="#" className="btn-cta cta">Book a demo</a>
               <a href="#" className="btn-ghost-dk">Talk to the team</a>
@@ -911,10 +1057,10 @@ export default function LandingPage() {
           <nav className="ft-nav">
             <a href="#">Privacy policy</a>
             <a href="#">Terms</a>
-            <a href="#">PIPEDA notice</a>
+            <a href="#">HIPAA notice</a>
             <a href="#">Contact</a>
           </nav>
-          <div className="ft-r">© 2026 Rehably Inc.<br/>Canada Central · PIPEDA compliant</div>
+          <div className="ft-r">© 2026 Rehably Inc.<br/>US &amp; Canada · HIPAA ready</div>
         </div>
       </div>
     </>
