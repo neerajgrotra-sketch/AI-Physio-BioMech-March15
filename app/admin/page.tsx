@@ -92,6 +92,20 @@ const SUGGESTED_TAGS = [
   "upper_body","lower_body","full_body","beginner","intermediate","advanced",
 ];
 
+// Exercise type metadata — label + accent colour + icon
+const EXERCISE_TYPE_META: Record<string, { label: string; accent: string; accentDim: string; icon: string }> = {
+  shoulder_flexion:   { label: "Shoulder Flexion",   accent: C.blue,   accentDim: C.blueDim,   icon: "💪" },
+  shoulder_abduction: { label: "Shoulder Abduction",  accent: C.purple, accentDim: C.purpleDim, icon: "🙌" },
+  sit_to_stand:       { label: "Sit to Stand",        accent: C.green,  accentDim: C.greenDim,  icon: "🦵" },
+  knee_extension:     { label: "Knee Extension",      accent: C.orange, accentDim: C.orangeDim, icon: "🦵" },
+  knee_flexion:       { label: "Knee Flexion",        accent: C.orange, accentDim: C.orangeDim, icon: "🦵" },
+  custom:             { label: "Custom",              accent: C.blue,   accentDim: C.blueDim,   icon: "⚡" },
+};
+
+function getTypeMeta(type: string) {
+  return EXERCISE_TYPE_META[type] ?? { label: type, accent: C.blue, accentDim: C.blueDim, icon: "⚡" };
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function calcAge(dob: string) {
@@ -342,8 +356,6 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-
-              {/* Mobility Score */}
               <div style={{ background: C.bg, border: `1px solid ${scoreColor}40`, borderRadius: 12, padding: "24px", textAlign: "center" }}>
                 <div style={{ fontSize: 12, color: C.textMuted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 8 }}>Mobility Score</div>
                 <div style={{ fontSize: 72, fontWeight: 800, color: scoreColor, lineHeight: 1, marginBottom: 8 }}>{score ?? "—"}</div>
@@ -351,8 +363,6 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                 {result.duration_ms && <div style={{ fontSize: 12, color: C.textDim, marginTop: 12 }}>Session duration: {formatDuration(result.duration_ms)}</div>}
                 {result.completed_at && <div style={{ fontSize: 12, color: C.textDim, marginTop: 4 }}>Completed: {formatDate(result.completed_at)}</div>}
               </div>
-
-              {/* Exercise Breakdown */}
               <div>
                 <SectionHeader title="Exercise Breakdown" />
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -370,7 +380,6 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                           </div>
                           <span style={{ fontSize: 18, fontWeight: 700, color: exColor }}>{completionPct}%</span>
                         </div>
-                        {/* Progress bar */}
                         <div style={{ height: 4, background: C.border, borderRadius: 2, marginBottom: 12, overflow: "hidden" }}>
                           <div style={{ height: "100%", width: `${completionPct}%`, background: exColor, borderRadius: 2, transition: "width 0.6s ease" }} />
                         </div>
@@ -387,7 +396,6 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                             </div>
                           ))}
                         </div>
-                        {/* Failure breakdown */}
                         {(ex.failed_height_count > 0 || ex.failed_hold_count > 0 || ex.failed_balance_count > 0 || ex.failed_isolation_count > 0) && (
                           <div style={{ marginTop: 10, padding: "8px 12px", background: C.redDim, border: `1px solid ${C.red}20`, borderRadius: 6, fontSize: 12 }}>
                             <span style={{ color: C.textMuted, marginRight: 8 }}>Failures:</span>
@@ -402,24 +410,19 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                   })}
                 </div>
               </div>
-
-              {/* Clinical Summary */}
               {result.claude_summary && (
                 <div>
                   <SectionHeader title="Clinical Summary" />
                   <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", fontSize: 13, color: C.text, lineHeight: 1.7 }}>{result.claude_summary}</div>
                 </div>
               )}
-
-              {/* Export */}
               <Btn onClick={() => {
                 const lines = [
                   `Session: ${sessionTitle}`,
                   `Date: ${result.completed_at ? formatDate(result.completed_at) : "—"}`,
                   `Mobility Score: ${score ?? "—"}/100`,
                   `Duration: ${result.duration_ms ? formatDuration(result.duration_ms) : "—"}`,
-                  "",
-                  "Exercise Results:",
+                  "", "Exercise Results:",
                   ...result.exercise_results.sort((a, b) => a.sequence_order - b.sequence_order).map((ex, i) => {
                     const name = prescriptionExercises.find(p => p.sequence_order === ex.sequence_order)?.display_name ?? `Exercise ${i + 1}`;
                     return `  ${i + 1}. ${name}: ${ex.reps_successful}/${ex.reps_prescribed} reps (${ex.reps_failed} failed)`;
@@ -436,14 +439,13 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
   );
 }
 
-// ─── Assign Protocol Flow (inside Patient Profile) ────────────────────────────
+// ─── Assign Protocol Flow ─────────────────────────────────────────────────────
 
 function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patient: Patient; templates: SessionTemplate[]; onAssign: () => void; onCancel: () => void; }) {
   const supabase = getSupabaseClient();
   const [step, setStep] = useState<"pick" | "override">("pick");
   const [selectedTemplate, setSelectedTemplate] = useState<SessionTemplate | null>(null);
   const [tagFilter, setTagFilter] = useState<string>("");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [overrides, setOverrides] = useState<{ reps: number; hold_ms: number; note: string; rom_target: number | null; rom_encourage: number | null; }[]>([]);
   const [saving, setSaving] = useState(false);
@@ -470,51 +472,18 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
     if (!selectedTemplate) return;
     setSaving(true);
     try {
-      // 1. Create the session row
       const { data: session, error: sErr } = await supabase
-        .from("sessions")
-        .insert({
-          title: selectedTemplate.title,
-          objective: selectedTemplate.objective,
-          patient_id: patient.id,
-          physio_id: null,
-          estimated_duration_mins: selectedTemplate.estimated_duration_mins,
-          status: "pending",
-          source_protocol_id: selectedTemplate.id,
-        })
-        .select().single();
+        .from("sessions").insert({ title: selectedTemplate.title, objective: selectedTemplate.objective, patient_id: patient.id, physio_id: null, estimated_duration_mins: selectedTemplate.estimated_duration_mins, status: "pending", source_protocol_id: selectedTemplate.id }).select().single();
       if (sErr) throw sErr;
-
-      // 2. Create session_block (one block for single-protocol assignment)
-      const { data: block, error: bErr } = await supabase
-        .from("session_blocks")
-        .insert({
-          session_id: session.id,
-          protocol_id: selectedTemplate.id,
-          sequence_order: 0,
-          rest_before_ms: 0,
-        })
-        .select().single();
+      const { data: block, error: bErr } = await supabase.from("session_blocks").insert({ session_id: session.id, protocol_id: selectedTemplate.id, sequence_order: 0, rest_before_ms: 0 }).select().single();
       if (bErr) throw bErr;
-
-      // 3. Create session_block_exercises with per-patient overrides
       const { error: eErr } = await supabase.from("session_block_exercises").insert(
-        selectedTemplate.exercises.map((ex, i) => ({
-          session_block_id: block.id,
-          exercise_template_id: ex.exercise_template_id,
-          sequence_order: i,
-          reps_override: overrides[i]?.reps ?? null,
-          hold_ms_override: overrides[i]?.hold_ms ?? null,
-          coaching_notes: overrides[i]?.note || null,
-          rom_target_degrees: overrides[i]?.rom_target ?? null,
-          rom_encourage_degrees: overrides[i]?.rom_encourage ?? null,
-        }))
+        selectedTemplate.exercises.map((ex, i) => ({ session_block_id: block.id, exercise_template_id: ex.exercise_template_id, sequence_order: i, reps_override: overrides[i]?.reps ?? null, hold_ms_override: overrides[i]?.hold_ms ?? null, coaching_notes: overrides[i]?.note || null, rom_target_degrees: overrides[i]?.rom_target ?? null, rom_encourage_degrees: overrides[i]?.rom_encourage ?? null }))
       );
       if (eErr) throw eErr;
       onAssign();
-    } catch (err) {
-      console.error("Assign failed:", err);
-    } finally { setSaving(false); }
+    } catch (err) { console.error("Assign failed:", err); }
+    finally { setSaving(false); }
   };
 
   const allTags = Array.from(new Set(templates.flatMap(t => t.tags))).sort();
@@ -533,11 +502,11 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
         </select>
       </div>
       {filteredTemplates.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "32px 0", color: C.textDim, fontSize: 13 }}>No templates match your filter. Create templates in the Sessions tab.</div>
+        <div style={{ textAlign: "center", padding: "32px 0", color: C.textDim, fontSize: 13 }}>No templates match your filter.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" }}>
           {filteredTemplates.map(t => (
-            <div key={t.id} onClick={() => selectTemplate(t)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "border-color 0.15s" }} onMouseEnter={e => (e.currentTarget.style.borderColor = C.borderFocus)} onMouseLeave={e => (e.currentTarget.style.borderColor = C.border)}>
+            <div key={t.id} onClick={() => selectTemplate(t)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer" }} onMouseEnter={e => (e.currentTarget.style.borderColor = C.borderFocus)} onMouseLeave={e => (e.currentTarget.style.borderColor = C.border)}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.title}</div>
                 <span style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const }}>{t.exercises.length} ex · {t.estimated_duration_mins}min</span>
@@ -572,8 +541,6 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
           return (
             <div key={ex.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>{i + 1}. {ex.exercise_template?.display_name}</div>
-
-              {/* Row 1: Reps / Hold / Note */}
               <div style={{ display: "flex", gap: 12, marginBottom: hasRom ? 12 : 0 }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Reps</label>
@@ -588,93 +555,28 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
                   <input value={overrides[i]?.note ?? ""} placeholder="Optional note…" onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, note: e.target.value } : o))} style={{ width: "100%", marginTop: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
                 </div>
               </div>
-
-              {/* Row 2: ROM sliders — only shown when template has ROM data */}
               {hasRom && (
                 <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-
-                  {/* Expected ROM slider */}
                   <div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                      <label style={{ fontSize: 11, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 600 }}>
-                        Expected ROM — hold fires here
-                      </label>
+                      <label style={{ fontSize: 11, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 600 }}>Expected ROM — hold fires here</label>
                       <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>{currentTarget ?? "—"}°</span>
                     </div>
-                    <div style={{ position: "relative", height: 24, display: "flex", alignItems: "center" }}>
-                      {/* Population norm tick */}
-                      {romNorm !== null && (
-                        <div style={{
-                          position: "absolute",
-                          left: `${Math.round(((romNorm - romStart) / (romMax - romStart)) * 100)}%`,
-                          top: 0, bottom: 0, width: 2,
-                          background: C.textDim,
-                          borderRadius: 1,
-                          pointerEvents: "none",
-                        }} title={`Population norm: ${romNorm}°`} />
-                      )}
-                      <input
-                        type="range"
-                        min={romStart}
-                        max={romNorm ?? romMax}
-                        step={5}
-                        value={currentTarget ?? (romMin ?? romNorm ?? romStart)}
-                        onChange={e => {
-                          const val = parseInt(e.target.value);
-                          setOverrides(prev => prev.map((o, j) => {
-                            if (j !== i) return o;
-                            // If encourage is set and now <= new target, clear it
-                            const newEncourage = o.rom_encourage !== null && o.rom_encourage <= val ? null : o.rom_encourage;
-                            return { ...o, rom_target: val, rom_encourage: newEncourage };
-                          }));
-                        }}
-                        style={{ width: "100%", accentColor: C.orange, cursor: "pointer" }}
-                      />
-                    </div>
+                    <input type="range" min={romStart} max={romNorm ?? romMax} step={5} value={currentTarget ?? (romMin ?? romNorm ?? romStart)} onChange={e => { const val = parseInt(e.target.value); setOverrides(prev => prev.map((o, j) => { if (j !== i) return o; const newEncourage = o.rom_encourage !== null && o.rom_encourage <= val ? null : o.rom_encourage; return { ...o, rom_target: val, rom_encourage: newEncourage }; })); }} style={{ width: "100%", accentColor: C.orange, cursor: "pointer" }} />
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginTop: 2 }}>
                       <span>{romStart}° (rest)</span>
-                      {romNorm !== null && <span style={{ color: C.textDim }}>norm {romNorm}°</span>}
+                      {romNorm !== null && <span>norm {romNorm}°</span>}
                     </div>
                   </div>
-
-                  {/* Encourage-to ROM slider */}
                   <div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                      <label style={{ fontSize: 11, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 600 }}>
-                        Encourage-to ROM — AI coaching target
-                      </label>
+                      <label style={{ fontSize: 11, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 600 }}>Encourage-to ROM</label>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: currentEncourage !== null ? C.green : C.textDim }}>
-                          {currentEncourage !== null ? `${currentEncourage}°` : "Not set"}
-                        </span>
-                        {currentEncourage !== null && (
-                          <button
-                            onClick={() => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, rom_encourage: null } : o))}
-                            style={{ background: "none", border: "none", color: C.textDim, cursor: "pointer", fontSize: 11, padding: "0 2px", fontFamily: "inherit" }}
-                          >clear</button>
-                        )}
+                        <span style={{ fontSize: 12, fontWeight: 700, color: currentEncourage !== null ? C.green : C.textDim }}>{currentEncourage !== null ? `${currentEncourage}°` : "Not set"}</span>
+                        {currentEncourage !== null && <button onClick={() => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, rom_encourage: null } : o))} style={{ background: "none", border: "none", color: C.textDim, cursor: "pointer", fontSize: 11, padding: "0 2px", fontFamily: "inherit" }}>clear</button>}
                       </div>
                     </div>
-                    <div style={{ position: "relative", height: 24, display: "flex", alignItems: "center" }}>
-                      <input
-                        type="range"
-                        min={currentTarget ?? romMin ?? romStart}
-                        max={romMax}
-                        step={5}
-                        value={currentEncourage ?? (currentTarget !== null ? Math.min((currentTarget ?? 0) + 10, romMax) : romMax)}
-                        onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, rom_encourage: parseInt(e.target.value) } : o))}
-                        style={{ width: "100%", accentColor: C.green, cursor: "pointer", opacity: currentEncourage !== null ? 1 : 0.4 }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginTop: 2 }}>
-                      <span>Above expected</span>
-                      <span>{romMax}° (max)</span>
-                    </div>
-                    {currentEncourage === null && (
-                      <div style={{ marginTop: 4, fontSize: 11, color: C.textDim }}>
-                        Drag to set — AI will encourage patient to push further when they reach Expected ROM.
-                      </div>
-                    )}
+                    <input type="range" min={currentTarget ?? romMin ?? romStart} max={romMax} step={5} value={currentEncourage ?? (currentTarget !== null ? Math.min((currentTarget ?? 0) + 10, romMax) : romMax)} onChange={e => setOverrides(prev => prev.map((o, j) => j === i ? { ...o, rom_encourage: parseInt(e.target.value) } : o))} style={{ width: "100%", accentColor: C.green, cursor: "pointer", opacity: currentEncourage !== null ? 1 : 0.4 }} />
                   </div>
                 </div>
               )}
@@ -684,7 +586,6 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
       </div>
       <Btn onClick={assign} variant="primary" disabled={saving} fullWidth>{saving ? "Assigning…" : `Assign Protocol to ${patient.full_name}`}</Btn>
     </div>
-
   );
 }
 
@@ -695,8 +596,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
   const age = patient.date_of_birth ? calcAge(patient.date_of_birth) : null;
   const bmi = patient.height_cm && patient.weight_kg ? calcBMI(patient.height_cm, patient.weight_kg) : null;
   const bmiInfo = bmi ? bmiCategory(bmi) : null;
-  const patientSessions = prescriptions.filter(s => s.patient_id === patient.id)
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const patientSessions = prescriptions.filter(s => s.patient_id === patient.id).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const completedSessions = patientSessions.filter(s => s.status === "completed");
   const pendingSessions   = patientSessions.filter(s => s.status === "pending");
 
@@ -706,17 +606,12 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
   const [sessionFilter, setSessionFilter] = useState<"all" | "pending" | "completed">("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const filteredSessions = sessionFilter === "pending"
-    ? pendingSessions
-    : sessionFilter === "completed"
-    ? completedSessions
-    : patientSessions;
+  const filteredSessions = sessionFilter === "pending" ? pendingSessions : sessionFilter === "completed" ? completedSessions : patientSessions;
 
   const handleDeleteSession = async (sessionId: string, title: string) => {
     if (!confirm(`Delete session "${title}"? This cannot be undone.`)) return;
     setDeletingId(sessionId);
     try {
-      // Delete child rows first (session_block_exercises -> session_blocks -> sessions)
       const { data: blocks } = await supabase.from("session_blocks").select("id").eq("session_id", sessionId);
       if (blocks && blocks.length > 0) {
         const blockIds = blocks.map((b: { id: string }) => b.id);
@@ -726,26 +621,15 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
       const { error } = await supabase.from("sessions").delete().eq("id", sessionId);
       if (error) throw error;
       onRefresh();
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setDeletingId(null);
-    }
+    } catch (err: unknown) { alert(err instanceof Error ? err.message : "Delete failed"); }
+    finally { setDeletingId(null); }
   };
 
-  const filterBtnStyle = (active: boolean) => ({
-    padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-    cursor: "pointer" as const, border: "none",
-    background: active ? C.blue + "22" : "transparent",
-    color: active ? C.blue : C.textMuted,
-    outline: active ? `1px solid ${C.blue}44` : "1px solid transparent",
-  });
+  const filterBtnStyle = (active: boolean) => ({ padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer" as const, border: "none", background: active ? C.blue + "22" : "transparent", color: active ? C.blue : C.textMuted, outline: active ? `1px solid ${C.blue}44` : "1px solid transparent" });
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ width: "min(600px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-
-        {/* Header */}
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
           <PatientPhoto photoUrl={patient.photo_url} name={patient.full_name} size={56} />
           <div style={{ flex: 1 }}>
@@ -761,45 +645,30 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
             <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer", padding: 4 }}>✕</button>
           </div>
         </div>
-
-        {/* Stats bar */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-          {[
-            { label: "Total", value: patientSessions.length },
-            { label: "Completed", value: completedSessions.length, color: C.green },
-            { label: "Pending", value: pendingSessions.length, color: C.blue },
-            { label: "Rate", value: patientSessions.length > 0 ? `${Math.round(completedSessions.length / patientSessions.length * 100)}%` : "—", color: C.blue },
-          ].map(({ label, value, color }) => (
+          {[{ label: "Total", value: patientSessions.length }, { label: "Completed", value: completedSessions.length, color: C.green }, { label: "Pending", value: pendingSessions.length, color: C.blue }, { label: "Rate", value: patientSessions.length > 0 ? `${Math.round(completedSessions.length / patientSessions.length * 100)}%` : "—", color: C.blue }].map(({ label, value, color }) => (
             <div key={label} style={{ padding: "12px 16px", textAlign: "center", background: C.bg }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: color ?? C.text }}>{value}</div>
               <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{label}</div>
             </div>
           ))}
         </div>
-
-        {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
           {assigning ? (
             <AssignSessionPanel patient={patient} templates={templates} onAssign={() => { setAssigning(false); onRefresh(); }} onCancel={() => setAssigning(false)} />
           ) : (
             <>
-              {/* Clinical notes */}
               {(patient.condition_notes || patient.goals) && (
                 <div style={{ marginBottom: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "14px 16px" }}>
                   {patient.condition_notes && <div style={{ marginBottom: patient.goals ? 10 : 0 }}><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 4 }}>Condition</div><div style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{patient.condition_notes}</div></div>}
                   {patient.goals && <div><div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 4 }}>Goals</div><div style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{patient.goals}</div></div>}
                 </div>
               )}
-
-              {/* Sessions section */}
               <div>
-                {/* Section header + assign button */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Sessions</div>
                   <Btn onClick={() => setAssigning(true)} variant="primary" small>+ Assign Protocol</Btn>
                 </div>
-
-                {/* Filter tabs */}
                 {patientSessions.length > 0 && (
                   <div style={{ display: "flex", gap: 4, marginBottom: 14, background: C.bg, borderRadius: 24, padding: 4, width: "fit-content", border: `1px solid ${C.border}` }}>
                     {(["all", "pending", "completed"] as const).map(f => (
@@ -809,11 +678,8 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                     ))}
                   </div>
                 )}
-
                 {filteredSessions.length === 0 ? (
-                  <div style={{ fontSize: 13, color: C.textDim, padding: "24px 0", textAlign: "center" }}>
-                    {patientSessions.length === 0 ? 'No sessions assigned yet.' : `No ${sessionFilter} sessions.`}
-                  </div>
+                  <div style={{ fontSize: 13, color: C.textDim, padding: "24px 0", textAlign: "center" }}>{patientSessions.length === 0 ? "No sessions assigned yet." : `No ${sessionFilter} sessions.`}</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {filteredSessions.map(s => (
@@ -821,56 +687,20 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{s.title}</div>
-                            <div style={{ fontSize: 11, color: C.textDim }}>
-                              {s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · {s.estimated_duration_mins} min · Created {formatDate(s.created_at)}
-                            </div>
+                            <div style={{ fontSize: 11, color: C.textDim }}>{s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · {s.estimated_duration_mins} min · Created {formatDate(s.created_at)}</div>
                           </div>
-                          <Badge
-                            label={s.status === "completed" ? "Completed" : s.status === "pending" ? "Pending" : s.status}
-                            color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : C.textMuted}
-                          />
+                          <Badge label={s.status === "completed" ? "Completed" : s.status === "pending" ? "Pending" : s.status} color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : C.textMuted} />
                         </div>
-
-                        {/* Exercise list preview */}
                         {s.exercises.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 4, marginBottom: 10 }}>
-                            {s.exercises.slice(0, 4).map((ex, i) => (
-                              <span key={i} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>
-                                {ex.display_name}
-                              </span>
-                            ))}
-                            {s.exercises.length > 4 && (
-                              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>
-                                +{s.exercises.length - 4} more
-                              </span>
-                            )}
+                            {s.exercises.slice(0, 4).map((ex, i) => <span key={i} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>{ex.display_name}</span>)}
+                            {s.exercises.length > 4 && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>+{s.exercises.length - 4} more</span>}
                           </div>
                         )}
-
-                        {/* Actions */}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>
-                            {s.status === "completed" ? "↺ Re-run" : "▶ Run Session"}
-                          </Btn>
-                          {s.status === "completed" && (
-                            <Btn onClick={() => { setViewingResultsId(s.id); setViewingResultsTitle(s.title); }} small variant="ghost">
-                              📊 Results
-                            </Btn>
-                          )}
-                          {s.status === "pending" && (
-                            <button
-                              onClick={() => handleDeleteSession(s.id, s.title)}
-                              disabled={deletingId === s.id}
-                              style={{
-                                marginLeft: "auto", padding: "4px 10px", borderRadius: 6,
-                                fontSize: 11, fontWeight: 600, cursor: deletingId === s.id ? "not-allowed" : "pointer",
-                                background: "rgba(239,68,68,0.08)", color: "#ef4444",
-                                border: "1px solid rgba(239,68,68,0.2)", opacity: deletingId === s.id ? 0.5 : 1,
-                              }}
-                            >
-                              {deletingId === s.id ? "Deleting…" : "🗑 Delete"}
-                            </button>
-                          )}
+                          <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>{s.status === "completed" ? "↺ Re-run" : "▶ Run Session"}</Btn>
+                          {s.status === "completed" && <Btn onClick={() => { setViewingResultsId(s.id); setViewingResultsTitle(s.title); }} small variant="ghost">📊 Results</Btn>}
+                          {s.status === "pending" && <button onClick={() => handleDeleteSession(s.id, s.title)} disabled={deletingId === s.id} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: deletingId === s.id ? "not-allowed" : "pointer", background: "rgba(239,68,68,0.08)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.2)", opacity: deletingId === s.id ? 0.5 : 1 }}>{deletingId === s.id ? "Deleting…" : "🗑 Delete"}</button>}
                         </div>
                       </div>
                     ))}
@@ -880,8 +710,6 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
             </>
           )}
         </div>
-
-        {/* Footer */}
         {!assigning && (
           <div style={{ padding: "14px 24px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, flexShrink: 0 }}>
             <Btn onClick={onEdit} variant="primary">Edit Profile</Btn>
@@ -889,15 +717,10 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
           </div>
         )}
       </div>
-
-      {/* Results drill-down */}
-      {viewingResultsId && (
-        <SessionResultsPanel prescriptionId={viewingResultsId} sessionTitle={viewingResultsTitle} onClose={() => setViewingResultsId(null)} />
-      )}
+      {viewingResultsId && <SessionResultsPanel prescriptionId={viewingResultsId} sessionTitle={viewingResultsTitle} onClose={() => setViewingResultsId(null)} />}
     </div>
   );
 }
-
 
 // ─── Patients Tab ─────────────────────────────────────────────────────────────
 
@@ -960,7 +783,7 @@ function PatientsTab({ showToast, prescriptions, templates, onRefresh }: { showT
           {loading ? <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted }}>Loading…</div> : patients.length === 0 ? (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "48px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 12 }}>👤</div><div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 6 }}>No patients yet</div></div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
               {patients.map(p => {
                 const age = p.date_of_birth ? calcAge(p.date_of_birth) : null;
                 const bmi = p.height_cm && p.weight_kg ? calcBMI(p.height_cm, p.weight_kg) : null;
@@ -988,13 +811,11 @@ function PatientsTab({ showToast, prescriptions, templates, onRefresh }: { showT
           )}
         </div>
       )}
-
       {(mode === "create" || mode === "edit") && (
         <div style={{ maxWidth: 560 }}>
           <PatientFormPanel initial={editForm} onSave={handleSave} onCancel={() => { setMode("list"); setSelectedPatient(null); }} saving={saving} title={mode === "create" ? "Register New Patient" : `Edit — ${selectedPatient?.full_name}`} />
         </div>
       )}
-
       {viewingPatient && (
         <PatientProfilePanel patient={viewingPatient} prescriptions={prescriptions} templates={templates} onClose={() => setViewingPatient(null)} onEdit={() => startEdit(viewingPatient)} onDelete={() => handleDelete(viewingPatient)} onRefresh={() => { onRefresh(); }} />
       )}
@@ -1017,7 +838,6 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const [tagInput, setTagInput] = useState("");
   const [exercises, setExercises] = useState<{ template_id: string; clinical_name: string; display_name: string; reps: number; hold_ms: number; }[]>([]);
   const [selectedExTemplateId, setSelectedExTemplateId] = useState("");
-  const [tagFilter, setTagFilter] = useState("");
   const [search, setSearch] = useState("");
   const [editingProtocolId, setEditingProtocolId] = useState<string | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -1060,34 +880,14 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   const addTag = (tag: string) => { const t = tag.trim().toLowerCase(); if (t && !tags.includes(t)) setTags(prev => [...prev, t]); setTagInput(""); };
   const removeTag = (tag: string) => setTags(prev => prev.filter(t => t !== tag));
 
-  // Load an existing protocol into the builder form for editing
   const editProtocol = (t: SessionTemplate) => {
-    setEditingProtocolId(t.id);
-    setTitle(t.title);
-    setObjective(t.objective ?? "");
-    setEstimatedMins(String(t.estimated_duration_mins));
-    setTags([...t.tags]);
-    setExercises(t.exercises.map(ex => ({
-      template_id: ex.exercise_template_id,
-      clinical_name: (ex.exercise_template as any)?.clinical_name ?? ex.exercise_template?.display_name ?? "Unknown",
-      display_name: ex.exercise_template?.display_name ?? "Unknown",
-      reps: ex.default_reps ?? ex.exercise_template?.default_reps ?? 6,
-      hold_ms: ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 2000,
-    })));
+    setEditingProtocolId(t.id); setTitle(t.title); setObjective(t.objective ?? ""); setEstimatedMins(String(t.estimated_duration_mins)); setTags([...t.tags]);
+    setExercises(t.exercises.map(ex => ({ template_id: ex.exercise_template_id, clinical_name: (ex.exercise_template as any)?.clinical_name ?? ex.exercise_template?.display_name ?? "Unknown", display_name: ex.exercise_template?.display_name ?? "Unknown", reps: ex.default_reps ?? ex.exercise_template?.default_reps ?? 6, hold_ms: ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 2000 })));
     setBuilderOpen(true);
   };
 
-  const openNewProtocol = () => {
-    setEditingProtocolId(null);
-    setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
-    setBuilderOpen(true);
-  };
-
-  const cancelEdit = () => {
-    setEditingProtocolId(null);
-    setBuilderOpen(false);
-    setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
-  };
+  const openNewProtocol = () => { setEditingProtocolId(null); setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); setBuilderOpen(true); };
+  const cancelEdit = () => { setEditingProtocolId(null); setBuilderOpen(false); setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]); };
 
   const saveTemplate = async () => {
     if (!title.trim()) { showToast("Title is required.", false); return; }
@@ -1095,30 +895,18 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     setSaving(true);
     try {
       if (editingProtocolId) {
-        const { error: tErr } = await supabase.from("protocols")
-          .update({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags })
-          .eq("id", editingProtocolId);
+        const { error: tErr } = await supabase.from("protocols").update({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).eq("id", editingProtocolId);
         if (tErr) throw tErr;
-        const { error: dErr } = await supabase.from("protocol_exercises").delete().eq("protocol_id", editingProtocolId);
-        if (dErr) throw dErr;
-        const { error: eErr } = await supabase.from("protocol_exercises").insert(
-          exercises.map((e, i) => ({ protocol_id: editingProtocolId, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
-        );
+        await supabase.from("protocol_exercises").delete().eq("protocol_id", editingProtocolId);
+        const { error: eErr } = await supabase.from("protocol_exercises").insert(exercises.map((e, i) => ({ protocol_id: editingProtocolId, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms })));
         if (eErr) throw eErr;
-        showToast("Protocol updated.");
-        setEditingProtocolId(null);
-        setBuilderOpen(false);
+        showToast("Protocol updated."); setEditingProtocolId(null); setBuilderOpen(false);
       } else {
-        const { data: tmpl, error: tErr } = await supabase.from("protocols")
-          .insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags })
-          .select().single();
+        const { data: tmpl, error: tErr } = await supabase.from("protocols").insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).select().single();
         if (tErr) throw tErr;
-        const { error: eErr } = await supabase.from("protocol_exercises").insert(
-          exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms }))
-        );
+        const { error: eErr } = await supabase.from("protocol_exercises").insert(exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms })));
         if (eErr) throw eErr;
-        showToast("Protocol saved.");
-        setBuilderOpen(false);
+        showToast("Protocol saved."); setBuilderOpen(false);
       }
       setTitle("New Protocol"); setObjective(""); setEstimatedMins("10"); setTags([]); setExercises([]);
       loadData();
@@ -1134,6 +922,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   };
 
   const allTags = Array.from(new Set(savedTemplates.flatMap(t => t.tags))).sort();
+  const [tagFilter, setTagFilter] = useState("");
   const filteredTemplates = savedTemplates.filter(t => {
     const ms = search === "" || t.title.toLowerCase().includes(search.toLowerCase());
     const mt = tagFilter === "" || t.tags.includes(tagFilter);
@@ -1144,7 +933,6 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
 
   return (
     <div>
-      {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Protocol Library</h2>
@@ -1152,8 +940,6 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         </div>
         <Btn variant="primary" onClick={openNewProtocol}>+ New Protocol</Btn>
       </div>
-
-      {/* ── Search + filter ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search protocols…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
         <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
@@ -1161,8 +947,6 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
           {allTags.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
-
-      {/* ── Protocol cards grid ── */}
       {filteredTemplates.length === 0 ? (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "64px 32px", textAlign: "center" }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
@@ -1171,24 +955,13 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
           <Btn variant="primary" onClick={openNewProtocol}>+ Build First Protocol</Btn>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
           {filteredTemplates.map(t => {
             const isExpanded = expandedProtocolId === t.id;
             const visibleExercises = isExpanded ? t.exercises : t.exercises.slice(0, 3);
             const hiddenCount = t.exercises.length - 3;
             return (
-              <div key={t.id} style={{
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderTop: `3px solid ${C.blue}`,
-                borderRadius: 10, padding: "16px",
-                display: "flex", flexDirection: "column", gap: 12,
-                transition: "box-shadow 0.15s",
-              }}
-                onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${C.blue}15`)}
-                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-              >
-                {/* Card header */}
+              <div key={t.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: `3px solid ${C.blue}`, borderRadius: 10, padding: "16px", display: "flex", flexDirection: "column", gap: 12 }} onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${C.blue}15`)} onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 2 }}>{t.title}</div>
@@ -1196,19 +969,9 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                   </div>
                   <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const, marginTop: 2 }}>{t.estimated_duration_mins}min</div>
                 </div>
-
-                {/* Tags */}
-                {t.tags.length > 0 && (
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const }}>
-                    {t.tags.map(tag => <span key={tag} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: C.blueDim, color: C.blue, fontWeight: 600 }}>{tag}</span>)}
-                  </div>
-                )}
-
-                {/* Exercise list — expandable */}
+                {t.tags.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const }}>{t.tags.map(tag => <span key={tag} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: C.blueDim, color: C.blue, fontWeight: 600 }}>{tag}</span>)}</div>}
                 <div style={{ background: C.bg, borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
-                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.06em", fontWeight: 700, marginBottom: 4 }}>
-                    {t.exercises.length} exercise{t.exercises.length !== 1 ? "s" : ""}
-                  </div>
+                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.06em", fontWeight: 700, marginBottom: 4 }}>{t.exercises.length} exercise{t.exercises.length !== 1 ? "s" : ""}</div>
                   {visibleExercises.map((ex, i) => (
                     <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
                       <span style={{ color: C.textDim, minWidth: 14, fontSize: 11 }}>{i + 1}.</span>
@@ -1216,18 +979,8 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                       <span style={{ color: C.textDim, fontSize: 11 }}>{ex.default_reps ?? ex.exercise_template?.default_reps}× · {msToSeconds(ex.default_hold_ms ?? ex.exercise_template?.default_hold_ms ?? 0)}s</span>
                     </div>
                   ))}
-                  {/* Expand / collapse toggle */}
-                  {t.exercises.length > 3 && (
-                    <button
-                      onClick={() => setExpandedProtocolId(isExpanded ? null : t.id)}
-                      style={{ marginTop: 4, background: "none", border: "none", color: C.blue, fontSize: 11, fontWeight: 600, cursor: "pointer", textAlign: "left" as const, padding: 0, fontFamily: "inherit" }}
-                    >
-                      {isExpanded ? "▲ Show less" : `▼ Show ${hiddenCount} more exercise${hiddenCount !== 1 ? "s" : ""}`}
-                    </button>
-                  )}
+                  {t.exercises.length > 3 && <button onClick={() => setExpandedProtocolId(isExpanded ? null : t.id)} style={{ marginTop: 4, background: "none", border: "none", color: C.blue, fontSize: 11, fontWeight: 600, cursor: "pointer", textAlign: "left" as const, padding: 0, fontFamily: "inherit" }}>{isExpanded ? "▲ Show less" : `▼ Show ${hiddenCount} more`}</button>}
                 </div>
-
-                {/* Actions */}
                 <div style={{ display: "flex", gap: 8, paddingTop: 4, borderTop: `1px solid ${C.border}` }}>
                   <Btn onClick={() => editProtocol(t)} variant="ghost" small>✏️ Edit</Btn>
                   <Btn onClick={() => deleteTemplate(t.id)} variant="danger" small>Delete</Btn>
@@ -1238,12 +991,9 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
         </div>
       )}
 
-      {/* ── Builder side panel ── */}
       {builderOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) cancelEdit(); }}>
           <div style={{ width: "min(640px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-
-            {/* Panel header */}
             <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{editingProtocolId ? "Edit Protocol" : "New Protocol"}</div>
@@ -1251,8 +1001,6 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
               </div>
               <button onClick={cancelEdit} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer", padding: 4 }}>✕</button>
             </div>
-
-            {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               <SectionHeader title="Protocol Details" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 14 }}>
@@ -1260,43 +1008,26 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                 <Field label="Duration (mins)"><Input type="number" value={estimatedMins} onChange={setEstimatedMins} min={1} max={120} /></Field>
               </div>
               <Field label="Objective"><Input value={objective} onChange={setObjective} placeholder="e.g. Build shoulder strength and range of motion" /></Field>
-
-              {/* Tags */}
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" as const, display: "block", marginBottom: 8 }}>Tags</label>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 }}>
-                  {tags.map(tag => (
-                    <span key={tag} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: C.blueDim, border: `1px solid ${C.blue}30`, fontSize: 12, color: C.blue }}>
-                      {tag}
-                      <button onClick={() => removeTag(tag)} style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
-                    </span>
-                  ))}
+                  {tags.map(tag => <span key={tag} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: C.blueDim, border: `1px solid ${C.blue}30`, fontSize: 12, color: C.blue }}>{tag}<button onClick={() => removeTag(tag)} style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>×</button></span>)}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput); } }} placeholder="Add tag (Enter to add)…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
                   <Btn onClick={() => addTag(tagInput)} small variant="ghost">Add</Btn>
                 </div>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const, marginTop: 8 }}>
-                  {SUGGESTED_TAGS.filter(t => !tags.includes(t)).slice(0, 10).map(t => (
-                    <button key={t} onClick={() => addTag(t)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 12, padding: "2px 8px", fontSize: 11, color: C.textMuted, cursor: "pointer", fontFamily: "inherit" }}>{t}</button>
-                  ))}
+                  {SUGGESTED_TAGS.filter(t => !tags.includes(t)).slice(0, 10).map(t => <button key={t} onClick={() => addTag(t)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 12, padding: "2px 8px", fontSize: 11, color: C.textMuted, cursor: "pointer", fontFamily: "inherit" }}>{t}</button>)}
                 </div>
               </div>
-
-              {/* Exercises */}
               <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
                 <SectionHeader title="Exercises" />
                 <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                  <div style={{ flex: 1 }}>
-                    <Select value={selectedExTemplateId} onChange={setSelectedExTemplateId}>
-                      {exerciseTemplates.map(t => <option key={t.id} value={t.id}>{t.clinical_name ?? t.display_name}{!t.is_vanilla ? " (Custom)" : ""} · {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</option>)}
-                    </Select>
-                  </div>
+                  <div style={{ flex: 1 }}><Select value={selectedExTemplateId} onChange={setSelectedExTemplateId}>{exerciseTemplates.map(t => <option key={t.id} value={t.id}>{t.clinical_name ?? t.display_name}{!t.is_vanilla ? " (Custom)" : ""} · {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</option>)}</Select></div>
                   <Btn onClick={addExercise} variant="primary">+ Add</Btn>
                 </div>
-                {exercises.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "20px 0", color: C.textDim, fontSize: 13, border: `1px dashed ${C.border}`, borderRadius: 8 }}>No exercises added yet.</div>
-                ) : (
+                {exercises.length === 0 ? <div style={{ textAlign: "center", padding: "20px 0", color: C.textDim, fontSize: 13, border: `1px dashed ${C.border}`, borderRadius: 8 }}>No exercises added yet.</div> : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {exercises.map((ex, idx) => (
                       <div key={idx} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
@@ -1312,9 +1043,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                             {[["Reps", "reps", ex.reps, 1, 30, 1], ["Hold (s)", "hold_ms", msToSeconds(ex.hold_ms), 0, 10, 0.5]].map(([label, key, val, min, max, step]) => (
                               <div key={String(key)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                 <span style={{ fontSize: 11, color: C.textDim }}>{label}</span>
-                                <input type="number" value={val} min={Number(min)} max={Number(max)} step={Number(step)}
-                                  onChange={e => setExercises(prev => prev.map((ex2, i) => i === idx ? { ...ex2, [key as string]: key === "hold_ms" ? secondsToMs(e.target.value) : parseInt(e.target.value) || 1 } : ex2))}
-                                  style={{ width: 52, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 6px", color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+                                <input type="number" value={val} min={Number(min)} max={Number(max)} step={Number(step)} onChange={e => setExercises(prev => prev.map((ex2, i) => i === idx ? { ...ex2, [key as string]: key === "hold_ms" ? secondsToMs(e.target.value) : parseInt(e.target.value) || 1 } : ex2))} style={{ width: 52, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 6px", color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
                               </div>
                             ))}
                           </div>
@@ -1326,8 +1055,6 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                 )}
               </div>
             </div>
-
-            {/* Sticky footer */}
             <div style={{ padding: "16px 24px", borderTop: `1px solid ${C.border}`, background: C.surface, display: "flex", gap: 10, flexShrink: 0 }}>
               <Btn onClick={cancelEdit} variant="ghost">Cancel</Btn>
               <Btn onClick={saveTemplate} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingProtocolId ? "💾 Update Protocol" : "💾 Save Protocol"}</Btn>
@@ -1339,7 +1066,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   );
 }
 
-// ─── Exercise Library Tab (unchanged) ────────────────────────────────────────
+// ─── Exercise Library Tab ─────────────────────────────────────────────────────
 
 function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boolean) => void; }) {
   const supabase = getSupabaseClient();
@@ -1351,20 +1078,22 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
   const [subTab, setSubTab] = useState<"vanilla" | "mine">("vanilla");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<"name" | "type" | "reps">("type");
+  const [groupByType, setGroupByType] = useState(true);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
     const [{ data: v }, { data: m }] = await Promise.all([
-      supabase.from("exercise_templates").select("*").eq("is_vanilla", true).order("display_name"),
+      supabase.from("exercise_templates").select("*").eq("is_vanilla", true).order("exercise_type").order("display_name"),
       supabase.from("exercise_templates").select("*").eq("is_vanilla", false).order("display_name"),
     ]);
-    setVanillaTemplates(v ?? []); setMyTemplates(m ?? []);
+    setVanillaTemplates(v ?? []);
+    setMyTemplates(m ?? []);
     setLoading(false);
   }, [supabase]);
 
   useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
-  // handleSave: in-place update for existing templates; insert for new clinic copies.
   const handleSave = async (template: ExerciseTemplate) => {
     setSaving(true);
     try {
@@ -1383,12 +1112,8 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
     finally { setSaving(false); }
   };
 
-  // handleCustomise: copy-on-write — clinic copy, system template untouched.
-  const handleCustomise = (template: ExerciseTemplate) => {
-    setEditingTemplate({ ...template, id: "" });
-  };
+  const handleCustomise = (template: ExerciseTemplate) => { setEditingTemplate({ ...template, id: "" }); };
 
-  // handleMediaUpload: uploads image/gif to Supabase exercise-media bucket.
   const handleMediaUpload = async (template: ExerciseTemplate, file: File) => {
     const ext = file.name.split(".").pop() ?? "jpg";
     const path = `${template.id || "new"}-${Date.now()}.${ext}`;
@@ -1400,136 +1125,175 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
   };
 
   const raw = subTab === "vanilla" ? vanillaTemplates : myTemplates;
-  const active = raw.filter(t => {
+
+  // Filter
+  const filtered = raw.filter(t => {
     const ms = search === "" || t.display_name.toLowerCase().includes(search.toLowerCase()) || (t.description ?? "").toLowerCase().includes(search.toLowerCase());
     const mt = typeFilter === "all" || t.exercise_type === typeFilter;
     return ms && mt;
   });
 
-  // Keep the existing ExerciseLibraryTab render — it's not changing in module 7
-  // Placeholder render to keep the file compiling:
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "name") return a.display_name.localeCompare(b.display_name);
+    if (sortBy === "reps") return b.default_reps - a.default_reps;
+    // "type" — sort by type label then name
+    const ta = getTypeMeta(a.exercise_type).label;
+    const tb = getTypeMeta(b.exercise_type).label;
+    return ta !== tb ? ta.localeCompare(tb) : a.display_name.localeCompare(b.display_name);
+  });
+
+  // Group by type (only when sortBy = "type" and groupByType enabled)
+  const showGroups = groupByType && sortBy === "type" && typeFilter === "all";
+  const typeOrder = ["shoulder_flexion", "shoulder_abduction", "sit_to_stand", "knee_extension", "knee_flexion", "custom"];
+  const groups: { type: string; label: string; accent: string; items: ExerciseTemplate[] }[] = showGroups
+    ? typeOrder
+        .map(type => ({
+          type,
+          label: getTypeMeta(type).label,
+          accent: getTypeMeta(type).accent,
+          items: sorted.filter(t => t.exercise_type === type),
+        }))
+        .filter(g => g.items.length > 0)
+    : [{ type: "all", label: "", accent: C.blue, items: sorted }];
+
+  const allExerciseTypes = Array.from(new Set(raw.map(t => t.exercise_type))).sort();
+
+  const ExerciseCard = ({ t }: { t: ExerciseTemplate }) => {
+    const meta = getTypeMeta(t.exercise_type);
+    return (
+      <div
+        style={{ background: C.surface, border: `1px solid ${meta.accent}40`, borderTop: `3px solid ${meta.accent}`, borderRadius: 10, padding: "14px 14px 0 14px", display: "flex", flexDirection: "column", gap: 8, transition: "box-shadow 0.15s", overflow: "hidden" }}
+        onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${meta.accent}20`)}
+        onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 7, background: meta.accentDim, border: `1px solid ${meta.accent}30`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{meta.icon}</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>{(t as any).clinical_name ?? t.display_name}</div>
+              {(t as any).clinical_name && (t as any).clinical_name !== t.display_name && (
+                <div style={{ fontSize: 11, color: C.textMuted }}>Patient: {t.display_name}</div>
+              )}
+            </div>
+          </div>
+          {t.is_vanilla && <Badge label="System" color={meta.accent} />}
+        </div>
+
+        {/* Description */}
+        {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
+
+        {/* Tags: position + camera + ROM */}
+        <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5 }}>
+          {(t as any).patient_position && (
+            <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: C.textMuted }}>
+              {(t as any).patient_position === "standing" ? "Standing" : (t as any).patient_position === "seated" ? "Seated" : "Standing / Seated"}
+            </span>
+          )}
+          {(t as any).camera_position && (
+            <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: C.textMuted }}>
+              Camera: {(t as any).camera_position === "front" ? "Front" : (t as any).camera_position === "side" ? "Side" : "Front or Side"}
+            </span>
+          )}
+          {(t as any).rom_norm_degrees != null && (
+            <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: meta.accent }}>
+              ROM {(t as any).rom_start_degrees ?? 0}° → {(t as any).rom_norm_degrees}°{(t as any).rom_acceptable_min != null ? ` (min ${(t as any).rom_acceptable_min}°)` : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Reps/hold pill */}
+        <div style={{ padding: "5px 9px", background: meta.accentDim, borderRadius: 6, display: "inline-flex", alignSelf: "flex-start" }}>
+          <span style={{ fontSize: 11, color: meta.accent, fontWeight: 600 }}>{t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold</span>
+        </div>
+
+        {/* Media image — constrained height, no bleed on mobile */}
+        {(t as any).media_url && (
+          <div style={{ margin: "4px -14px 0 -14px", lineHeight: 0 }}>
+            <img
+              src={(t as any).media_url}
+              alt={t.display_name}
+              style={{ width: "100%", height: 100, objectFit: "cover", objectPosition: "top", display: "block" }}
+            />
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 6, padding: "8px 0", borderTop: `1px solid ${C.border}`, marginTop: (t as any).media_url ? 0 : 4 }}>
+          {t.is_vanilla && <Btn onClick={() => handleCustomise(t)} small variant="ghost" fullWidth>Customise →</Btn>}
+          <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost" fullWidth>Edit</Btn>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
+      {/* ── Sub-tabs ── */}
       <div style={{ display: "flex", gap: 2, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 4, width: "fit-content", marginBottom: 16 }}>
         {[{ key: "vanilla", label: `System (${vanillaTemplates.length})` }, { key: "mine", label: `My Library (${myTemplates.length})` }].map(({ key, label }) => (
           <button key={key} onClick={() => setSubTab(key as "vanilla" | "mine")} style={{ background: subTab === key ? C.surfaceHover : "transparent", border: `1px solid ${subTab === key ? C.border : "transparent"}`, borderRadius: 6, padding: "6px 16px", color: subTab === key ? C.text : C.textMuted, fontSize: 13, fontWeight: subTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer" }}>{label}</button>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search exercises…" style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-          <option value="all">All types</option><option value="shoulder_flexion">Shoulder Flexion</option><option value="shoulder_abduction">Shoulder Abduction</option><option value="sit_to_stand">Sit to Stand</option><option value="knee_extension">Knee Extension</option><option value="knee_flexion">Knee Flexion</option><option value="custom">Custom</option>
+
+      {/* ── Controls row ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" as const }}>
+        <input
+          value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search exercises…"
+          style={{ flex: "1 1 160px", minWidth: 120, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 12px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }}
+        />
+        <select
+          value={typeFilter} onChange={e => { setTypeFilter(e.target.value); if (e.target.value !== "all") setGroupByType(false); else setGroupByType(true); }}
+          style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 10px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
+        >
+          <option value="all">All types</option>
+          {allExerciseTypes.map(type => <option key={type} value={type}>{getTypeMeta(type).label}</option>)}
+        </select>
+        <select
+          value={sortBy} onChange={e => setSortBy(e.target.value as "name" | "type" | "reps")}
+          style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 10px", color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
+        >
+          <option value="type">Group by type</option>
+          <option value="name">Sort A–Z</option>
+          <option value="reps">Sort by reps</option>
         </select>
       </div>
-      {loading ? <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted }}>Loading…</div> : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-          {active.map(t => {
-            // Accent colour per exercise type
-            // Accent colour per exercise type
-            const accent = t.exercise_type === "shoulder_flexion" ? C.blue
-              : t.exercise_type === "shoulder_abduction" ? C.purple
-              : t.exercise_type === "sit_to_stand" ? C.green
-              : t.exercise_type === "knee_extension" ? C.orange
-              : t.exercise_type === "knee_flexion" ? C.orange
-              : C.blue;
-            const accentDim = t.exercise_type === "shoulder_flexion" ? C.blueDim
-              : t.exercise_type === "shoulder_abduction" ? C.purpleDim
-              : t.exercise_type === "sit_to_stand" ? C.greenDim
-              : t.exercise_type === "knee_extension" ? C.orangeDim
-              : t.exercise_type === "knee_flexion" ? C.orangeDim
-              : C.blueDim;
-            const icon = t.exercise_type === "shoulder_flexion" ? "💪"
-              : t.exercise_type === "shoulder_abduction" ? "🙌"
-              : t.exercise_type === "sit_to_stand" ? "🦵"
-              : "⚡";
-            return (
-              <div key={t.id} style={{
-                background: C.surface,
-                border: `1px solid ${accent}40`,
-                borderTop: `3px solid ${accent}`,
-                borderRadius: 10, padding: "16px",
-                display: "flex", flexDirection: "column", gap: 10,
-                transition: "box-shadow 0.15s",
-              }}
-                onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 20px ${accent}20`)}
-                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-              >
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{
-                      width: 36, height: 36, borderRadius: 8,
-                      background: accentDim, border: `1px solid ${accent}30`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 18, flexShrink: 0,
-                    }}>{icon}</div>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{(t as any).clinical_name ?? t.display_name}</div>
-                      {(t as any).clinical_name && (t as any).clinical_name !== t.display_name && (
-                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Patient: {t.display_name}</div>
-                      )}
-                    </div>
-                  </div>
-                  {t.is_vanilla && <Badge label="System" color={accent} />}
-                </div>
-                {t.description && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{t.description}</div>}
 
-                {/* Position + Camera + ROM info */}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {(t as any).patient_position && (
-                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: C.textMuted }}>
-                      {(t as any).patient_position === "standing" ? "Standing" : (t as any).patient_position === "seated" ? "Seated" : "Standing / Seated"}
-                    </span>
-                  )}
-                  {(t as any).camera_position && (
-                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: C.textMuted }}>
-                      Camera: {(t as any).camera_position === "front" ? "Front" : (t as any).camera_position === "side" ? "Side" : "Front or Side"}
-                    </span>
-                  )}
-                  {(t as any).rom_norm_degrees != null && (
-                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: C.bg, border: `1px solid ${C.border}`, color: accent }}>
-                      ROM {(t as any).rom_start_degrees ?? 0}° → {(t as any).rom_norm_degrees}°{(t as any).rom_acceptable_min != null ? ` (min ${(t as any).rom_acceptable_min}°)` : ""}
-                    </span>
-                  )}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted }}>Loading…</div>
+      ) : sorted.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 0", color: C.textDim }}>No exercises match your filter.</div>
+      ) : (
+        <div>
+          {groups.map(group => (
+            <div key={group.type}>
+              {/* Group header — only shown when grouping is active */}
+              {showGroups && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, marginTop: group.type !== groups[0].type ? 28 : 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: group.accent, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>{group.label}</span>
+                  <span style={{ fontSize: 11, color: C.textDim }}>({group.items.length})</span>
+                  <div style={{ flex: 1, height: 1, background: group.accent + "30" }} />
                 </div>
-
-                <div style={{
-                  display: "flex", gap: 8, padding: "6px 10px",
-                  background: accentDim, borderRadius: 6,
-                }}>
-                  <span style={{ fontSize: 11, color: accent, fontWeight: 600 }}>
-                    {t.default_reps} reps · {msToSeconds(t.default_hold_ms)}s hold
-                  </span>
-                </div>
-                {(t as any).media_url && (
-                  <div style={{ margin: "0 -16px", overflow: "hidden", maxHeight: 120 }}>
-                    <img src={(t as any).media_url} alt={t.display_name} style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 6 }}>
-                  {t.is_vanilla && (
-                    <Btn onClick={() => handleCustomise(t)} small variant="ghost" fullWidth>Customise →</Btn>
-                  )}
-                  <Btn onClick={() => setEditingTemplate({ ...t })} small variant="ghost" fullWidth>Edit</Btn>
-                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, marginBottom: showGroups ? 4 : 0 }}>
+                {group.items.map(t => <ExerciseCard key={t.id} t={t} />)}
               </div>
-            );
-          })}
-          {active.length === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: C.textDim }}>No exercises match your filter.</div>}
+            </div>
+          ))}
         </div>
       )}
+
+      {/* ── Edit / Customise panel ── */}
       {editingTemplate && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) setEditingTemplate(null); }}>
           <div style={{ width: "min(500px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
-                    {editingTemplate.id ? "Edit" : "Customise"}: {(editingTemplate as any).clinical_name ?? editingTemplate.display_name}
-                  </h3>
-                  {!editingTemplate.id && (
-                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Creating a clinic copy — system template will not be changed</div>
-                  )}
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editingTemplate.id ? "Edit" : "Customise"}: {(editingTemplate as any).clinical_name ?? editingTemplate.display_name}</h3>
+                  {!editingTemplate.id && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Creating a clinic copy — system template will not be changed</div>}
                 </div>
                 <button onClick={() => setEditingTemplate(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 20, cursor: "pointer" }}>✕</button>
               </div>
@@ -1546,10 +1310,9 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                   )}
                   <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 6, border: `1px dashed ${C.border}`, cursor: "pointer", color: C.textMuted, fontSize: 12 }}>
                     <span>{(editingTemplate as any).media_url ? "Replace image / GIF" : "Upload image / GIF"}</span>
-                    <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" style={{ display: "none" }}
-                      onChange={e => { const file = e.target.files?.[0]; if (file && editingTemplate) handleMediaUpload(editingTemplate, file); }} />
+                    <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" style={{ display: "none" }} onChange={e => { const file = e.target.files?.[0]; if (file && editingTemplate) handleMediaUpload(editingTemplate, file); }} />
                   </label>
-                  <div style={{ fontSize: 11, color: C.textDim }}>JPG, PNG, GIF or WebP — max 5MB. Animated GIFs supported.</div>
+                  <div style={{ fontSize: 11, color: C.textDim }}>JPG, PNG, GIF or WebP — max 5MB.</div>
                 </div>
               </Field>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
@@ -1557,57 +1320,32 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                 <Field label="Hold (s)"><Input type="number" value={msToSeconds(editingTemplate.default_hold_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_hold_ms: secondsToMs(v) } : t)} min={0} max={10} step={0.5} /></Field>
                 <Field label="Rest (s)"><Input type="number" value={msToSeconds(editingTemplate.default_rest_ms)} onChange={v => setEditingTemplate(t => t ? { ...t, default_rest_ms: secondsToMs(v) } : t)} min={0} max={30} step={0.5} /></Field>
               </div>
-
-              {/* ── Clinical Setup ── */}
               <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Clinical Setup</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 12 }}>Clinical Setup</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <Field label="Patient Position" hint="Required starting position">
-                    <select value={(editingTemplate as any).patient_position ?? "standing"} onChange={e => setEditingTemplate(t => t ? { ...t, patient_position: e.target.value } as any : t)}
-                      style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 12px", color: C.text, fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%" }}>
-                      <option value="standing">Standing</option>
-                      <option value="seated">Seated</option>
-                      <option value="either">Either</option>
+                    <select value={(editingTemplate as any).patient_position ?? "standing"} onChange={e => setEditingTemplate(t => t ? { ...t, patient_position: e.target.value } as any : t)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 12px", color: C.text, fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%" }}>
+                      <option value="standing">Standing</option><option value="seated">Seated</option><option value="either">Either</option>
                     </select>
                   </Field>
                   <Field label="Camera Position" hint="Best angle for measurement">
-                    <select value={(editingTemplate as any).camera_position ?? "front"} onChange={e => setEditingTemplate(t => t ? { ...t, camera_position: e.target.value } as any : t)}
-                      style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 12px", color: C.text, fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%" }}>
-                      <option value="front">Front-facing</option>
-                      <option value="side">Side-on</option>
-                      <option value="either">Either</option>
+                    <select value={(editingTemplate as any).camera_position ?? "front"} onChange={e => setEditingTemplate(t => t ? { ...t, camera_position: e.target.value } as any : t)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 12px", color: C.text, fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%" }}>
+                      <option value="front">Front-facing</option><option value="side">Side-on</option><option value="either">Either</option>
                     </select>
                   </Field>
                 </div>
               </div>
-
-              {/* ── Range of Motion ── */}
               <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Range of Motion</div>
-                <div style={{ fontSize: 11, color: C.textDim, marginBottom: 12 }}>
-                  {(editingTemplate as any).rom_unit === "normalised" ? "Scale 0–100 (normalised — used for sit to stand)" : "Degrees — start → target → minimum acceptable for rep to count"}
-                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 4 }}>Range of Motion</div>
+                <div style={{ fontSize: 11, color: C.textDim, marginBottom: 12 }}>Degrees — start → target → minimum acceptable for rep to count</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
-                  <Field label="Start">
-                    <Input type="number" value={(editingTemplate as any).rom_start_degrees ?? 0}
-                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_start_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} />
-                  </Field>
-                  <Field label="Target (norm)">
-                    <Input type="number" value={(editingTemplate as any).rom_norm_degrees ?? ""}
-                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_norm_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} />
-                  </Field>
-                  <Field label="Min acceptable">
-                    <Input type="number" value={(editingTemplate as any).rom_acceptable_min ?? ""}
-                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_acceptable_min: parseInt(v) || 0 } as any : t)} min={0} max={180} />
-                  </Field>
-                  <Field label="Max (ceiling)">
-                    <Input type="number" value={(editingTemplate as any).rom_max_degrees ?? ""}
-                      onChange={v => setEditingTemplate(t => t ? { ...t, rom_max_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} />
-                  </Field>
+                  <Field label="Start"><Input type="number" value={(editingTemplate as any).rom_start_degrees ?? 0} onChange={v => setEditingTemplate(t => t ? { ...t, rom_start_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} /></Field>
+                  <Field label="Target"><Input type="number" value={(editingTemplate as any).rom_norm_degrees ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, rom_norm_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} /></Field>
+                  <Field label="Min"><Input type="number" value={(editingTemplate as any).rom_acceptable_min ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, rom_acceptable_min: parseInt(v) || 0 } as any : t)} min={0} max={180} /></Field>
+                  <Field label="Max"><Input type="number" value={(editingTemplate as any).rom_max_degrees ?? ""} onChange={v => setEditingTemplate(t => t ? { ...t, rom_max_degrees: parseInt(v) || 0 } as any : t)} min={0} max={180} /></Field>
                 </div>
               </div>
             </div>
-            {/* Sticky footer — always visible regardless of scroll position */}
             <div style={{ padding: "16px 24px", borderTop: `1px solid ${C.border}`, background: C.surface, display: "flex", gap: 10, flexShrink: 0 }}>
               <Btn onClick={() => setEditingTemplate(null)} variant="ghost">Cancel</Btn>
               <Btn onClick={() => handleSave(editingTemplate)} variant="primary" disabled={saving} fullWidth>{saving ? "Saving…" : editingTemplate.id ? "Update Exercise" : "Save to My Library"}</Btn>
@@ -1630,58 +1368,27 @@ export default function AdminPage() {
   const [allPrescriptions, setAllPrescriptions] = useState<PrescribedSession[]>([]);
   const [allTemplates, setAllTemplates] = useState<SessionTemplate[]>([]);
   const [physioName, setPhysioName] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // ── Auth guard — redirect to /login if no session; populate physio name ──
-  // Reads from the JWT in localStorage — no network call, safe, won't block queries.
-  // NEVER wrap layout.tsx with AuthProvider — it causes Supabase query hangs.
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        window.location.href = "/login";
-        return;
-      }
-      const name =
-        session.user.user_metadata?.full_name ??
-        session.user.email ??
-        null;
-      setPhysioName(name);
+      if (!session) { window.location.href = "/login"; return; }
+      setPhysioName(session.user.user_metadata?.full_name ?? session.user.email ?? null);
     });
   }, [supabase]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  };
-
+  const handleLogout = async () => { await supabase.auth.signOut(); window.location.href = "/login"; };
   const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
-      supabase.from("sessions").select(`
-        *,
-        session_blocks (
-          sequence_order,
-          session_block_exercises (
-            sequence_order, reps_override, hold_ms_override,
-            exercise_templates ( display_name, default_reps, default_hold_ms )
-          )
-        ),
-        prescription_exercises ( sequence_order, reps_override, hold_ms_override, exercise_templates ( display_name, default_reps, default_hold_ms ) )
-      `).order("created_at", { ascending: false }),
+      supabase.from("sessions").select(`*, session_blocks(sequence_order, session_block_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))), prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))`).order("created_at", { ascending: false }),
       supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms, rom_start_degrees, rom_norm_degrees, rom_max_degrees, rom_acceptable_min))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
-      // Prefer session_blocks path (module 8+); fall back to flat prescription_exercises (pre-module-8)
       const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
-      const blockExercises = blocks
-        .flatMap((b: Record<string, unknown>) =>
-          ((b.session_block_exercises as Record<string, unknown>[]) ?? [])
-        )
-        .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
-      const pe = blockExercises.length > 0
-        ? blockExercises
-        : ((s.prescription_exercises as Record<string, unknown>[]) ?? [])
-            .sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      const blockExercises = blocks.flatMap((b: Record<string, unknown>) => ((b.session_block_exercises as Record<string, unknown>[]) ?? [])).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
+      const pe = blockExercises.length > 0 ? blockExercises : ((s.prescription_exercises as Record<string, unknown>[]) ?? []).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
       return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
@@ -1693,56 +1400,69 @@ export default function AdminPage() {
   useEffect(() => { loadShared(); }, [loadShared]);
 
   const tabs: { key: Tab; label: string; icon: string }[] = [
-    { key: "library", label: "Exercise Library", icon: "🏋️" },
-    { key: "patients", label: "Patients", icon: "👤" },
-    { key: "sessions", label: "Protocols", icon: "📋" },
+    { key: "library",  label: "Exercise Library", icon: "🏋️" },
+    { key: "patients", label: "Patients",          icon: "👤" },
+    { key: "sessions", label: "Protocols",         icon: "📋" },
   ];
+
+  const initials = physioName
+    ? physioName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
+    : "?";
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-      <div style={{ borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 56, position: "sticky", top: 0, background: C.bg, zIndex: 50 }}>
 
-        {/* Left: logo + tabs */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 32 }}>
+      {/* ── Nav bar ── */}
+      <div style={{ borderBottom: `1px solid ${C.border}`, padding: "0 16px", display: "flex", alignItems: "center", height: 56, position: "sticky", top: 0, background: C.bg, zIndex: 50, gap: 8 }}>
+
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚡</div>
           <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Rehably</span>
-          <span style={{ color: C.border, fontSize: 16, margin: "0 4px" }}>|</span>
-          <span style={{ fontSize: 14, color: C.textMuted }}>Admin</span>
         </div>
-        <div style={{ display: "flex", gap: 2, flex: 1 }}>
+
+        {/* Desktop tabs — hidden on mobile via media query workaround: use flex with overflow hidden */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden", gap: 2 }}>
           {tabs.map(({ key, label, icon }) => (
-            <button key={key} onClick={() => { setActiveTab(key); loadShared(); }} style={{ background: activeTab === key ? C.surfaceHover : "transparent", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "0 16px", height: 56, color: activeTab === key ? C.text : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 7, transition: "all 0.15s" }}>
-              <span>{icon}</span> {label}
+            <button key={key} onClick={() => { setActiveTab(key); loadShared(); setMobileMenuOpen(false); }}
+              style={{ background: activeTab === key ? C.surfaceHover : "transparent", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "0 14px", height: 56, color: activeTab === key ? C.text : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, flexShrink: 0, transition: "all 0.15s" }}>
+              <span style={{ fontSize: 14 }}>{icon}</span>
+              <span className="tab-label">{label}</span>
             </button>
           ))}
         </div>
 
-        {/* Physio name badge + sign out */}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Right side: avatar + sign out */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
           {physioName && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
-                {physioName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
-              </div>
-              <span style={{ fontSize: 13, color: C.textMuted, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                {physioName}
-              </span>
+            <div style={{ width: 30, height: 30, borderRadius: "50%", background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0, title: physioName }}>
+              {initials}
             </div>
           )}
           <button
             onClick={handleLogout}
-            style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 14px", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+            style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 12px", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}
             onMouseEnter={e => { (e.target as HTMLButtonElement).style.borderColor = C.red; (e.target as HTMLButtonElement).style.color = C.red; }}
             onMouseLeave={e => { (e.target as HTMLButtonElement).style.borderColor = C.border; (e.target as HTMLButtonElement).style.color = C.textMuted; }}
           >
             Sign out
           </button>
         </div>
-
       </div>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px" }}>
-        {activeTab === "library" && <ExerciseLibraryTab showToast={showToast} />}
+      {/* ── Mobile tab bar (below nav, always visible on small screens) ── */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: C.surface, overflowX: "auto" as const, WebkitOverflowScrolling: "touch" as any }}>
+        {tabs.map(({ key, label, icon }) => (
+          <button key={key} onClick={() => { setActiveTab(key); loadShared(); }}
+            style={{ flex: "0 0 auto", background: "none", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "10px 20px", color: activeTab === key ? C.blue : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const }}>
+            <span>{icon}</span> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Content ── */}
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 16px" }}>
+        {activeTab === "library"  && <ExerciseLibraryTab showToast={showToast} />}
         {activeTab === "patients" && <PatientsTab showToast={showToast} prescriptions={allPrescriptions} templates={allTemplates} onRefresh={loadShared} />}
         {activeTab === "sessions" && <SessionTemplatesTab showToast={showToast} />}
       </div>
