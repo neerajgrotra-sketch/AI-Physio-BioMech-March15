@@ -869,17 +869,22 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           ghostHoldRef.current=null; ghostLowRef.current=0; ghostRepRef.current=false; ghostHistRef.current=[];
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
-          framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
-          const waitForSpeech = () => {
+          // Fire coaching intro first, wait for it to finish, THEN run framing check.
+          // Framing cue must fire into a clear audio window — not compete with intro speech.
+          stableCoachingCallbacks.onExerciseStarted(Date.now());
+          writeDebugLog("info", "FRAMING", "Next exercise intro fired — framing check scheduled after speech");
+
+          const waitForIntroThenCheck = () => {
             if (window.speechSynthesis?.speaking) {
-              window.setTimeout(waitForSpeech, 300);
+              window.setTimeout(waitForIntroThenCheck, 300);
             } else {
-              window.setTimeout(() => {
-                stableCoachingCallbacks.onExerciseStarted(Date.now());
-              }, 600);
+              writeDebugLog("info", "FRAMING", "Intro speech done — running forcePreExerciseCheck");
+              framingIntelligence.forcePreExerciseCheck(
+                null, createEmptyFeatures(), nextItem.prescription, Date.now()
+              );
             }
           };
-          window.setTimeout(waitForSpeech, 300);
+          window.setTimeout(waitForIntroThenCheck, 500);
         };
 
         // If there's a rest period before this next block, show rest screen first
@@ -1097,8 +1102,26 @@ Reply with only the summary text, no JSON, no formatting.`;
     const prescription = sessionQueue.getActivePrescription();
     writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
-    framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
+
+    // startLoop fires onExerciseStarted internally which starts the coaching intro speech.
+    // liveFrameRef starts accumulating real landmark data from frame 1.
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
+    writeDebugLog("info", "FRAMING", "Inference loop started — waiting for intro speech to finish before framing check");
+
+    // forcePreExerciseCheck must fire AFTER intro speech completes so framing cue
+    // has a clear audio window. Poll speechSynthesis until speech ends, then check.
+    const waitForIntroThenCheck = () => {
+      if (window.speechSynthesis?.speaking) {
+        window.setTimeout(waitForIntroThenCheck, 300);
+      } else {
+        writeDebugLog("info", "FRAMING", "Intro speech done — running forcePreExerciseCheck");
+        framingIntelligence.forcePreExerciseCheck(
+          null, createEmptyFeatures(), prescription, Date.now()
+        );
+      }
+    };
+    // Give startLoop 600ms to call onExerciseStarted and start speech before polling
+    window.setTimeout(waitForIntroThenCheck, 600);
     // Start ghost render loop
     ghostPhaseRef.current = "demo";
     ghostStartRef.current = performance.now();
