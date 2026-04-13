@@ -870,16 +870,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
           framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
-          const waitForSpeech = () => {
-            if (window.speechSynthesis?.speaking) {
-              window.setTimeout(waitForSpeech, 300);
-            } else {
-              window.setTimeout(() => {
-                stableCoachingCallbacks.onExerciseStarted(Date.now());
-              }, 600);
-            }
-          };
-          window.setTimeout(waitForSpeech, 300);
+          // forcePreExerciseCheck already opened the window above.
+          // Voice cue inside runFramingCheck uses speakAfterCurrentSpeech
+          // so it waits for coaching intro without blocking the window.
+          stableCoachingCallbacks.onExerciseStarted(Date.now());
         };
 
         // If there's a rest period before this next block, show rest screen first
