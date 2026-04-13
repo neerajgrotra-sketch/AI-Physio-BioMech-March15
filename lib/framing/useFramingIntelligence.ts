@@ -63,9 +63,19 @@ function buildPanelState(
 // HOOK
 // ============================================================
 
-export function useFramingIntelligence(patientProfile: PatientProfile) {
+type DebugLogger = (level: string, category: string, message: string, detail?: string) => void;
+
+export function useFramingIntelligence(patientProfile: PatientProfile, debugLogger?: DebugLogger) {
   const monitorRef   = useRef(new FramingMonitor(2000));
   const evaluatorRef = useRef(new FramingEvaluator());
+
+  // Routes to console via framingLog AND to SessionRunner debug panel
+  const debugLoggerRef = useRef<DebugLogger | undefined>(debugLogger);
+  debugLoggerRef.current = debugLogger; // keep current without re-renders
+  const debugLog = (msg: string, detail?: string) => {
+    debugLog(msg, detail);
+    if (debugLoggerRef.current) debugLoggerRef.current("info", "FRAMING", msg, detail);
+  };
 
   const [framingPanelState, setFramingPanelState] = useState<FramingPanelState>({
     tone: "warning",
@@ -117,11 +127,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
   // Respects preExerciseActiveRef — aborts if patient starts moving.
   const speakAfterCurrentSpeech = useCallback((text: string) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    framingLog("speakAfterCurrentSpeech queued", `speaking=${window.speechSynthesis.speaking}`);
+    debugLog("speakAfterCurrentSpeech queued", `speaking=${window.speechSynthesis.speaking}`);
 
     const doSpeak = () => {
       if (!preExerciseActiveRef.current) {
-        framingLog("speakAfterCurrentSpeech ABORTED — patient started moving");
+        debugLog("speakAfterCurrentSpeech ABORTED — patient started moving");
         return;
       }
       const utterance = new SpeechSynthesisUtterance(text);
@@ -129,7 +139,10 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
       const voices = window.speechSynthesis.getVoices();
       const preferred = voices.find(v => v.lang.startsWith("en") && (v.name.includes("Natural") || v.name.includes("Neural") || v.name.includes("Premium") || v.name.includes("Samantha") || v.name.includes("Karen") || v.name.includes("Daniel")));
       if (preferred) utterance.voice = preferred;
-      framingLog("speakAfterCurrentSpeech FIRING", `text="${text}"`);
+      debugLog("speakAfterCurrentSpeech FIRING", `text="${text}"`);
+      if (debugLoggerRef.current) {
+        debugLoggerRef.current("FRAMING_VOICE", "FRAMING_VOICE", `[FRAMING VOICE] "${text}"`, "pre-exercise framing guidance");
+      }
       window.speechSynthesis.speak(utterance);
     };
 
@@ -158,20 +171,20 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     const features = liveFeaturesRef.current;
     const nowMs    = Date.now();
 
-    framingLog("runFramingCheck", `preExerciseActive=${preExerciseActiveRef.current} attempts=${voiceAttemptCountRef.current} personDetected=${frame?.personDetected ?? false}`);
+    debugLog("runFramingCheck", `preExerciseActive=${preExerciseActiveRef.current} attempts=${voiceAttemptCountRef.current} personDetected=${frame?.personDetected ?? false}`);
 
     if (!preExerciseActiveRef.current) {
-      framingLog("runFramingCheck SKIPPED — pre-exercise window closed (patient already moving)");
+      debugLog("runFramingCheck SKIPPED — pre-exercise window closed (patient already moving)");
       return;
     }
 
     if (!frame || !frame.personDetected || !features) {
       const msg = "Please step into the camera view.";
-      framingLog("runFramingCheck — no person", msg);
+      debugLog("runFramingCheck — no person", msg);
       setFramingPanelState(buildPanelState(msg, "warning", false));
       if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
         voiceAttemptCountRef.current += 1;
-        framingLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, msg);
+        debugLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, msg);
         // Wait for any current speech (coaching intro) to finish before speaking
         speakAfterCurrentSpeech(msg);
       }
@@ -179,10 +192,10 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     }
 
     const status = monitorRef.current.forcePreExerciseCheck(frame, features, prescription, nowMs);
-    framingLog("runFramingCheck status", `adequate=${status.adequate} severity=${status.severity} fallback="${status.fallbackInstruction}"`);
+    debugLog("runFramingCheck status", `adequate=${status.adequate} severity=${status.severity} fallback="${status.fallbackInstruction}"`);
 
     if (status.adequate) {
-      framingLog("runFramingCheck — adequate, no voice needed");
+      debugLog("runFramingCheck — adequate, no voice needed");
       setFramingPanelState(buildPanelState("Good position.", "ok", false));
       return;
     }
@@ -192,11 +205,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
 
     if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
       voiceAttemptCountRef.current += 1;
-      framingLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, message);
+      debugLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, message);
       // Wait for coaching intro to finish, then speak framing cue
       speakAfterCurrentSpeech(message);
     } else {
-      framingLog("runFramingCheck — max attempts reached, no voice");
+      debugLog("runFramingCheck — max attempts reached, no voice");
     }
 
     // AI for better instruction
@@ -205,7 +218,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
       prescription, status, confidenceReport, patientProfile,
       (result) => {
         if (!result.isStillRelevant) return;
-        framingLog("AI framing result", `instruction="${result.patientInstruction}"`);
+        debugLog("AI framing result", `instruction="${result.patientInstruction}"`);
         setFramingPanelState(
           buildPanelState(result.patientInstruction ?? "Good position.", result.severity, false)
         );
@@ -221,7 +234,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
   // ----------------------------------------------------------
 
   const reset = useCallback((message = "Position yourself in view.") => {
-    framingLog("reset", message);
+    debugLog("reset", message);
     monitorRef.current.reset();
     evaluatorRef.current.cancel();
     preExerciseActiveRef.current = false;
@@ -241,7 +254,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
   // ----------------------------------------------------------
 
   const cancelPendingEval = useCallback(() => {
-    framingLog("cancelPendingEval — closing pre-exercise voice window");
+    debugLog("cancelPendingEval — closing pre-exercise voice window");
     evaluatorRef.current.cancel();
     preExerciseActiveRef.current = false;
     if (voiceTimeoutRef.current !== null) {
@@ -338,7 +351,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     prescription: ExercisePrescription,
     nowMs: number
   ) => {
-    framingLog("forcePreExerciseCheck called", `ex=${prescription.id} personDetected=${frame?.personDetected ?? false}`);
+    debugLog("forcePreExerciseCheck called", `ex=${prescription.id} personDetected=${frame?.personDetected ?? false}`);
 
     confidenceSamplesRef.current = [];
     livePrescriptionRef.current  = prescription;
@@ -364,17 +377,17 @@ export function useFramingIntelligence(patientProfile: PatientProfile) {
     // By this time liveFrameRef will have real BlazePose data.
     // speakAfterCurrentSpeech inside runFramingCheck ensures the
     // voice cue waits for coaching intro to finish before speaking.
-    framingLog(`pre-exercise window OPEN — first voice check in ${INITIAL_CHECK_DELAY_MS}ms`);
+    debugLog(`pre-exercise window OPEN — first voice check in ${INITIAL_CHECK_DELAY_MS}ms`);
 
     voiceTimeoutRef.current = window.setTimeout(() => {
       voiceTimeoutRef.current = null;
-      framingLog("first framing check firing");
+      debugLog("first framing check firing");
       runFramingCheck(prescription);
 
       // Schedule retry after 8s if still in pre-exercise window
       voiceTimeoutRef.current = window.setTimeout(() => {
         voiceTimeoutRef.current = null;
-        framingLog("second framing check firing");
+        debugLog("second framing check firing");
         runFramingCheck(prescription);
       }, PRE_EXERCISE_RETRY_DELAY_MS);
 
