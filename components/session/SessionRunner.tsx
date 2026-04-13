@@ -1764,718 +1764,439 @@ Reply with only the summary text, no JSON, no formatting.`;
   return (
     <div className="min-h-screen bg-[#0d1117] text-white" style={{ fontFamily: "system-ui, sans-serif" }}>
 
-      {/* ── ROW 1: COMPACT SESSION BAR ── */}
-      <div style={{
-        background: "#1a2040",
-        borderRadius: 12,
-        padding: isMobile ? "12px 14px" : "10px 18px",
-        border: "1px solid rgba(255,255,255,0.08)",
-        marginBottom: 12,
-        display: "flex",
-        alignItems: isMobile ? "flex-start" : "center",
-        justifyContent: "space-between",
-        flexDirection: isMobile ? "column" : "row",
-        gap: 10,
-      }}>
-        {/* Left: Branding + session meta */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 800, color: "white", letterSpacing: -0.4 }}>
-              {sessionTitle ?? "Rehably"}
+      {/* ── STICKY HEADER ── */}
+      <header className="sticky top-0 z-50 bg-[#0f1623] border-b border-white/10 px-4 py-2.5">
+        <div className="max-w-[1440px] mx-auto flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="shrink-0">
+              <div className="text-[13px] font-bold text-[#7cc6ff] tracking-tight">Rehably</div>
+              <div className="text-[10px] text-[#7a88a8] mt-0.5">AI Rehabilitation Intelligence</div>
             </div>
-            {patientName && (
-              <div style={{ fontSize: 11, color: "#aab6d3", marginTop: 1 }}>
-                {patientName}
-                {" · "}
-                <span style={{ color: "#7a88a8" }}>{patientProfile.type.replace(/_/g, " ")}</span>
-              </div>
-            )}
-          </div>
-          {/* Stats badges */}
-          {combinedQueue.length > 0 && (
-            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-              {[
-                formatDurationRange(combinedDurationSeconds),
-                `${combinedQueue.length} exercise${combinedQueue.length !== 1 ? "s" : ""}`,
-                `${combinedTotalReps} reps`,
-              ].map(label => (
-                <span key={label} style={{
-                  padding: "3px 9px", borderRadius: 999,
-                  background: "rgba(124,198,255,0.08)", color: "#7cc6ff",
-                  fontSize: 11, fontWeight: 600,
-                }}>{label}</span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right: Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-          {/* AI status dot */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{
-              width: 7, height: 7, borderRadius: "50%",
-              background: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : aiEngineStatus === "checking" ? "#ffcc80" : "#7a88a8",
-              boxShadow: aiEngineStatus === "ok" ? "0 0 5px #9be7b0" : aiEngineStatus === "checking" ? "0 0 5px #ffcc80" : "none",
-              animation: aiEngineStatus === "checking" ? "pulse 1s infinite" : "none",
-            }} />
-            <span style={{ fontSize: 11, color: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
-              {aiEngineStatus === "ok" ? "AI Ready" : aiEngineStatus === "error" ? "AI Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
-            </span>
-          </div>
-
-          {/* Voice toggle */}
-          <button onClick={handleVoiceToggle} style={{
-            background: voiceOn ? "rgba(100,220,150,0.12)" : "rgba(255,255,255,0.06)",
-            color: voiceOn ? "#9be7b0" : "#7a88a8",
-            border: "1px solid " + (voiceOn ? "rgba(100,220,150,0.3)" : "rgba(255,255,255,0.1)"),
-            borderRadius: 7, padding: "5px 10px",
-            fontSize: 11, fontWeight: 700, cursor: "pointer",
-          }}>
-            {voiceOn ? "🔊 Voice" : "🔇 Muted"}
-          </button>
-
-          {/* Pre-session: Test + Begin */}
-          {!sessionQueue.sessionStarted && (
-            <>
-              <button onClick={() => checkAiEngine(false)} style={{
-                background: "rgba(124,198,255,0.1)", color: "#7cc6ff",
-                border: "1px solid rgba(124,198,255,0.25)", borderRadius: 7,
-                padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
-              }}>
-                Test
-              </button>
-              {combinedQueue.length > 0 && (
-                <button
-                  onClick={beginCombinedSession}
-                  disabled={!canBegin}
-                  style={{
-                    background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.15)",
-                    color: canBegin ? "#08111f" : "#7a88a8",
-                    border: "none", borderRadius: 8,
-                    padding: "8px 18px", fontSize: 13, fontWeight: 800,
-                    cursor: canBegin ? "pointer" : "not-allowed",
-                    letterSpacing: 0.3,
-                  }}
-                >
-                  Begin Session
-                </button>
+            <div className="w-px h-7 bg-white/10 shrink-0 hidden sm:block" />
+            <div className="min-w-0">
+              <div className="text-[13px] font-bold text-white truncate">{sessionTitle ?? "Session"}</div>
+              {patientName && (
+                <div className="text-[11px] text-[#aab6d3] truncate">
+                  {patientName} · <span className="text-[#7a88a8]">{patientProfile.type.replace(/_/g, " ")}</span>
+                </div>
               )}
-            </>
-          )}
-
-          {/* In-session: progress + end/reset */}
-          {sessionQueue.sessionStarted && (
-            <>
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                background: "rgba(155,231,176,0.08)",
-                border: "1px solid rgba(155,231,176,0.2)",
-                borderRadius: 8, padding: "5px 12px",
-              }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#9be7b0", boxShadow: "0 0 5px #9be7b0", animation: "pulse 2s infinite" }} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#9be7b0" }}>In Progress</span>
-                <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: "white", letterSpacing: 1 }}>{sessionTimer}</span>
-              </div>
-              <span style={{ fontSize: 12, color: "#7a88a8" }}>
-                {sessionQueue.queueIndex + 1}&thinsp;/&thinsp;{sessionQueue.getActiveQueue().length}
-              </span>
-              <button onClick={endSession} style={{
-                background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "6px 12px",
-                borderRadius: 7, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
-              }}>End</button>
-              <button onClick={resetSession} style={{
-                background: "rgba(255,255,255,0.06)", color: "#aab6d3", padding: "6px 12px",
-                borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12,
-              }}>Reset</button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── ROW 2: MAIN GRID ── */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.1fr) minmax(0,0.9fr)",
-        gap: 16,
-        alignItems: "start",
-        marginBottom: 16,
-      }}>
-
-        {/* LEFT: Framing Intelligence Bar + Camera */}
-        <div>
-
-          {/* ── FRAMING INTELLIGENCE BAR ── */}
-          <div style={{
-            marginBottom: 8,
-            padding: "9px 14px",
-            borderRadius: 9,
-            fontSize: 13,
-            fontWeight: 600,
-            background: framingPanelState.tone === "good"
-              ? "rgba(63,185,80,0.10)"
-              : framingPanelState.tone === "critical"
-              ? "rgba(248,81,73,0.10)"
-              : "rgba(210,153,34,0.10)",
-            border: `1px solid ${
-              framingPanelState.tone === "good" ? "rgba(63,185,80,0.30)"
-              : framingPanelState.tone === "critical" ? "rgba(248,81,73,0.30)"
-              : "rgba(210,153,34,0.30)"
-            }`,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}>
-            {/* Status dot */}
-            <div style={{
-              width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-              background: framingPanelState.tone === "good" ? "#3fb950"
-                : framingPanelState.tone === "critical" ? "#f85149" : "#d29922",
-              boxShadow: `0 0 6px ${
-                framingPanelState.tone === "good" ? "#3fb950"
-                : framingPanelState.tone === "critical" ? "#f85149" : "#d29922"
-              }`,
-              animation: framingPanelState.evaluating ? "pulse 1s infinite" : "none",
-            }} />
-            {/* Message */}
-            <span style={{
-              flex: 1,
-              color: framingPanelState.tone === "good" ? "#9be7b0"
-                : framingPanelState.tone === "critical" ? "#ff8f8f" : "#ffcc80",
-            }}>
-              {framingPanelState.message}
-            </span>
-            {/* Severity chip */}
-            {framingPanelState.severity && framingPanelState.severity !== "ok" && (
-              <span style={{
-                fontSize: 10, padding: "2px 8px", borderRadius: 999, fontWeight: 700, flexShrink: 0,
-                background: framingPanelState.tone === "good" ? "rgba(63,185,80,0.15)"
-                  : framingPanelState.tone === "critical" ? "rgba(248,81,73,0.15)"
-                  : "rgba(210,153,34,0.15)",
-                color: framingPanelState.tone === "good" ? "#3fb950"
-                  : framingPanelState.tone === "critical" ? "#f85149" : "#d29922",
-              }}>
-                {framingPanelState.severity}
-              </span>
-            )}
-          </div>
-
-          {/* ── CAMERA CARD ── */}
-          <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ position: "relative" }}>
-              <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
-              <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-                <PoseCanvasOverlay frame={inferenceLoop.frame} />
-              </div>
-              {/* Ghost silhouette canvas — layered on top of pose skeleton */}
-              <canvas
-                ref={ghostCanvasRef}
-                width={640} height={480}
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
-              />
             </div>
-            {inferenceLoop.engineError && (
-              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
-                {inferenceLoop.engineError}
+            {combinedQueue.length > 0 && (
+              <div className="hidden lg:flex items-center gap-1.5 flex-wrap">
+                {[
+                  formatDurationRange(combinedDurationSeconds),
+                  `${combinedQueue.length} exercise${combinedQueue.length !== 1 ? "s" : ""}`,
+                  `${combinedTotalReps} reps`,
+                ].map(label => (
+                  <span key={label} className="px-2 py-0.5 rounded-full bg-[#7cc6ff]/10 text-[#7cc6ff] text-[10px] font-semibold">{label}</span>
+                ))}
               </div>
             )}
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${aiEngineStatus === "ok" ? "bg-emerald-400 shadow-[0_0_5px_#9be7b0]" : aiEngineStatus === "error" ? "bg-red-400" : aiEngineStatus === "checking" ? "bg-yellow-400 animate-pulse" : "bg-[#7a88a8]"}`} />
+              <span className={`text-[11px] ${aiEngineStatus === "ok" ? "text-emerald-400" : aiEngineStatus === "error" ? "text-red-400" : "text-[#7a88a8]"}`}>
+                {aiEngineStatus === "ok" ? "AI Ready" : aiEngineStatus === "error" ? "AI Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
+              </span>
+            </div>
+            <button onClick={handleVoiceToggle} className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition-colors ${voiceOn ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/30" : "bg-white/5 text-[#7a88a8] border-white/10"}`}>
+              {voiceOn ? "🔊 Voice" : "🔇 Muted"}
+            </button>
+            {!sessionQueue.sessionStarted && (
+              <>
+                <button onClick={() => checkAiEngine(false)} className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-[#7cc6ff]/10 text-[#7cc6ff] border border-[#7cc6ff]/25">Test</button>
+                {combinedQueue.length > 0 && (
+                  <button onClick={beginCombinedSession} disabled={!canBegin} className={`px-4 py-1.5 rounded-lg text-[12px] font-extrabold transition-colors ${canBegin ? "bg-emerald-400 text-[#08111f] hover:bg-emerald-300 cursor-pointer" : "bg-emerald-400/15 text-[#7a88a8] cursor-not-allowed"}`}>
+                    Begin Session
+                  </button>
+                )}
+              </>
+            )}
+            {sessionQueue.sessionStarted && (
+              <>
+                <div className="flex items-center gap-2 bg-emerald-400/10 border border-emerald-400/20 rounded-lg px-3 py-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_5px_#9be7b0] animate-pulse" />
+                  <span className="text-[11px] font-bold text-emerald-400">In Progress</span>
+                  <span className="text-[13px] font-extrabold font-mono text-white tracking-wider">{sessionTimer}</span>
+                </div>
+                <span className="text-[11px] text-[#7a88a8]">{sessionQueue.queueIndex + 1}&thinsp;/&thinsp;{sessionQueue.getActiveQueue().length}</span>
+                <button onClick={endSession} className="px-3 py-1 rounded-md text-[11px] font-semibold bg-[#7cc6ff]/10 text-[#7cc6ff] border border-[#7cc6ff]/20">End</button>
+                <button onClick={resetSession} className="px-3 py-1 rounded-md text-[11px] bg-white/5 text-[#aab6d3]">Reset</button>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* ── PAGE CONTENT ── */}
+      <div className="p-3 lg:p-4 max-w-[1440px] mx-auto">
+
+        {/* Framing Intelligence bar */}
+        <div className={`mb-3 px-3.5 py-2.5 rounded-xl text-[13px] font-semibold flex items-center gap-2.5 border ${framingPanelState.tone === "good" ? "bg-emerald-500/10 border-emerald-500/30" : framingPanelState.tone === "critical" ? "bg-red-500/10 border-red-500/30" : "bg-yellow-500/10 border-yellow-500/30"}`}>
+          <div className={`w-2 h-2 rounded-full shrink-0 ${framingPanelState.tone === "good" ? "bg-[#3fb950] shadow-[0_0_6px_#3fb950]" : framingPanelState.tone === "critical" ? "bg-[#f85149] shadow-[0_0_6px_#f85149]" : "bg-[#d29922] shadow-[0_0_6px_#d29922]"} ${framingPanelState.evaluating ? "animate-pulse" : ""}`} />
+          <span className={`flex-1 ${framingPanelState.tone === "good" ? "text-emerald-400" : framingPanelState.tone === "critical" ? "text-red-400" : "text-yellow-400"}`}>{framingPanelState.message}</span>
+          {framingPanelState.severity && framingPanelState.severity !== "ok" && (
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${framingPanelState.tone === "good" ? "bg-emerald-500/15 text-emerald-500" : framingPanelState.tone === "critical" ? "bg-red-500/15 text-red-400" : "bg-yellow-500/15 text-yellow-400"}`}>{framingPanelState.severity}</span>
+          )}
         </div>
 
-        {/* RIGHT: Coaching + Camera Sees */}
-        <div style={{ display: "grid", gap: 12 }}>
-
-          {/* ── LIVE COACHING CARD ── */}
-          <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Live Coaching</div>
-              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(124,198,255,0.12)", color: "#7cc6ff", fontSize: 11, fontWeight: 700 }}>
-                  {formatPhase(inferenceLoop.phase)}
-                </span>
-                <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(255,255,255,0.06)", color: "white", fontSize: 11, fontWeight: 700 }}>
-                  {inferenceLoop.repCount}/{currentPrescription?.repTarget ?? 0} reps
-                </span>
-                {inferenceLoop.holdRemainingMs !== null && inferenceLoop.phase === "holding" && (
-                  <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(100,220,150,0.12)", color: "#9be7b0", fontSize: 11, fontWeight: 700 }}>
-                    Hold {Math.max(1, Math.ceil(inferenceLoop.holdRemainingMs / 1000))}s
-                  </span>
+        {/* ── MAIN 12-COL GRID ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 mb-4 items-start">
+          {/* Camera column lg:col-span-7 */}
+          <div className="lg:col-span-7">
+            <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] p-4">
+              <div className="relative">
+                <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
+                <div className="absolute inset-0 pointer-events-none">
+                  <PoseCanvasOverlay frame={inferenceLoop.frame} />
+                </div>
+                <canvas ref={ghostCanvasRef} width={640} height={480} className="absolute inset-0 w-full h-full pointer-events-none block" style={{ opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }} />
+                {sessionQueue.sessionStarted && (
+                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/10">
+                    <div className="h-full bg-emerald-400 transition-all duration-500" style={{ width: `${sessionProgressPct * 100}%` }} />
+                  </div>
                 )}
               </div>
-            </div>
-
-            {/* Exercise title + instructions */}
-            <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, marginBottom: 8, lineHeight: 1.2 }}>
-              {currentQueueItem?.displayName ?? "No active exercise"}
-            </div>
-            <div style={{ fontSize: 13, color: "#aab6d3", marginBottom: 12, lineHeight: 1.5 }}>
-              {instructionBody}
-            </div>
-            <div style={{ fontSize: 12, color: "#7a88a8", marginBottom: 12 }}>
-              <strong style={{ color: "#c7d3f5" }}>Position:</strong> {getPositionRequirement(currentPrescription?.id)}
-            </div>
-
-            {/* AI coaching message */}
-            <div style={{
-              background: "#0d1526", borderRadius: 10, padding: 14, minHeight: 52,
-              border: `1px solid ${
-                coachingPanelState.tone === "corrective" ? "rgba(255,200,80,0.25)" :
-                coachingPanelState.tone === "urgent" ? "rgba(255,100,100,0.25)" :
-                coachingPanelState.tone === "encouraging" ? "rgba(100,220,150,0.25)" :
-                "rgba(255,255,255,0.06)"
-              }`,
-              display: "flex", alignItems: "center", gap: 10,
-            }}>
-              {coachingPanelState.isThinking ? (
-                <div style={{ color: "#7a88a8", fontSize: 13, fontStyle: "italic" }}>Thinking…</div>
-              ) : coachingPanelState.message ? (
-                <>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                    background: coachingPanelState.tone === "corrective" ? "#ffcc80" :
-                      coachingPanelState.tone === "urgent" ? "#ff8f8f" :
-                      coachingPanelState.tone === "encouraging" ? "#9be7b0" : "#7cc6ff",
-                  }} />
-                  <div style={{ fontSize: 15, color: "white", fontWeight: 500, lineHeight: 1.4, flex: 1 }}>
-                    {coachingPanelState.message}
-                  </div>
-                  <div style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>
-                    {coachingPanelState.source}
-                  </div>
-                </>
-              ) : (
-                <div style={{ color: "#7a88a8", fontSize: 13 }}>
-                  {sessionQueue.sessionStarted ? "Watching your movement…" : "Start a session to begin coaching."}
-                </div>
+              {inferenceLoop.engineError && (
+                <div className="mt-2.5 px-3 py-2 rounded-lg bg-red-500/10 text-red-400 text-[13px]">{inferenceLoop.engineError}</div>
               )}
             </div>
-
-            <div style={{ marginTop: 10, fontSize: 11, color: "#7a88a8" }}>
-              Patient: <strong style={{ color: "white" }}>{patientName ?? patientProfile.type.replace(/_/g, " ")}</strong>
-              {" · "}Session #{patientProfile.sessionNumber}
-            </div>
           </div>
-
-          {/* ── CAMERA SEES (secondary observations) ── */}
-          <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Camera Sees</div>
-            <div style={{ display: "grid", gap: 3 }}>
-              {inferenceLoop.liveObservation.visibilityLines.slice(0, 4).map((line, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#aab6d3" }}>• {line}</div>
-              ))}
-              {inferenceLoop.liveObservation.movementLines.slice(0, 4).map((line, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#d8e2ff" }}>• {line}</div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── ROW 3: SESSION DETAILS + PERFORMANCE ── */}
-      {combinedQueue.length > 0 && (
-        <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>
-              Session Details
-            </div>
-            {combinedGoal && (
-              <div style={{ fontSize: 12, color: "#7a88a8" }}>{combinedGoal}</div>
-            )}
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            {combinedQueue.map((item, i) => {
-              const p = item.prescription as any;
-              const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
-              const romNorm = p.romNormDegrees ?? null;
-              const encourage = p.encourageThreshold ?? null;
-
-              const isActiveExercise = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
-              const isPastExercise = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
-              const repsCompleted = isActiveExercise
-                ? inferenceLoop.repCount
-                : isPastExercise ? item.prescription.repTarget : 0;
-              const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
-              const avgPeak = peakMetrics.length > 0
-                ? Math.round(peakMetrics.reduce((a, b) => a + b, 0) / peakMetrics.length)
-                : null;
-              const completionRate = item.prescription.repTarget > 0 ? repsCompleted / item.prescription.repTarget : 0;
-              const showPerformance = sessionQueue.sessionStarted && (isActiveExercise || isPastExercise);
-
-              // Quality badge
-              let qualityLabel = "";
-              let qualityColor = "#7a88a8";
-              let qualityBg = "rgba(255,255,255,0.05)";
-              if (isPastExercise || (isActiveExercise && repsCompleted > 0)) {
-                if (completionRate >= 0.9) { qualityLabel = "Good"; qualityColor = "#3fb950"; qualityBg = "rgba(63,185,80,0.12)"; }
-                else if (completionRate >= 0.6) { qualityLabel = "Partial"; qualityColor = "#d29922"; qualityBg = "rgba(210,153,34,0.12)"; }
-                else if (repsCompleted > 0) { qualityLabel = "Below Target"; qualityColor = "#f85149"; qualityBg = "rgba(248,81,73,0.12)"; }
-              }
-
-              return (
-                <div key={i} style={{
-                  padding: "12px 14px", borderRadius: 10,
-                  background: isActiveExercise ? "rgba(124,198,255,0.06)" : "rgba(255,255,255,0.03)",
-                  border: `1px solid ${isActiveExercise ? "rgba(124,198,255,0.2)" : "rgba(255,255,255,0.05)"}`,
-                }}>
-                  {/* Exercise header: number + name + active badge + quality */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{
-                        width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                        background: isActiveExercise ? "rgba(124,198,255,0.2)" : "rgba(124,198,255,0.1)",
-                        color: "#7cc6ff", fontSize: 11, fontWeight: 700,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>{i + 1}</span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{item.displayName}</span>
-                      {isActiveExercise && (
-                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "rgba(124,198,255,0.15)", color: "#7cc6ff", fontWeight: 700 }}>Active</span>
-                      )}
-                    </div>
-                    {qualityLabel && (
-                      <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 999, background: qualityBg, color: qualityColor, fontWeight: 700, flexShrink: 0 }}>
-                        {qualityLabel}
-                      </span>
-                    )}
+          {/* Coaching column lg:col-span-5 */}
+          <div className="lg:col-span-5 flex flex-col gap-3">
+            {/* Live Coaching */}
+            <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] p-4">
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <span className="text-[11px] text-[#7cc6ff] uppercase tracking-widest font-bold">Live Coaching</span>
+                <div className="flex gap-1.5 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-full bg-[#7cc6ff]/10 text-[#7cc6ff] text-[11px] font-bold">{formatPhase(inferenceLoop.phase)}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-white/5 text-white text-[11px] font-bold">{inferenceLoop.repCount}/{currentPrescription?.repTarget ?? 0} reps</span>
+                  {inferenceLoop.holdRemainingMs !== null && inferenceLoop.phase === "holding" && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-400/10 text-emerald-400 text-[11px] font-bold">Hold {Math.max(1, Math.ceil(inferenceLoop.holdRemainingMs / 1000))}s</span>
+                  )}
+                </div>
+              </div>
+              <div className="text-[20px] font-extrabold mb-2 leading-tight">{currentQueueItem?.displayName ?? "No active exercise"}</div>
+              <div className="text-[13px] text-[#aab6d3] mb-3 leading-relaxed">{instructionBody}</div>
+              <div className="text-[12px] text-[#7a88a8] mb-3"><strong className="text-[#c7d3f5]">Position:</strong> {getPositionRequirement(currentPrescription?.id)}</div>
+              <div className="flex gap-3 items-start mb-3">
+                {inferenceLoop.phase === "holding" && (
+                  <div className="shrink-0 flex flex-col items-center gap-1">
+                    <svg width="72" height="72" viewBox="0 0 96 96">
+                      <circle cx="48" cy="48" r="40" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
+                      <circle cx="48" cy="48" r="40" fill="none" stroke="#4ade80" strokeWidth="6" strokeLinecap="round" strokeDasharray={251.3} strokeDashoffset={251.3 * (1 - holdPct)} transform="rotate(-90 48 48)" style={{ transition: "stroke-dashoffset 0.1s linear" }} />
+                      <text x="48" y="53" textAnchor="middle" fill="white" fontSize="20" fontWeight="800" fontFamily="monospace">{holdDisplaySec}</text>
+                    </svg>
+                    <span className="text-[10px] text-[#7a88a8] uppercase tracking-wider">Hold</span>
                   </div>
-
-                  {/* Two-column: Target | Result */}
-                  <div style={{
-                    display: "grid",
-                    gridTemplateColumns: showPerformance && !isMobile ? "1fr 1fr" : "1fr",
-                    gap: isMobile ? 8 : 16,
-                  }}>
-                    {/* Target prescription */}
-                    <div>
-                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 5 }}>Target</div>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                        <span style={{ fontSize: 12, color: "#aab6d3" }}>
-                          {item.prescription.repTarget} reps
-                          {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
-                        </span>
-                        {romTarget !== null && (
-                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(210,153,34,0.12)", color: "#d29922", fontWeight: 600 }}>
-                            {romTarget}°
-                          </span>
-                        )}
-                        {romNorm !== null && (
-                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(124,198,255,0.08)", color: "#7cc6ff" }}>
-                            Norm {romNorm}°
-                          </span>
-                        )}
-                        {encourage !== null && (
-                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(63,185,80,0.12)", color: "#3fb950", fontWeight: 600 }}>
-                            Push {encourage}°
-                          </span>
-                        )}
+                )}
+                <div className={`flex-1 bg-[#0d1526] rounded-xl p-3.5 min-h-[52px] flex items-center gap-3 border ${coachingPanelState.tone === "corrective" ? "border-yellow-400/25" : coachingPanelState.tone === "urgent" ? "border-red-400/25" : coachingPanelState.tone === "encouraging" ? "border-emerald-400/25" : "border-white/5"}`}>
+                  {coachingPanelState.isThinking ? (
+                    <div className="text-[#7a88a8] text-[13px] italic">Thinking…</div>
+                  ) : coachingPanelState.message ? (
+                    <>
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${coachingPanelState.tone === "corrective" ? "bg-yellow-400" : coachingPanelState.tone === "urgent" ? "bg-red-400" : coachingPanelState.tone === "encouraging" ? "bg-emerald-400" : "bg-[#7cc6ff]"}`} />
+                      <div className="text-[15px] text-white font-medium leading-snug flex-1">{coachingPanelState.message}</div>
+                      <div className="text-[10px] text-[#7a88a8] shrink-0">{coachingPanelState.source}</div>
+                    </>
+                  ) : (
+                    <div className="text-[#7a88a8] text-[13px]">{sessionQueue.sessionStarted ? "Watching your movement…" : "Start a session to begin coaching."}</div>
+                  )}
+                </div>
+              </div>
+              <div className="text-[11px] text-[#7a88a8]">Patient: <strong className="text-white">{patientName ?? patientProfile.type.replace(/_/g, " ")}</strong>{" · "}Session #{patientProfile.sessionNumber}</div>
+            </div>
+            {/* Exercise Progress */}
+            <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] p-4">
+              <div className="text-[11px] text-[#7cc6ff] uppercase tracking-widest font-bold mb-3">Exercise Progress</div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {([
+                  { label: "REPS", value: `${inferenceLoop.repCount}/${currentPrescription?.repTarget ?? 0}`, cls: "text-white" },
+                  { label: "ROM", value: (() => { const m = exercisePeakMetricsRef.current[sessionQueue.queueIndex] ?? []; const avg = m.length > 0 ? Math.round(m.reduce((a: number, b: number) => a + b, 0) / m.length) : null; return avg !== null ? `${avg}°` : "—"; })(), cls: "text-[#7cc6ff]" },
+                  { label: "HOLD", value: inferenceLoop.phase === "holding" ? `${holdDisplaySec}s` : "—", cls: "text-emerald-400" },
+                ] as { label: string; value: string; cls: string }[]).map(({ label, value, cls }) => (
+                  <div key={label} className="bg-[#0d1526] rounded-lg p-3 text-center">
+                    <div className="text-[10px] text-[#7a88a8] uppercase tracking-wider mb-1">{label}</div>
+                    <div className={`text-[18px] font-extrabold font-mono ${cls}`}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold ${inferenceLoop.phase === "lifting" ? "bg-[#7cc6ff]/15 text-[#7cc6ff]" : inferenceLoop.phase === "holding" ? "bg-emerald-400/15 text-emerald-400" : inferenceLoop.phase === "lowering" ? "bg-yellow-400/15 text-yellow-400" : inferenceLoop.phase === "complete" ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-[#7a88a8]"}`}>{formatPhase(inferenceLoop.phase)}</span>
+                {sessionQueue.sessionStarted && <span className="text-[10px] px-2.5 py-1 rounded-full font-bold bg-[#7cc6ff]/8 text-[#7cc6ff]">{Math.round(sessionProgressPct * 100)}% complete</span>}
+              </div>
+            </div>
+            {/* Next Exercise */}
+            {nextExercise && (
+              <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] p-4">
+                <div className="text-[11px] text-[#7a88a8] uppercase tracking-widest font-bold mb-1.5">Up Next</div>
+                <div className="text-[14px] font-bold text-white">{nextExercise.displayName}</div>
+                <div className="text-[12px] text-[#7a88a8] mt-1">{nextExercise.prescription.repTarget} reps{nextExercise.prescription.hold.required ? ` · ${nextExercise.prescription.hold.durationMs / 1000}s hold` : ""}</div>
+              </div>
+            )}
+            {/* Camera Sees */}
+            <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] overflow-hidden">
+              <button onClick={() => setCameraSeesOpen(v => !v)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-[11px] text-[#7cc6ff] uppercase tracking-widest font-bold">Camera Sees</span>
+                <span className="text-[#7a88a8] text-[12px] lg:hidden">{cameraSeesOpen ? "▲" : "▼"}</span>
+              </button>
+              <div className={`px-4 pb-3 grid gap-1 ${cameraSeesOpen ? "" : "hidden lg:grid"}`}>
+                {inferenceLoop.liveObservation.visibilityLines.slice(0, 4).map((line, i) => (
+                  <div key={i} className="text-[12px] text-[#aab6d3]">• {line}</div>
+                ))}
+                {inferenceLoop.liveObservation.movementLines.slice(0, 4).map((line, i) => (
+                  <div key={i} className="text-[12px] text-[#d8e2ff]">• {line}</div>
+                ))}
+              </div>
+            </div>
+          </div>{/* end coaching column */}
+        </div>{/* end 12-col grid */}
+        {/* ── SESSION DETAILS ── */}
+        {combinedQueue.length > 0 && (
+          <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] p-4 mb-3">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <span className="text-[11px] text-[#7cc6ff] uppercase tracking-widest font-bold">Session Details</span>
+              {combinedGoal && <span className="text-[12px] text-[#7a88a8]">{combinedGoal}</span>}
+            </div>
+            <div className="grid gap-2">
+              {combinedQueue.map((item, i) => {
+                const p = item.prescription as any;
+                const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
+                const romNorm = p.romNormDegrees ?? null;
+                const encourage = p.encourageThreshold ?? null;
+                const isActiveExercise = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
+                const isPastExercise = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
+                const repsCompleted = isActiveExercise ? inferenceLoop.repCount : isPastExercise ? item.prescription.repTarget : 0;
+                const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
+                const avgPeak = peakMetrics.length > 0 ? Math.round(peakMetrics.reduce((a, b) => a + b, 0) / peakMetrics.length) : null;
+                const completionRate = item.prescription.repTarget > 0 ? repsCompleted / item.prescription.repTarget : 0;
+                const showPerformance = sessionQueue.sessionStarted && (isActiveExercise || isPastExercise);
+                let qualityLabel = ""; let qualityColorClass = "";
+                if (isPastExercise || (isActiveExercise && repsCompleted > 0)) {
+                  if (completionRate >= 0.9) { qualityLabel = "Good"; qualityColorClass = "bg-emerald-500/10 text-emerald-400"; }
+                  else if (completionRate >= 0.6) { qualityLabel = "Partial"; qualityColorClass = "bg-yellow-500/10 text-yellow-400"; }
+                  else if (repsCompleted > 0) { qualityLabel = "Below Target"; qualityColorClass = "bg-red-500/10 text-red-400"; }
+                }
+                return (
+                  <div key={i} className={`p-3 rounded-xl border ${isActiveExercise ? "bg-[#7cc6ff]/5 border-[#7cc6ff]/20" : "bg-white/[0.03] border-white/5"}`}>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[11px] font-bold text-[#7cc6ff] bg-[#7cc6ff]/10">{i + 1}</span>
+                        <span className="text-[14px] font-bold">{item.displayName}</span>
+                        {isActiveExercise && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#7cc6ff]/15 text-[#7cc6ff] font-bold">Active</span>}
                       </div>
+                      {qualityLabel && <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold shrink-0 ${qualityColorClass}`}>{qualityLabel}</span>}
                     </div>
-
-                    {/* Performance result (during / after session) */}
-                    {showPerformance && (
+                    <div className={`grid gap-3 ${showPerformance ? "sm:grid-cols-2" : ""}`}>
                       <div>
-                        <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 5 }}>Result</div>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <span style={{
-                            fontSize: 13, fontWeight: 700,
-                            color: completionRate >= 0.9 ? "#9be7b0" : completionRate >= 0.6 ? "#ffcc80" : repsCompleted > 0 ? "#ff8f8f" : "#7a88a8",
-                          }}>
-                            {repsCompleted}/{item.prescription.repTarget}
-                          </span>
-                          {avgPeak !== null && (
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(124,198,255,0.08)", color: "#7cc6ff" }}>
-                              Avg {avgPeak}°
-                            </span>
-                          )}
-                          {isActiveExercise && inferenceLoop.phase !== "ready" && (
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(167,139,250,0.12)", color: "#a78bfa", fontWeight: 700 }}>
-                              {formatPhase(inferenceLoop.phase)}
-                            </span>
-                          )}
+                        <div className="text-[10px] text-[#7a88a8] uppercase tracking-wider font-bold mb-1.5">Target</div>
+                        <div className="flex gap-1.5 flex-wrap items-center">
+                          <span className="text-[12px] text-[#aab6d3]">{item.prescription.repTarget} reps{item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}</span>
+                          {romTarget !== null && <span className="text-[11px] px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-400 font-semibold">{romTarget}°</span>}
+                          {romNorm !== null && <span className="text-[11px] px-2 py-0.5 rounded bg-[#7cc6ff]/8 text-[#7cc6ff]">Norm {romNorm}°</span>}
+                          {encourage !== null && <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-semibold">Push {encourage}°</span>}
                         </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ── SESSION SELECTOR (local builder mode only — hidden when prescription loaded) ── */}
-      {!prescriptionQueue?.length && (
-      <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: selectorCollapsed ? 0 : 14, flexWrap: "wrap", gap: 10 }}>
-          <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Session Selector</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={endSession} disabled={inferenceLoop.engineStatus !== "running"} style={{
-              background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "7px 14px",
-              borderRadius: 8, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 13
-            }}>End</button>
-            <button onClick={resetSession} style={{
-              background: "rgba(255,255,255,0.06)", color: "#aab6d3", padding: "7px 14px",
-              borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13
-            }}>Reset</button>
-            <button onClick={() => setSelectorCollapsed(v => !v)} style={{
-              background: "rgba(255,255,255,0.06)", color: "#7a88a8", padding: "7px 12px",
-              borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13
-            }}>{selectorCollapsed ? "▼" : "▲"}</button>
-          </div>
-        </div>
-
-        {!selectorCollapsed && (
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "240px 1fr", gap: 16 }}>
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 11, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.6 }}>Sessions</div>
-              {sessions.map((session) => {
-                const checked = selectedSessionIds.includes(session.id);
-                return (
-                  <label key={session.id} style={{
-                    display: "flex", gap: 8, alignItems: "flex-start",
-                    padding: "10px 12px", borderRadius: 10, cursor: "pointer",
-                    background: checked ? "rgba(124,198,255,0.08)" : "#121933",
-                    border: `1px solid ${checked ? "rgba(124,198,255,0.3)" : "rgba(255,255,255,0.06)"}`
-                  }}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleSessionSelection(session.id)} style={{ marginTop: 2 }} />
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{session.name}</div>
-                      <div style={{ fontSize: 11, color: "#7a88a8", marginTop: 2 }}>{session.exercises.length} exercises</div>
+                      {showPerformance && (
+                        <div>
+                          <div className="text-[10px] text-[#7a88a8] uppercase tracking-wider font-bold mb-1.5">Result</div>
+                          <div className="flex gap-1.5 flex-wrap items-center">
+                            <span className={`text-[13px] font-bold ${completionRate >= 0.9 ? "text-emerald-400" : completionRate >= 0.6 ? "text-yellow-400" : repsCompleted > 0 ? "text-red-400" : "text-[#7a88a8]"}`}>{repsCompleted}/{item.prescription.repTarget}</span>
+                            {avgPeak !== null && <span className="text-[11px] px-2 py-0.5 rounded bg-[#7cc6ff]/8 text-[#7cc6ff]">Avg {avgPeak}°</span>}
+                            {isActiveExercise && inferenceLoop.phase !== "ready" && <span className="text-[11px] px-2 py-0.5 rounded bg-purple-400/10 text-purple-400 font-bold">{formatPhase(inferenceLoop.phase)}</span>}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </label>
+                  </div>
                 );
               })}
-              <PatientProfileSelector
-                profile={patientProfile}
-                onChange={(updates) => setPatientProfile(prev => ({ ...prev, ...updates }))}
-                disabled={sessionQueue.sessionStarted}
-              />
             </div>
-
-            <div style={{ background: "#121933", borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: 11, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 12 }}>Plan Preview</div>
-              {combinedQueue.length > 0 ? (
-                <>
-                  <div style={{ color: "#d8e2ff", fontSize: 13, marginBottom: 10 }}>{combinedGoal}</div>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-                    {[formatDurationRange(combinedDurationSeconds), `${combinedQueue.length} exercises`, `${combinedTotalReps} reps`].map(label => (
-                      <span key={label} style={{ padding: "3px 10px", borderRadius: 999, background: "rgba(255,255,255,0.06)", color: "#aab6d3", fontSize: 11 }}>{label}</span>
-                    ))}
-                  </div>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    {combinedQueue.map((item, i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 10px", borderRadius: 8, background: "rgba(255,255,255,0.03)", fontSize: 12 }}>
-                        <span style={{ fontWeight: 600 }}>{item.displayName}</span>
-                        <span style={{ color: "#7a88a8" }}>{item.prescription.repTarget} reps{item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div style={{ color: "#7a88a8", fontSize: 13 }}>Select sessions above to preview.</div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-      )}
-
-      {/* ── DEVELOPER TOOLS ── */}
-      <div style={{ marginBottom: 4 }}>
-        <div style={{ fontSize: 10, color: "#484f58", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 6, paddingLeft: 2 }}>
-          Developer Tools
-        </div>
-      </div>
-
-      {/* ── GHOST INTELLIGENCE LOG ── */}
-      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(167,139,250,0.2)", overflow: "hidden", marginBottom: 8 }}>
-        <div onClick={() => setGhostLogOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "rgba(167,139,250,0.05)", borderBottom: ghostLogOpen ? "1px solid rgba(167,139,250,0.1)" : "none", cursor: "pointer" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 0.8 }}>Ghost Intelligence</span>
-            <span style={{ fontSize: 11, color: "#7a88a8" }}>{ghostLog.length} transitions</span>
             {sessionQueue.sessionStarted && (
-              <span style={{ fontSize: 11, color: "#a78bfa" }}>phase: {ghostPhaseInfRef.current} | score: {Math.round(ghostScore*100)}% | rep: {inferenceLoop.repCount}</span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={e => { e.stopPropagation(); const text = ghostLog.map(e => `[${e.time}] [${e.phase.toUpperCase()}] rep=${e.rep} score=${e.score}% | ${e.detail}`).join("\n"); copyToClipboard(text); }} style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy Log</button>
-            <button onClick={e => { e.stopPropagation(); ghostLogRef.current=[]; setGhostLog([]); }} style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>Clear</button>
-            <span style={{ color: "#7a88a8", fontSize: 12 }}>{ghostLogOpen ? "▲" : "▼"}</span>
-          </div>
-        </div>
-        {ghostLogOpen && (
-          <div style={{ maxHeight: 280, overflowY: "auto", padding: 10, display: "grid", gap: 3 }}>
-            {ghostLog.length === 0 ? (
-              <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>No transitions yet. Start a session to see ghost phase changes.</div>
-            ) : ghostLog.map(entry => {
-              const phaseColors: Record<string, string> = { lifting: "#7cc6ff", top: "#4ade80", holding: "#4ade80", lowering: "#fbbf24", ready: "#a78bfa", complete: "#9be7b0", bottom: "#9be7b0", idle: "#7a88a8", unknown: "#7a88a8" };
-              const col = phaseColors[entry.phase] ?? "#aab6d3";
-              return (
-                <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "5px 10px", border: `1px solid ${col}22` }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>{entry.time}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: `${col}22`, color: col, flexShrink: 0 }}>{entry.phase.toUpperCase()}</span>
-                    <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>rep {entry.rep}</span>
-                    <span style={{ fontSize: 10, color: col, flexShrink: 0 }}>{entry.score}%</span>
-                    <span style={{ fontSize: 11, color: "#aab6d3", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.detail}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ── REP CYCLE DEBUG LOG ── */}
-      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(74,222,128,0.2)", marginBottom: 8 }}>
-        <div onClick={() => setRepCycleOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "rgba(74,222,128,0.04)", borderBottom: repCycleOpen ? "1px solid rgba(74,222,128,0.1)" : "none", cursor: "pointer" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.08em" }}>REP CYCLE LOG</span>
-            <span style={{ fontSize: 11, color: "#7a88a8" }}>{repCycleLog.length} events</span>
-            <span style={{ fontSize: 10, color: "#4ade80", opacity: 0.7 }}>metric · thresh · physioTarget · encourage · romMin · romNorm</span>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={e => { e.stopPropagation(); const text = repCycleLog.map(e => `[${e.time}] [${e.event}] rep=${e.repCount} | ${e.detail}`).join("\n"); copyToClipboard(text); }} style={{ background: "rgba(74,222,128,0.15)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Copy</button>
-            <button onClick={e => { e.stopPropagation(); repCycleLogRef.current=[]; setRepCycleLog([]); }} style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>Clear</button>
-            <span style={{ color: "#7a88a8", fontSize: 12 }}>{repCycleOpen ? "▲" : "▼"}</span>
-          </div>
-        </div>
-        {repCycleOpen && (
-          <div style={{ maxHeight: 400, overflowY: "auto", padding: 10, display: "grid", gap: 4 }}>
-            {repCycleLog.length === 0 ? (
-              <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>No rep events yet. Begin a session and perform reps.</div>
-            ) : repCycleLog.map(entry => {
-              const isHold = entry.event === "HOLD START";
-              const col = isHold ? "#4ade80" : entry.event === "REP COMPLETE" ? "#7cc6ff" : "#ff8f8f";
-              const metricAboveTarget = entry.metricValue !== null && entry.targetThreshold !== null && entry.metricValue >= entry.targetThreshold;
-              const metricAboveEncourage = entry.encourageThreshold !== null && entry.metricValue !== null && entry.metricValue >= entry.encourageThreshold;
-              return (
-                <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "6px 10px", border: `1px solid ${col}20` }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
-                    <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>{entry.time}</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: col, padding: "1px 6px", borderRadius: 4, background: `${col}20`, flexShrink: 0 }}>{entry.event}</span>
-                    <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>rep {entry.repCount}</span>
-                  </div>
-                  <div style={{ marginTop: 4, display: "flex", gap: 10, flexWrap: "wrap" as const }}>
-                    {/* Metric vs target */}
-                    <span style={{ fontSize: 11, color: metricAboveTarget ? "#4ade80" : "#ff8f8f" }}>
-                      metric: <strong>{entry.metricValue?.toFixed(1) ?? "?"}°</strong>
-                    </span>
-                    <span style={{ fontSize: 11, color: "#7cc6ff" }}>
-                      thresh: <strong>{entry.targetThreshold?.toFixed(1) ?? "?"}°</strong>
-                    </span>
-                    {/* Physio override indicator */}
-                    <span style={{ fontSize: 11, color: entry.romTargetDegrees !== null ? "#d29922" : "#484f58" }}>
-                      physio: <strong>{entry.romTargetDegrees !== null ? `${entry.romTargetDegrees}°` : "population"}</strong>
-                    </span>
-                    {/* Encourage threshold */}
-                    <span style={{ fontSize: 11, color: entry.encourageThreshold !== null ? (metricAboveEncourage ? "#3fb950" : "#a78bfa") : "#484f58" }}>
-                      push-to: <strong>{entry.encourageThreshold !== null ? `${entry.encourageThreshold}°` : "—"}</strong>
-                      {metricAboveEncourage && <span style={{ color: "#3fb950", marginLeft: 4 }}>✓ reached</span>}
-                    </span>
-                    {/* Population reference values */}
-                    <span style={{ fontSize: 11, color: "#ffcc80" }}>romMin: <strong>{entry.romAcceptableMin ?? "?"}°</strong></span>
-                    <span style={{ fontSize: 11, color: "#a78bfa" }}>norm: <strong>{entry.romNormDegrees ?? "?"}°</strong></span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ── DEBUG LOG ── */}
-      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(124,198,255,0.15)", overflow: "hidden" }}>
-        <div
-          onClick={() => setDebugOpen(v => !v)}
-          style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: "10px 16px", background: "rgba(124,198,255,0.04)",
-            borderBottom: debugOpen ? "1px solid rgba(124,198,255,0.1)" : "none",
-            cursor: "pointer"
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8 }}>Debug Log</span>
-            <span style={{ fontSize: 11, color: "#7a88a8" }}>{debugLog.length} entries</span>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const snapshot = [
-                  "=== AI PHYSIO DEBUG SNAPSHOT ===",
-                  "Time: " + new Date().toISOString(),
-                  "Engine: " + inferenceLoop.engineStatus,
-                  "Phase: " + inferenceLoop.phase,
-                  "RepCount: " + inferenceLoop.repCount + " / " + (currentPrescription?.repTarget ?? "?"),
-                  "Exercise: " + (currentQueueItem?.displayName ?? "none"),
-                  "Patient: " + patientProfile.type + " session#" + patientProfile.sessionNumber,
-                  "Framing: " + framingPanelState.severity + " — " + framingPanelState.message,
-                  "Coaching msg: " + (coachingPanelState.message ?? "none") + " [" + coachingPanelState.source + "]",
-                  "API Status: " + aiEngineStatus,
-                  "",
-                  "=== DEBUG LOG (newest first) ===",
-                  ...debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? " | " + e.detail.slice(0, 200) : ""))
-                ].join("\n");
-                copyToClipboard(snapshot);
-              }}
-              style={{ background: "rgba(155,231,176,0.15)", color: "#9be7b0", border: "1px solid rgba(155,231,176,0.3)", borderRadius: 6, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-              📋 Copy Snapshot
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const text = debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? "\n  " + e.detail : "")).join("\n");
-                copyToClipboard(text);
-              }}
-              style={{ background: "rgba(124,198,255,0.1)", color: "#7cc6ff", border: "1px solid rgba(124,198,255,0.2)", borderRadius: 6, padding: "3px 12px", fontSize: 11, cursor: "pointer" }}>
-              Copy Log
-            </button>
-            <button onClick={(e) => { e.stopPropagation(); globalDebugLog = []; setDebugLog([]); }}
-              style={{ background: "rgba(255,255,255,0.05)", color: "#7a88a8", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>
-              Clear
-            </button>
-            <span style={{ color: "#7a88a8", fontSize: 12 }}>{debugOpen ? "▲" : "▼"}</span>
-          </div>
-        </div>
-
-        {debugOpen && (
-          <div style={{ maxHeight: 380, overflowY: "auto", padding: 10, display: "grid", gap: 3 }}>
-            {debugLog.length === 0 ? (
-              <div style={{ color: "#7a88a8", fontSize: 12, padding: "8px 4px" }}>
-                No entries. Click Test to verify API, then begin a session.
+              <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-white/5">
+                <div className="text-center"><div className="text-[10px] text-[#7a88a8] uppercase tracking-wider mb-1">Score</div><div className={`text-[22px] font-extrabold ${sessionScore >= 80 ? "text-emerald-400" : sessionScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>{sessionScore}%</div></div>
+                <div className="text-center"><div className="text-[10px] text-[#7a88a8] uppercase tracking-wider mb-1">Avg ROM</div><div className="text-[22px] font-extrabold text-[#7cc6ff]">{avgRomAll !== null ? `${avgRomAll}°` : "—"}</div></div>
+                <div className="text-center"><div className="text-[10px] text-[#7a88a8] uppercase tracking-wider mb-1">Avg Hold</div><div className="text-[22px] font-extrabold text-emerald-400">{avgHoldAll !== null ? `${avgHoldAll}s` : "—"}</div></div>
               </div>
-            ) : (
-              debugLog.map((entry) => {
-                const s = LOG_COLORS[entry.level];
-                const isExpanded = expandedLogId === entry.id;
-                return (
-                  <div key={entry.id}
-                    onClick={() => setExpandedLogId(isExpanded ? null : (entry.detail ? entry.id : null))}
-                    style={{ background: s.bg, borderRadius: 6, padding: "5px 10px", cursor: entry.detail ? "pointer" : "default", border: `1px solid ${isExpanded ? s.color + "33" : "transparent"}` }}
-                  >
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <span style={{ fontSize: 10, color: "#7a88a8", fontFamily: "monospace", flexShrink: 0 }}>{entry.timestamp}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: `${s.color}22`, color: s.color, flexShrink: 0 }}>{s.label}</span>
-                      <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>{entry.category}</span>
-                      <span style={{ fontSize: 12, color: "white", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isExpanded ? "normal" : "nowrap" }}>{entry.message}</span>
-                      {entry.detail && <span style={{ fontSize: 10, color: "#7a88a8", flexShrink: 0 }}>{isExpanded ? "▲" : "▼"}</span>}
-                    </div>
-                    {isExpanded && entry.detail && (
-                      <div style={{ marginTop: 6, padding: "8px 10px", background: "rgba(0,0,0,0.3)", borderRadius: 6, fontSize: 11, color: "#aab6d3", fontFamily: "monospace", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                        {entry.detail}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
             )}
           </div>
         )}
-      </div>
+        {/* ── SESSION SELECTOR ── */}
+        {!prescriptionQueue?.length && (
+          <div className="bg-[#1a2040] rounded-xl border border-white/[0.08] p-4 mb-3">
+            <div className="flex items-center justify-between flex-wrap gap-2" style={{ marginBottom: selectorCollapsed ? 0 : 14 }}>
+              <span className="text-[11px] text-[#7cc6ff] uppercase tracking-widest font-bold">Session Selector</span>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={endSession} disabled={inferenceLoop.engineStatus !== "running"} className="px-3.5 py-1.5 rounded-lg text-[13px] bg-[#7cc6ff]/10 text-[#7cc6ff] border border-[#7cc6ff]/20">End</button>
+                <button onClick={resetSession} className="px-3.5 py-1.5 rounded-lg text-[13px] bg-white/5 text-[#aab6d3]">Reset</button>
+                <button onClick={() => setSelectorCollapsed(v => !v)} className="px-3 py-1.5 rounded-lg text-[13px] bg-white/5 text-[#7a88a8]">{selectorCollapsed ? "▼" : "▲"}</button>
+              </div>
+            </div>
+            {!selectorCollapsed && (
+              <div className="grid grid-cols-1 sm:grid-cols-[240px_1fr] gap-4">
+                <div className="grid gap-2.5">
+                  <div className="text-[11px] text-[#7a88a8] uppercase tracking-wider">Sessions</div>
+                  {sessions.map((session) => {
+                    const checked = selectedSessionIds.includes(session.id);
+                    return (
+                      <label key={session.id} className={`flex gap-2 items-start p-2.5 rounded-xl cursor-pointer border ${checked ? "bg-[#7cc6ff]/8 border-[#7cc6ff]/30" : "bg-[#121933] border-white/5"}`}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleSessionSelection(session.id)} className="mt-0.5" />
+                        <div><div className="font-semibold text-[13px]">{session.name}</div><div className="text-[11px] text-[#7a88a8] mt-0.5">{session.exercises.length} exercises</div></div>
+                      </label>
+                    );
+                  })}
+                  <PatientProfileSelector profile={patientProfile} onChange={(updates) => setPatientProfile(prev => ({ ...prev, ...updates }))} disabled={sessionQueue.sessionStarted} />
+                </div>
+                <div className="bg-[#121933] rounded-xl p-3.5">
+                  <div className="text-[11px] text-[#7a88a8] uppercase tracking-wider mb-3">Plan Preview</div>
+                  {combinedQueue.length > 0 ? (
+                    <>
+                      <div className="text-[#d8e2ff] text-[13px] mb-2.5">{combinedGoal}</div>
+                      <div className="flex gap-2 mb-3.5 flex-wrap">
+                        {[formatDurationRange(combinedDurationSeconds), `${combinedQueue.length} exercises`, `${combinedTotalReps} reps`].map(label => (
+                          <span key={label} className="px-2.5 py-0.5 rounded-full bg-white/5 text-[#aab6d3] text-[11px]">{label}</span>
+                        ))}
+                      </div>
+                      <div className="grid gap-1.5">
+                        {combinedQueue.map((item, i) => (
+                          <div key={i} className="flex justify-between px-2.5 py-2 rounded-lg bg-white/[0.03] text-[12px]">
+                            <span className="font-semibold">{item.displayName}</span>
+                            <span className="text-[#7a88a8]">{item.prescription.repTarget} reps{item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : <div className="text-[#7a88a8] text-[13px]">Select sessions above to preview.</div>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {/* ── DEVELOPER TOOLS ── */}
+        <div className="mb-3">
+          <div className="text-[10px] text-[#484f58] uppercase tracking-widest font-bold mb-2 pl-0.5">Developer Tools</div>
+          {/* Ghost Intelligence */}
+          <div className="bg-[#0a0f1e] rounded-xl border border-purple-400/20 overflow-hidden mb-2">
+            <div onClick={() => setGhostLogOpen(v => !v)} className="flex justify-between items-center px-4 py-2.5 bg-purple-400/5 cursor-pointer" style={{ borderBottom: ghostLogOpen ? "1px solid rgba(167,139,250,0.1)" : "none" }}>
+              <div className="flex items-center gap-2.5">
+                <span className="text-[11px] font-bold text-purple-400 uppercase tracking-widest">Ghost Intelligence</span>
+                <span className="text-[11px] text-[#7a88a8]">{ghostLog.length} transitions</span>
+                {sessionQueue.sessionStarted && <span className="text-[11px] text-purple-400">phase: {ghostPhaseInfRef.current} | score: {Math.round(ghostScore*100)}% | rep: {inferenceLoop.repCount}</span>}
+              </div>
+              <div className="flex gap-2 items-center">
+                <button onClick={e => { e.stopPropagation(); const text = ghostLog.map(e => `[${e.time}] [${e.phase.toUpperCase()}] rep=${e.rep} score=${e.score}% | ${e.detail}`).join("\n"); copyToClipboard(text); }} className="bg-purple-400/15 text-purple-400 border border-purple-400/30 rounded-md px-3 py-0.5 text-[11px] font-bold">Copy Log</button>
+                <button onClick={e => { e.stopPropagation(); ghostLogRef.current=[]; setGhostLog([]); }} className="bg-white/5 text-[#7a88a8] rounded-md px-2.5 py-0.5 text-[11px]">Clear</button>
+                <span className="text-[#7a88a8] text-[12px]">{ghostLogOpen ? "▲" : "▼"}</span>
+              </div>
+            </div>
+            {ghostLogOpen && (
+              <div className="max-h-[280px] overflow-y-auto p-2.5 grid gap-1">
+                {ghostLog.length === 0 ? <div className="text-[#7a88a8] text-[12px] px-1 py-2">No transitions yet. Start a session to see ghost phase changes.</div>
+                : ghostLog.map(entry => {
+                  const phaseColors: Record<string, string> = { lifting: "#7cc6ff", top: "#4ade80", holding: "#4ade80", lowering: "#fbbf24", ready: "#a78bfa", complete: "#9be7b0", bottom: "#9be7b0", idle: "#7a88a8", unknown: "#7a88a8" };
+                  const col = phaseColors[entry.phase] ?? "#aab6d3";
+                  return (
+                    <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "5px 10px", border: `1px solid ${col}22` }}>
+                      <div className="flex gap-2 items-center">
+                        <span className="text-[10px] text-[#7a88a8] font-mono shrink-0">{entry.time}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: `${col}22`, color: col }} className="shrink-0">{entry.phase.toUpperCase()}</span>
+                        <span className="text-[10px] text-[#7a88a8] shrink-0">rep {entry.rep}</span>
+                        <span style={{ color: col }} className="text-[10px] shrink-0">{entry.score}%</span>
+                        <span className="text-[11px] text-[#aab6d3] flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{entry.detail}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {/* Rep Cycle Log */}
+          <div className="bg-[#0a0f1e] rounded-xl border border-emerald-400/20 mb-2">
+            <div onClick={() => setRepCycleOpen(v => !v)} className="flex justify-between items-center px-4 py-2.5 bg-emerald-400/5 cursor-pointer" style={{ borderBottom: repCycleOpen ? "1px solid rgba(74,222,128,0.1)" : "none" }}>
+              <div className="flex items-center gap-2.5">
+                <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-widest">REP CYCLE LOG</span>
+                <span className="text-[11px] text-[#7a88a8]">{repCycleLog.length} events</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button onClick={e => { e.stopPropagation(); const text = repCycleLog.map(e => `[${e.time}] [${e.event}] rep=${e.repCount} | ${e.detail}`).join("\n"); copyToClipboard(text); }} className="bg-emerald-400/15 text-emerald-400 border border-emerald-400/30 rounded-md px-3 py-0.5 text-[11px] font-bold">Copy</button>
+                <button onClick={e => { e.stopPropagation(); repCycleLogRef.current=[]; setRepCycleLog([]); }} className="bg-white/5 text-[#7a88a8] rounded-md px-2.5 py-0.5 text-[11px]">Clear</button>
+                <span className="text-[#7a88a8] text-[12px]">{repCycleOpen ? "▲" : "▼"}</span>
+              </div>
+            </div>
+            {repCycleOpen && (
+              <div className="max-h-[400px] overflow-y-auto p-2.5 grid gap-1">
+                {repCycleLog.length === 0 ? <div className="text-[#7a88a8] text-[12px] px-1 py-2">No rep events yet. Begin a session and perform reps.</div>
+                : repCycleLog.map(entry => {
+                  const isHold = entry.event === "HOLD START";
+                  const col = isHold ? "#4ade80" : entry.event === "REP COMPLETE" ? "#7cc6ff" : "#ff8f8f";
+                  const metricAboveTarget = entry.metricValue !== null && entry.targetThreshold !== null && entry.metricValue >= entry.targetThreshold;
+                  const metricAboveEncourage = entry.encourageThreshold !== null && entry.metricValue !== null && entry.metricValue >= entry.encourageThreshold;
+                  return (
+                    <div key={entry.id} style={{ background: `${col}10`, borderRadius: 6, padding: "6px 10px", border: `1px solid ${col}20` }}>
+                      <div className="flex gap-2 items-center flex-wrap">
+                        <span className="text-[10px] text-[#7a88a8] font-mono shrink-0">{entry.time}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: col, padding: "1px 6px", borderRadius: 4, background: `${col}20` }} className="shrink-0">{entry.event}</span>
+                        <span className="text-[10px] text-[#7a88a8] shrink-0">rep {entry.repCount}</span>
+                      </div>
+                      <div className="mt-1 flex gap-2.5 flex-wrap">
+                        <span style={{ color: metricAboveTarget ? "#4ade80" : "#ff8f8f" }} className="text-[11px]">metric: <strong>{entry.metricValue?.toFixed(1) ?? "?"}°</strong></span>
+                        <span className="text-[11px] text-[#7cc6ff]">thresh: <strong>{entry.targetThreshold?.toFixed(1) ?? "?"}°</strong></span>
+                        <span style={{ color: entry.romTargetDegrees !== null ? "#d29922" : "#484f58" }} className="text-[11px]">physio: <strong>{entry.romTargetDegrees !== null ? `${entry.romTargetDegrees}°` : "population"}</strong></span>
+                        <span style={{ color: entry.encourageThreshold !== null ? (metricAboveEncourage ? "#3fb950" : "#a78bfa") : "#484f58" }} className="text-[11px]">push-to: <strong>{entry.encourageThreshold !== null ? `${entry.encourageThreshold}°` : "—"}</strong>{metricAboveEncourage && <span className="text-emerald-500 ml-1">✓ reached</span>}</span>
+                        <span className="text-[11px] text-yellow-400">romMin: <strong>{entry.romAcceptableMin ?? "?"}°</strong></span>
+                        <span className="text-[11px] text-purple-400">norm: <strong>{entry.romNormDegrees ?? "?"}°</strong></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {/* Debug Log */}
+          <div className="bg-[#0a0f1e] rounded-xl border border-[#7cc6ff]/15 overflow-hidden">
+            <div onClick={() => setDebugOpen(v => !v)} className="flex justify-between items-center px-4 py-2.5 bg-[#7cc6ff]/4 cursor-pointer" style={{ borderBottom: debugOpen ? "1px solid rgba(124,198,255,0.1)" : "none" }}>
+              <div className="flex items-center gap-2.5">
+                <span className="text-[11px] font-bold text-[#7cc6ff] uppercase tracking-widest">Debug Log</span>
+                <span className="text-[11px] text-[#7a88a8]">{debugLog.length} entries</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button onClick={(e) => { e.stopPropagation(); const snapshot = ["=== AI PHYSIO DEBUG SNAPSHOT ===","Time: " + new Date().toISOString(),"Engine: " + inferenceLoop.engineStatus,"Phase: " + inferenceLoop.phase,"RepCount: " + inferenceLoop.repCount + " / " + (currentPrescription?.repTarget ?? "?"),"Exercise: " + (currentQueueItem?.displayName ?? "none"),"Patient: " + patientProfile.type + " session#" + patientProfile.sessionNumber,"Framing: " + framingPanelState.severity + " — " + framingPanelState.message,"Coaching msg: " + (coachingPanelState.message ?? "none") + " [" + coachingPanelState.source + "]","API Status: " + aiEngineStatus,"","=== DEBUG LOG (newest first) ===",...debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? " | " + e.detail.slice(0, 200) : ""))].join("\n"); copyToClipboard(snapshot); }} className="bg-emerald-400/15 text-emerald-400 border border-emerald-400/30 rounded-md px-3 py-0.5 text-[11px] font-bold">📋 Copy Snapshot</button>
+                <button onClick={(e) => { e.stopPropagation(); const text = debugLog.map(e => "[" + e.timestamp + "] [" + e.level.toUpperCase() + "] [" + e.category + "] " + e.message + (e.detail ? "\n  " + e.detail : "")).join("\n"); copyToClipboard(text); }} className="bg-[#7cc6ff]/10 text-[#7cc6ff] border border-[#7cc6ff]/20 rounded-md px-3 py-0.5 text-[11px]">Copy Log</button>
+                <button onClick={(e) => { e.stopPropagation(); globalDebugLog = []; setDebugLog([]); }} className="bg-white/5 text-[#7a88a8] rounded-md px-2.5 py-0.5 text-[11px]">Clear</button>
+                <span className="text-[#7a88a8] text-[12px]">{debugOpen ? "▲" : "▼"}</span>
+              </div>
+            </div>
+            {debugOpen && (
+              <div className="max-h-[380px] overflow-y-auto p-2.5 grid gap-1">
+                {debugLog.length === 0 ? <div className="text-[#7a88a8] text-[12px] px-1 py-2">No entries. Click Test to verify API, then begin a session.</div>
+                : debugLog.map((entry) => {
+                  const s = LOG_COLORS[entry.level];
+                  const isExpanded = expandedLogId === entry.id;
+                  return (
+                    <div key={entry.id} onClick={() => setExpandedLogId(isExpanded ? null : (entry.detail ? entry.id : null))} style={{ background: s.bg, borderRadius: 6, padding: "5px 10px", cursor: entry.detail ? "pointer" : "default", border: `1px solid ${isExpanded ? s.color + "33" : "transparent"}` }}>
+                      <div className="flex gap-2 items-center">
+                        <span className="text-[10px] text-[#7a88a8] font-mono shrink-0">{entry.timestamp}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: `${s.color}22`, color: s.color }} className="shrink-0">{s.label}</span>
+                        <span className="text-[10px] text-[#7a88a8] shrink-0">{entry.category}</span>
+                        <span className="text-[12px] text-white flex-1 overflow-hidden text-ellipsis" style={{ whiteSpace: isExpanded ? "normal" : "nowrap" }}>{entry.message}</span>
+                        {entry.detail && <span className="text-[10px] text-[#7a88a8] shrink-0">{isExpanded ? "▲" : "▼"}</span>}
+                      </div>
+                      {isExpanded && entry.detail && (
+                        <div className="mt-1.5 p-2 bg-black/30 rounded-md text-[11px] text-[#aab6d3] font-mono leading-relaxed whitespace-pre-wrap break-all">{entry.detail}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>{/* end developer tools */}
 
-      {/* ── REST SCREEN OVERLAY ── */}
+      </div>{/* end page content */}
+
+
+            {/* ── REST SCREEN OVERLAY ── */}
       {restScreen && (
         <RestScreenOverlay
           restMs={restScreen.restMs}
