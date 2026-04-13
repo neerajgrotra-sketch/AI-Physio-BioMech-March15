@@ -277,10 +277,12 @@ export const BOTH_ARM_RAISE: ExercisePrescription = {
       critical: [
         "right_shoulder",
         "left_shoulder",
+        "right_elbow",
+        "left_elbow",
         "right_wrist",
         "left_wrist"
       ],
-      supporting: ["right_elbow", "left_elbow", "nose"],
+      supporting: ["nose"],
       reference: ["right_hip", "left_hip"]
     },
 
