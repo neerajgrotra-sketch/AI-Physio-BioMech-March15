@@ -1214,7 +1214,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
             <img
               src={(t as any).media_url}
               alt={t.display_name}
-              style={{ width: "100%", height: 100, objectFit: "cover", objectPosition: "top", display: "block" }}
+              style={{ width: "100%", height: 110, objectFit: "contain", objectPosition: "bottom", display: "block", background: "#f5f5f7" }}
             />
           </div>
         )}
