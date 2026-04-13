@@ -60,7 +60,7 @@ import {
 // DEBUG LOG
 // ============================================================
 
-type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in";
+type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in" | "FRAMING_VOICE";
 
 type DebugLogEntry = {
   id: string;
@@ -228,7 +228,8 @@ const LOG_COLORS: Record<LogLevel, { bg: string; color: string; label: string }>
   warning: { bg: "rgba(255,200,80,0.08)",  color: "#ffcc80", label: "WARN" },
   error:   { bg: "rgba(255,100,100,0.08)", color: "#ff8f8f", label: "ERR" },
   api_out: { bg: "rgba(180,130,255,0.08)", color: "#c4a0ff", label: "OUT" },
-  api_in:  { bg: "rgba(100,220,200,0.08)", color: "#6ee7d4", label: "IN" }
+  api_in:        { bg: "rgba(100,220,200,0.08)", color: "#6ee7d4",  label: "IN"     },
+  FRAMING_VOICE: { bg: "rgba(210,153,34,0.10)",  color: "#ffcc80",  label: "FRAME" }
 };
 
 // ============================================================
@@ -583,7 +584,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostPhaseInfRef.current    = inferenceLoop.phase;
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
   ghostRepCountRef.current    = inferenceLoop.repCount;
-  const framingIntelligence = useFramingIntelligence(patientProfile);
+  const framingIntelligence = useFramingIntelligence(patientProfile, writeDebugLog);
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
 
