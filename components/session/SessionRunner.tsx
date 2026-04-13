@@ -584,7 +584,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostPhaseInfRef.current    = inferenceLoop.phase;
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
   ghostRepCountRef.current    = inferenceLoop.repCount;
-  const framingIntelligence = useFramingIntelligence(patientProfile, writeDebugLog);
+  const framingIntelligence = useFramingIntelligence(patientProfile, writeDebugLog as (level: string, category: string, message: string, detail?: string) => void);
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
 
