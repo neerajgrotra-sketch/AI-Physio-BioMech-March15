@@ -51,7 +51,7 @@ clinics
 
 ---
 
-### PATIENTS (no auth dependency — MVP safe)
+### PATIENTS (no auth dependency — MVP safer)
 
 ```
 patients                              ← was: patients_mvp (renamed migration 005)
