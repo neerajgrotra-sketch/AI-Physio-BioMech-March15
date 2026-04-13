@@ -376,16 +376,33 @@ function buildFallbackInstruction(
     return "I need to see your hips and knees — move the camera back or position it lower.";
   }
 
-  if (
-    criticalLandmarksLost.some(l => l.includes("right_wrist") || l.includes("right_elbow"))
-  ) {
-    return "I can't see your right arm clearly — make sure your full right arm is in frame.";
+  // Bilateral exercises: if BOTH sides have missing landmarks, give a centering cue
+  // not a single-side message — avoids misleading "I can't see your right arm" on bilateral
+  const bilateralRequired = prescription.framing.bilateralSymmetryRequired;
+  const rightArmLost = criticalLandmarksLost.some(l => l.includes("right_wrist") || l.includes("right_elbow") || l === "right_shoulder");
+  const leftArmLost  = criticalLandmarksLost.some(l => l.includes("left_wrist")  || l.includes("left_elbow")  || l === "left_shoulder");
+
+  if (bilateralRequired && (rightArmLost || leftArmLost)) {
+    // Both arms need to be visible for bilateral exercises
+    if (rightArmLost && leftArmLost) {
+      return "Step back so both arms are fully visible — I need to see your full upper body.";
+    }
+    if (rightArmLost) {
+      return "Move slightly left so your right arm is fully in frame.";
+    }
+    if (leftArmLost) {
+      return "Move slightly right so your left arm is fully in frame.";
+    }
   }
 
-  if (
-    criticalLandmarksLost.some(l => l.includes("left_wrist") || l.includes("left_elbow"))
-  ) {
-    return "I can't see your left arm clearly — make sure your full left arm is in frame.";
+  // Unilateral exercises: side-specific messages
+  if (!bilateralRequired) {
+    if (criticalLandmarksLost.some(l => l.includes("right_wrist") || l.includes("right_elbow"))) {
+      return "I can't see your right arm clearly — make sure your full right arm is in frame.";
+    }
+    if (criticalLandmarksLost.some(l => l.includes("left_wrist") || l.includes("left_elbow"))) {
+      return "I can't see your left arm clearly — make sure your full left arm is in frame.";
+    }
   }
 
   if (criticalLandmarksLost.some(l => l.includes("shoulder"))) {
