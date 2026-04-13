@@ -869,19 +869,17 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           ghostHoldRef.current=null; ghostLowRef.current=0; ghostRepRef.current=false; ghostHistRef.current=[];
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
-          // Fire coaching intro first, then wait for it to finish, THEN run framing check.
-          // Framing cue must fire into a clear audio window — never compete with intro speech.
-          stableCoachingCallbacks.onExerciseStarted(Date.now());
-          writeDebugLog("info", "FRAMING", "Next exercise intro fired — framing check scheduled after speech");
-          const waitForIntroThenCheck = () => {
+          framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
+          const waitForSpeech = () => {
             if (window.speechSynthesis?.speaking) {
-              window.setTimeout(waitForIntroThenCheck, 300);
+              window.setTimeout(waitForSpeech, 300);
             } else {
-              writeDebugLog("info", "FRAMING", "Intro speech done — running forcePreExerciseCheck");
-              framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
+              window.setTimeout(() => {
+                stableCoachingCallbacks.onExerciseStarted(Date.now());
+              }, 600);
             }
           };
-          window.setTimeout(waitForIntroThenCheck, 500);
+          window.setTimeout(waitForSpeech, 300);
         };
 
         // If there's a rest period before this next block, show rest screen first
@@ -1097,22 +1095,8 @@ Reply with only the summary text, no JSON, no formatting.`;
     const prescription = sessionQueue.getActivePrescription();
     writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
-    // startLoop fires onExerciseStarted internally → coaching intro speech begins.
-    // liveFrameRef starts accumulating real landmark data from frame 1.
+    framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
-    writeDebugLog("info", "FRAMING", "Inference loop started — waiting for intro speech to finish before framing check");
-    // forcePreExerciseCheck must fire AFTER intro speech completes so the framing cue
-    // has a clear audio window — never compete with coaching intro.
-    const waitForIntroThenCheck = () => {
-      if (window.speechSynthesis?.speaking) {
-        window.setTimeout(waitForIntroThenCheck, 300);
-      } else {
-        writeDebugLog("info", "FRAMING", "Intro speech done — running forcePreExerciseCheck");
-        framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
-      }
-    };
-    // Give startLoop 600ms to call onExerciseStarted and start speech before polling
-    window.setTimeout(waitForIntroThenCheck, 600);
     // Start ghost render loop
     ghostPhaseRef.current = "demo";
     ghostStartRef.current = performance.now();
@@ -2018,6 +2002,444 @@ Reply with only the summary text, no JSON, no formatting.`;
             </div>
           </div>
 
+          {/* ── EXERCISE PROGRESS ── */}
+          {sessionQueue.sessionStarted && currentPrescription && (
+            <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Exercise Progress</div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>
+                  {inferenceLoop.repCount}&thinsp;/&thinsp;{currentPrescription.repTarget} reps
+                </div>
+              </div>
+
+              {/* Metric cards: REPS / ROM / HOLD */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                {/* REPS */}
+                <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Reps</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "white", lineHeight: 1 }}>
+                    {inferenceLoop.repCount}&thinsp;<span style={{ fontSize: 13, color: "#7a88a8", fontWeight: 500 }}>/ {currentPrescription.repTarget}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>This Exercise</div>
+                </div>
+
+                {/* ROM */}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const peaks = exercisePeakMetricsRef.current[qIdx] ?? [];
+                  const avgPeak = peaks.length > 0 ? Math.round(peaks.reduce((a: number, b: number) => a + b, 0) / peaks.length) : null;
+                  const liveMetric = inferenceLoop.phase !== "ready" ? inferenceLoop.activeMetricValue : null;
+                  const displayVal = liveMetric !== null ? Math.round(liveMetric) : avgPeak;
+                  const romTarget = (currentPrescription as any).romTargetDegrees ?? (currentPrescription as any).romAcceptableMin ?? null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>ROM</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: displayVal !== null ? "#7cc6ff" : "#7a88a8", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}°` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {peaks.length > 0 ? "Avg Peak" : "Live"}
+                        {romTarget !== null ? <span style={{ color: "#d29922" }}> · Target {romTarget}°</span> : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* HOLD */}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const holds = exerciseHoldDurationsRef.current[qIdx] ?? [];
+                  const avgHold = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const liveHold = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null
+                    ? Math.max(0, currentPrescription.hold.durationMs - inferenceLoop.holdRemainingMs)
+                    : null;
+                  const displayVal = liveHold !== null ? (liveHold / 1000).toFixed(1) : avgHold;
+                  const targetHold = currentPrescription.hold.required ? (currentPrescription.hold.durationMs / 1000).toFixed(1) : null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Hold</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: inferenceLoop.phase === "holding" ? "#9be7b0" : "white", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}s` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {holds.length > 0 ? "Avg" : inferenceLoop.phase === "holding" ? "Live" : "—"}
+                        {targetHold !== null ? <span style={{ color: "#7a88a8" }}> · Target {targetHold}s</span> : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Status pills */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[
+                  { label: "Aligned",    color: "#3fb950", bg: "rgba(63,185,80,0.12)",    show: inferenceLoop.frame?.personDetected },
+                  { label: inferenceLoop.phase === "holding" ? "Holding" : inferenceLoop.phase === "lifting" ? "Lifting" : inferenceLoop.phase === "lowering" ? "Lowering" : "Ready",
+                    color: inferenceLoop.phase === "holding" ? "#9be7b0" : inferenceLoop.phase === "lifting" ? "#7cc6ff" : inferenceLoop.phase === "lowering" ? "#a78bfa" : "#7a88a8",
+                    bg: inferenceLoop.phase === "holding" ? "rgba(100,220,150,0.12)" : inferenceLoop.phase === "lifting" ? "rgba(124,198,255,0.12)" : inferenceLoop.phase === "lowering" ? "rgba(167,139,250,0.12)" : "rgba(255,255,255,0.06)",
+                    show: true },
+                  { label: "Centered",  color: "#7cc6ff", bg: "rgba(124,198,255,0.12)", show: framingPanelState.tone === "good" },
+                ].filter(p => p.show).map(pill => (
+                  <span key={pill.label} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: pill.bg, color: pill.color, fontWeight: 600 }}>
+                    {pill.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── NEXT EXERCISE ── */}
+          {sessionQueue.sessionStarted && (() => {
+            const nextIdx = sessionQueue.queueIndex + 1;
+            const queue = sessionQueue.getActiveQueue();
+            const nextItem = queue[nextIdx];
+            if (!nextItem) return null;
+            const np = nextItem.prescription as any;
+            const nextTarget = np.romTargetDegrees ?? np.romAcceptableMin ?? null;
+            const nextHold = nextItem.prescription.hold.required
+              ? ` · ${nextItem.prescription.hold.durationMs / 1000}s hold`
+              : "";
+            return (
+              <div style={{ background: "#1a2040", borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Next Exercise</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                    background: "rgba(124,198,255,0.1)", border: "1px solid rgba(124,198,255,0.2)",
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16,
+                  }}>
+                    {nextIdx + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{nextItem.displayName}</div>
+                    <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
+                      {nextItem.prescription.repTarget} reps{nextHold}
+                      {nextTarget !== null && <span style={{ color: "#d29922" }}> · Target {nextTarget}°</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── EXERCISE PROGRESS ── */}
+          {sessionQueue.sessionStarted && currentPrescription && (
+            <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Exercise Progress</div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>
+                  {inferenceLoop.repCount}&thinsp;/&thinsp;{currentPrescription.repTarget} reps
+                </div>
+              </div>
+
+              {/* Metric cards: REPS / ROM / HOLD */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                {/* REPS */}
+                <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Reps</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "white", lineHeight: 1 }}>
+                    {inferenceLoop.repCount}<span style={{ fontSize: 13, color: "#7a88a8", fontWeight: 500 }}> / {currentPrescription.repTarget}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>This Exercise</div>
+                </div>
+
+                {/* ROM */}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const peaks = exercisePeakMetricsRef.current[qIdx] ?? [];
+                  const avgPeak = peaks.length > 0 ? Math.round(peaks.reduce((a: number, b: number) => a + b, 0) / peaks.length) : null;
+                  const liveMetric = inferenceLoop.phase !== "ready" ? inferenceLoop.activeMetricValue : null;
+                  const displayVal = liveMetric !== null ? Math.round(liveMetric) : avgPeak;
+                  const romTarget = (currentPrescription as any).romTargetDegrees ?? (currentPrescription as any).romAcceptableMin ?? null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>ROM</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: displayVal !== null ? "#7cc6ff" : "#7a88a8", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}°` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {peaks.length > 0 ? "Avg Peak" : "Live"}{romTarget !== null ? ` · Target ${romTarget}°` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* HOLD */}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const holds = exerciseHoldDurationsRef.current[qIdx] ?? [];
+                  const avgHold = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const liveHold = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null
+                    ? Math.max(0, currentPrescription.hold.durationMs - inferenceLoop.holdRemainingMs)
+                    : null;
+                  const displayVal = liveHold !== null ? (liveHold / 1000).toFixed(1) : avgHold;
+                  const targetHold = currentPrescription.hold.required ? (currentPrescription.hold.durationMs / 1000).toFixed(1) : null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Hold</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: inferenceLoop.phase === "holding" ? "#9be7b0" : "white", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}s` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {holds.length > 0 ? "Avg" : inferenceLoop.phase === "holding" ? "Live" : "—"}{targetHold !== null ? ` · Target ${targetHold}s` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Status pills */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+                {[
+                  { label: "Aligned",   color: "#3fb950", bg: "rgba(63,185,80,0.12)",   show: Boolean(inferenceLoop.frame?.personDetected) },
+                  { label: inferenceLoop.phase === "holding" ? "Holding" : inferenceLoop.phase === "lifting" ? "Lifting" : inferenceLoop.phase === "lowering" ? "Lowering" : "Ready",
+                    color: inferenceLoop.phase === "holding" ? "#9be7b0" : inferenceLoop.phase === "lifting" ? "#7cc6ff" : inferenceLoop.phase === "lowering" ? "#a78bfa" : "#7a88a8",
+                    bg: inferenceLoop.phase === "holding" ? "rgba(100,220,150,0.12)" : inferenceLoop.phase === "lifting" ? "rgba(124,198,255,0.12)" : inferenceLoop.phase === "lowering" ? "rgba(167,139,250,0.12)" : "rgba(255,255,255,0.06)",
+                    show: true },
+                  { label: "Centered",  color: "#7cc6ff", bg: "rgba(124,198,255,0.12)", show: framingPanelState.tone === "good" },
+                ].filter(p => p.show).map(pill => (
+                  <span key={pill.label} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: pill.bg, color: pill.color, fontWeight: 600 }}>
+                    {pill.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── NEXT EXERCISE ── */}
+          {sessionQueue.sessionStarted && (() => {
+            const nextIdx = sessionQueue.queueIndex + 1;
+            const queue = sessionQueue.getActiveQueue();
+            const nextItem = queue[nextIdx];
+            if (!nextItem) return null;
+            const np = nextItem.prescription as any;
+            const nextTarget = np.romTargetDegrees ?? np.romAcceptableMin ?? null;
+            const nextHold = nextItem.prescription.hold.required
+              ? ` · ${nextItem.prescription.hold.durationMs / 1000}s hold`
+              : "";
+            return (
+              <div style={{ background: "#1a2040", borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Next Exercise</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+                    background: "rgba(124,198,255,0.1)", border: "1px solid rgba(124,198,255,0.2)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 14, fontWeight: 700, color: "#7cc6ff",
+                  }}>
+                    {nextIdx + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{nextItem.displayName}</div>
+                    <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
+                      {nextItem.prescription.repTarget} reps{nextHold}
+                      {nextTarget !== null && <span style={{ color: "#d29922" }}> · Target {nextTarget}°</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── EXERCISE PROGRESS ── */}
+          {sessionQueue.sessionStarted && currentPrescription && (
+            <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700 }}>Exercise Progress</div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>{inferenceLoop.repCount} / {currentPrescription.repTarget} reps</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Reps</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "white", lineHeight: 1 }}>
+                    {inferenceLoop.repCount}<span style={{ fontSize: 13, color: "#7a88a8", fontWeight: 500 }}> / {currentPrescription.repTarget}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>This Exercise</div>
+                </div>
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const peaks = exercisePeakMetricsRef.current[qIdx] ?? [];
+                  const avgPeak = peaks.length > 0 ? Math.round(peaks.reduce((a: number, b: number) => a + b, 0) / peaks.length) : null;
+                  const liveMetric = inferenceLoop.phase !== "ready" ? inferenceLoop.activeMetricValue : null;
+                  const displayVal = liveMetric !== null ? Math.round(liveMetric) : avgPeak;
+                  const romTarget = (currentPrescription as any).romTargetDegrees ?? (currentPrescription as any).romAcceptableMin ?? null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>ROM</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: displayVal !== null ? "#7cc6ff" : "#7a88a8", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}°` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {peaks.length > 0 ? "Avg Peak" : "Live"}{romTarget !== null ? ` · Target ${romTarget}°` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const holds = exerciseHoldDurationsRef.current[qIdx] ?? [];
+                  const avgHold = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const liveHold = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null
+                    ? Math.max(0, currentPrescription.hold.durationMs - inferenceLoop.holdRemainingMs) : null;
+                  const displayVal = liveHold !== null ? (liveHold / 1000).toFixed(1) : avgHold;
+                  const targetHold = currentPrescription.hold.required ? (currentPrescription.hold.durationMs / 1000).toFixed(1) : null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Hold</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: inferenceLoop.phase === "holding" ? "#9be7b0" : "white", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}s` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {holds.length > 0 ? "Avg" : inferenceLoop.phase === "holding" ? "Live" : "—"}{targetHold !== null ? ` · Target ${targetHold}s` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+                {[
+                  { label: "Aligned",  color: "#3fb950", bg: "rgba(63,185,80,0.12)",   show: Boolean(inferenceLoop.frame?.personDetected) },
+                  { label: inferenceLoop.phase === "holding" ? "Holding" : inferenceLoop.phase === "lifting" ? "Lifting" : inferenceLoop.phase === "lowering" ? "Lowering" : "Ready",
+                    color: inferenceLoop.phase === "holding" ? "#9be7b0" : inferenceLoop.phase === "lifting" ? "#7cc6ff" : inferenceLoop.phase === "lowering" ? "#a78bfa" : "#7a88a8",
+                    bg: inferenceLoop.phase === "holding" ? "rgba(100,220,150,0.12)" : inferenceLoop.phase === "lifting" ? "rgba(124,198,255,0.12)" : inferenceLoop.phase === "lowering" ? "rgba(167,139,250,0.12)" : "rgba(255,255,255,0.06)",
+                    show: true },
+                  { label: "Centered", color: "#7cc6ff", bg: "rgba(124,198,255,0.12)", show: framingPanelState.tone === "good" },
+                ].filter(p => p.show).map(pill => (
+                  <span key={pill.label} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: pill.bg, color: pill.color, fontWeight: 600 }}>{pill.label}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── NEXT EXERCISE ── */}
+          {sessionQueue.sessionStarted && (() => {
+            const nextIdx = sessionQueue.queueIndex + 1;
+            const queue = sessionQueue.getActiveQueue();
+            const nextItem = queue[nextIdx];
+            if (!nextItem) return null;
+            const np = nextItem.prescription as any;
+            const nextTarget = np.romTargetDegrees ?? np.romAcceptableMin ?? null;
+            const nextHold = nextItem.prescription.hold.required ? ` · ${nextItem.prescription.hold.durationMs / 1000}s hold` : "";
+            return (
+              <div style={{ background: "#1a2040", borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Next Exercise</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0, background: "rgba(124,198,255,0.1)", border: "1px solid rgba(124,198,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#7cc6ff" }}>
+                    {nextIdx + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{nextItem.displayName}</div>
+                    <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
+                      {nextItem.prescription.repTarget} reps{nextHold}
+                      {nextTarget !== null && <span style={{ color: "#d29922" }}> · Target {nextTarget}°</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── EXERCISE PROGRESS ── */}
+          {sessionQueue.sessionStarted && currentPrescription && (
+            <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700 }}>Exercise Progress</div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>{inferenceLoop.repCount} / {currentPrescription.repTarget} reps</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Reps</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "white", lineHeight: 1 }}>
+                    {inferenceLoop.repCount}<span style={{ fontSize: 13, color: "#7a88a8", fontWeight: 500 }}> / {currentPrescription.repTarget}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>This Exercise</div>
+                </div>
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const peaks = exercisePeakMetricsRef.current[qIdx] ?? [];
+                  const avgPeak = peaks.length > 0 ? Math.round(peaks.reduce((a: number, b: number) => a + b, 0) / peaks.length) : null;
+                  const liveMetric = inferenceLoop.phase !== "ready" ? inferenceLoop.activeMetricValue : null;
+                  const displayVal = liveMetric !== null ? Math.round(liveMetric) : avgPeak;
+                  const romTarget = (currentPrescription as any).romTargetDegrees ?? (currentPrescription as any).romAcceptableMin ?? null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>ROM</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: displayVal !== null ? "#7cc6ff" : "#7a88a8", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}°` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {peaks.length > 0 ? "Avg Peak" : "Live"}{romTarget !== null ? ` · Target ${romTarget}°` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const holds = exerciseHoldDurationsRef.current[qIdx] ?? [];
+                  const avgHold = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const liveHold = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null
+                    ? Math.max(0, currentPrescription.hold.durationMs - inferenceLoop.holdRemainingMs) : null;
+                  const displayVal = liveHold !== null ? (liveHold / 1000).toFixed(1) : avgHold;
+                  const targetHold = currentPrescription.hold.required ? (currentPrescription.hold.durationMs / 1000).toFixed(1) : null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Hold</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: inferenceLoop.phase === "holding" ? "#9be7b0" : "white", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}s` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {holds.length > 0 ? "Avg" : inferenceLoop.phase === "holding" ? "Live" : "—"}{targetHold !== null ? ` · Target ${targetHold}s` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+                {[
+                  { label: "Aligned",  color: "#3fb950", bg: "rgba(63,185,80,0.12)",   show: Boolean(inferenceLoop.frame?.personDetected) },
+                  { label: inferenceLoop.phase === "holding" ? "Holding" : inferenceLoop.phase === "lifting" ? "Lifting" : inferenceLoop.phase === "lowering" ? "Lowering" : "Ready",
+                    color: inferenceLoop.phase === "holding" ? "#9be7b0" : inferenceLoop.phase === "lifting" ? "#7cc6ff" : inferenceLoop.phase === "lowering" ? "#a78bfa" : "#7a88a8",
+                    bg: inferenceLoop.phase === "holding" ? "rgba(100,220,150,0.12)" : inferenceLoop.phase === "lifting" ? "rgba(124,198,255,0.12)" : inferenceLoop.phase === "lowering" ? "rgba(167,139,250,0.12)" : "rgba(255,255,255,0.06)",
+                    show: true },
+                  { label: "Centered", color: "#7cc6ff", bg: "rgba(124,198,255,0.12)", show: framingPanelState.tone === "good" },
+                ].filter(p => p.show).map(pill => (
+                  <span key={pill.label} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: pill.bg, color: pill.color, fontWeight: 600 }}>{pill.label}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── NEXT EXERCISE ── */}
+          {sessionQueue.sessionStarted && (() => {
+            const nextIdx = sessionQueue.queueIndex + 1;
+            const queue = sessionQueue.getActiveQueue();
+            const nextItem = queue[nextIdx];
+            if (!nextItem) return null;
+            const np = nextItem.prescription as any;
+            const nextTarget = np.romTargetDegrees ?? np.romAcceptableMin ?? null;
+            const nextHold = nextItem.prescription.hold.required ? ` · ${nextItem.prescription.hold.durationMs / 1000}s hold` : "";
+            return (
+              <div style={{ background: "#1a2040", borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Next Exercise</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0, background: "rgba(124,198,255,0.1)", border: "1px solid rgba(124,198,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#7cc6ff" }}>
+                    {nextIdx + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{nextItem.displayName}</div>
+                    <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
+                      {nextItem.prescription.repTarget} reps{nextHold}
+                      {nextTarget !== null && <span style={{ color: "#d29922" }}> · Target {nextTarget}°</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+
           {/* ── CAMERA SEES (secondary observations) ── */}
           <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
             <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Camera Sees</div>
@@ -2033,134 +2455,112 @@ Reply with only the summary text, no JSON, no formatting.`;
         </div>
       </div>
 
-      {/* ── ROW 3: SESSION DETAILS + PERFORMANCE ── */}
+      {/* ── ROW 3: SESSION DETAILS TABLE ── */}
       {combinedQueue.length > 0 && (
-        <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>
-              Session Details
+        <div style={{ background: "#1a2040", borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12, overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "white" }}>Session Details &amp; Performance</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {combinedGoal && <span style={{ fontSize: 12, color: "#7a88a8" }}>{combinedGoal}</span>}
+              <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "rgba(124,198,255,0.08)", color: "#7cc6ff", fontWeight: 600 }}>
+                {combinedTotalReps} reps total
+              </span>
             </div>
-            {combinedGoal && (
-              <div style={{ fontSize: 12, color: "#7a88a8" }}>{combinedGoal}</div>
-            )}
           </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
-            {combinedQueue.map((item, i) => {
-              const p = item.prescription as any;
-              const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
-              const romNorm = p.romNormDegrees ?? null;
-              const encourage = p.encourageThreshold ?? null;
+          {/* Table — scrollable on mobile */}
+          <div style={{ overflowX: "auto" as const }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                  {["#", "Exercise", "Prescription", "Completed", "Performance", "ROM", "Notes"].map(h => (
+                    <th key={h} style={{ padding: "9px 14px", textAlign: "left" as const, fontSize: 10, fontWeight: 700, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, whiteSpace: "nowrap" as const }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {combinedQueue.map((item, i) => {
+                  const p = item.prescription as any;
+                  const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
+                  const isActive   = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
+                  const isPast     = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
+                  const repsCompleted = isActive ? inferenceLoop.repCount : isPast ? item.prescription.repTarget : 0;
+                  const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
+                  const avgPeak = peakMetrics.length > 0 ? Math.round(peakMetrics.reduce((a: number, b: number) => a + b, 0) / peakMetrics.length) : null;
+                  const completionRate = item.prescription.repTarget > 0 ? repsCompleted / item.prescription.repTarget : 0;
+                  const showResult = sessionQueue.sessionStarted && (isActive || isPast) && repsCompleted > 0;
 
-              const isActiveExercise = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
-              const isPastExercise = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
-              const repsCompleted = isActiveExercise
-                ? inferenceLoop.repCount
-                : isPastExercise ? item.prescription.repTarget : 0;
-              const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
-              const avgPeak = peakMetrics.length > 0
-                ? Math.round(peakMetrics.reduce((a, b) => a + b, 0) / peakMetrics.length)
-                : null;
-              const completionRate = item.prescription.repTarget > 0 ? repsCompleted / item.prescription.repTarget : 0;
-              const showPerformance = sessionQueue.sessionStarted && (isActiveExercise || isPastExercise);
+                  let perfLabel = ""; let perfColor = "#7a88a8"; let perfBg = "transparent";
+                  if (showResult) {
+                    if (completionRate >= 0.9)      { perfLabel = "Good";         perfColor = "#3fb950"; perfBg = "rgba(63,185,80,0.12)"; }
+                    else if (completionRate >= 0.6)  { perfLabel = "Fair";         perfColor = "#d29922"; perfBg = "rgba(210,153,34,0.12)"; }
+                    else if (repsCompleted > 0)      { perfLabel = "Below Target"; perfColor = "#f85149"; perfBg = "rgba(248,81,73,0.12)"; }
+                  }
 
-              // Quality badge
-              let qualityLabel = "";
-              let qualityColor = "#7a88a8";
-              let qualityBg = "rgba(255,255,255,0.05)";
-              if (isPastExercise || (isActiveExercise && repsCompleted > 0)) {
-                if (completionRate >= 0.9) { qualityLabel = "Good"; qualityColor = "#3fb950"; qualityBg = "rgba(63,185,80,0.12)"; }
-                else if (completionRate >= 0.6) { qualityLabel = "Partial"; qualityColor = "#d29922"; qualityBg = "rgba(210,153,34,0.12)"; }
-                else if (repsCompleted > 0) { qualityLabel = "Below Target"; qualityColor = "#f85149"; qualityBg = "rgba(248,81,73,0.12)"; }
-              }
-
-              return (
-                <div key={i} style={{
-                  padding: "12px 14px", borderRadius: 10,
-                  background: isActiveExercise ? "rgba(124,198,255,0.06)" : "rgba(255,255,255,0.03)",
-                  border: `1px solid ${isActiveExercise ? "rgba(124,198,255,0.2)" : "rgba(255,255,255,0.05)"}`,
-                }}>
-                  {/* Exercise header: number + name + active badge + quality */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{
-                        width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                        background: isActiveExercise ? "rgba(124,198,255,0.2)" : "rgba(124,198,255,0.1)",
-                        color: "#7cc6ff", fontSize: 11, fontWeight: 700,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>{i + 1}</span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{item.displayName}</span>
-                      {isActiveExercise && (
-                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "rgba(124,198,255,0.15)", color: "#7cc6ff", fontWeight: 700 }}>Active</span>
-                      )}
-                    </div>
-                    {qualityLabel && (
-                      <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 999, background: qualityBg, color: qualityColor, fontWeight: 700, flexShrink: 0 }}>
-                        {qualityLabel}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Two-column: Target | Result */}
-                  <div style={{
-                    display: "grid",
-                    gridTemplateColumns: showPerformance && !isMobile ? "1fr 1fr" : "1fr",
-                    gap: isMobile ? 8 : 16,
-                  }}>
-                    {/* Target prescription */}
-                    <div>
-                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 5 }}>Target</div>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                        <span style={{ fontSize: 12, color: "#aab6d3" }}>
-                          {item.prescription.repTarget} reps
-                          {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
-                        </span>
-                        {romTarget !== null && (
-                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(210,153,34,0.12)", color: "#d29922", fontWeight: 600 }}>
-                            {romTarget}°
-                          </span>
-                        )}
-                        {romNorm !== null && (
-                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(124,198,255,0.08)", color: "#7cc6ff" }}>
-                            Norm {romNorm}°
-                          </span>
-                        )}
-                        {encourage !== null && (
-                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(63,185,80,0.12)", color: "#3fb950", fontWeight: 600 }}>
-                            Push {encourage}°
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Performance result (during / after session) */}
-                    {showPerformance && (
-                      <div>
-                        <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 5 }}>Result</div>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <span style={{
-                            fontSize: 13, fontWeight: 700,
-                            color: completionRate >= 0.9 ? "#9be7b0" : completionRate >= 0.6 ? "#ffcc80" : repsCompleted > 0 ? "#ff8f8f" : "#7a88a8",
-                          }}>
-                            {repsCompleted}/{item.prescription.repTarget}
-                          </span>
-                          {avgPeak !== null && (
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(124,198,255,0.08)", color: "#7cc6ff" }}>
-                              Avg {avgPeak}°
-                            </span>
-                          )}
-                          {isActiveExercise && inferenceLoop.phase !== "ready" && (
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(167,139,250,0.12)", color: "#a78bfa", fontWeight: 700 }}>
-                              {formatPhase(inferenceLoop.phase)}
-                            </span>
-                          )}
+                  return (
+                    <tr key={i} style={{
+                      borderBottom: i < combinedQueue.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
+                      background: isActive ? "rgba(124,198,255,0.04)" : "transparent",
+                    }}>
+                      {/* # */}
+                      <td style={{ padding: "12px 14px", color: "#7a88a8", fontWeight: 600 }}>{i + 1}</td>
+                      {/* Exercise name */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontWeight: 600, color: "white" }}>{item.displayName}</span>
+                          {isActive && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: "rgba(124,198,255,0.15)", color: "#7cc6ff", fontWeight: 700 }}>Active</span>}
                         </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                      </td>
+                      {/* Prescription */}
+                      <td style={{ padding: "12px 14px", color: "#aab6d3", whiteSpace: "nowrap" as const }}>
+                        {item.prescription.repTarget} reps
+                        {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
+                        {romTarget !== null ? ` · ${romTarget}°` : ""}
+                      </td>
+                      {/* Completed */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {sessionQueue.sessionStarted ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontWeight: 700, color: completionRate >= 0.9 ? "#9be7b0" : completionRate >= 0.6 ? "#ffcc80" : repsCompleted > 0 ? "#ff8f8f" : "#7a88a8" }}>
+                              {repsCompleted} / {item.prescription.repTarget}
+                            </span>
+                            {isPast && completionRate >= 0.9 && <span style={{ fontSize: 14 }}>✅</span>}
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+                      {/* Performance badge */}
+                      <td style={{ padding: "12px 14px" }}>
+                        {perfLabel ? (
+                          <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: perfBg, color: perfColor, fontWeight: 700, whiteSpace: "nowrap" as const }}>
+                            {perfLabel}
+                          </span>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+                      {/* ROM */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {avgPeak !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: "#7cc6ff" }}>{avgPeak}°</div>
+                            {romTarget !== null && <div style={{ fontSize: 10, color: "#7a88a8" }}>Target {romTarget}°</div>}
+                          </div>
+                        ) : isActive && inferenceLoop.activeMetricValue !== null ? (
+                          <div style={{ fontWeight: 700, color: "#a78bfa" }}>{Math.round(inferenceLoop.activeMetricValue)}°</div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+                      {/* Notes */}
+                      <td style={{ padding: "12px 14px", color: "#7a88a8", fontSize: 12 }}>
+                        {isActive && inferenceLoop.phase !== "ready" ? (
+                          <span style={{ color: "#7cc6ff" }}>{inferenceLoop.phase.charAt(0).toUpperCase() + inferenceLoop.phase.slice(1)}</span>
+                        ) : isPast && completionRate < 0.9 && repsCompleted > 0 ? (
+                          <span style={{ color: "#ffcc80" }}>Raise higher</span>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
