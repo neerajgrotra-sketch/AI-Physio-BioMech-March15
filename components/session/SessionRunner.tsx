@@ -1892,7 +1892,7 @@ Reply with only the summary text, no JSON, no formatting.`;
               {framingPanelState.message}
             </span>
             {/* Severity chip */}
-            {framingPanelState.severity && framingPanelState.severity !== "none" && (
+            {framingPanelState.severity && framingPanelState.severity !== "ok" && (
               <span style={{
                 fontSize: 10, padding: "2px 8px", borderRadius: 999, fontWeight: 700, flexShrink: 0,
                 background: framingPanelState.tone === "good" ? "rgba(63,185,80,0.15)"
