@@ -73,7 +73,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
   const debugLoggerRef = useRef<DebugLogger | undefined>(debugLogger);
   debugLoggerRef.current = debugLogger; // keep current without re-renders
   const debugLog = (msg: string, detail?: string) => {
-    debugLog(msg, detail);
+    framingLog(msg, detail);
     if (debugLoggerRef.current) debugLoggerRef.current("info", "FRAMING", msg, detail);
   };
 
