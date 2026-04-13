@@ -548,6 +548,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  // Accordion states for mobile secondary panels
+  const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
+  const [cameraSeesOpen, setCameraSeesOpen] = useState(false);
+  const [devToolsOpen, setDevToolsOpen] = useState(false);
   // Rest screen state — shown between protocol blocks
   const [restScreen, setRestScreen] = useState<{ restMs: number; onDone: () => void } | null>(null);
   // Post-session summary state — shown when all exercises complete
@@ -1704,11 +1708,61 @@ Reply with only the summary text, no JSON, no formatting.`;
     : "Choose a session and begin when ready.";
 
   // ============================================================
+  // COMPUTED UI VALUES
+  // ============================================================
+
+  // Total reps completed so far across all exercises
+  const completedReps = sessionQueue.sessionStarted
+    ? combinedQueue.slice(0, sessionQueue.queueIndex).reduce((sum, item) => sum + item.prescription.repTarget, 0)
+      + inferenceLoop.repCount
+    : 0;
+  const sessionProgressPct = combinedTotalReps > 0 ? Math.min(1, completedReps / combinedTotalReps) : 0;
+
+  // Hold timer for the circular indicator
+  const holdDurationMs = currentPrescription?.hold.durationMs ?? 3000;
+  const holdPct = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null
+    ? Math.max(0, 1 - inferenceLoop.holdRemainingMs / holdDurationMs)
+    : 0;
+  const holdDisplaySec = inferenceLoop.holdRemainingMs !== null
+    ? Math.max(0, Math.ceil(inferenceLoop.holdRemainingMs / 1000))
+    : 0;
+
+  // Next exercise in queue
+  const nextExercise = sessionQueue.sessionStarted
+    ? (combinedQueue[sessionQueue.queueIndex + 1] ?? null)
+    : null;
+
+  // Overall session score (% completion so far)
+  const sessionScore = (() => {
+    if (!sessionQueue.sessionStarted) return 0;
+    const idxCount = sessionQueue.queueIndex + 1;
+    const rates = combinedQueue.slice(0, idxCount).map((item, i) => {
+      const reps = i < sessionQueue.queueIndex
+        ? item.prescription.repTarget
+        : inferenceLoop.repCount;
+      return item.prescription.repTarget > 0 ? reps / item.prescription.repTarget : 0;
+    });
+    return Math.round(rates.reduce((a, b) => a + b, 0) / Math.max(1, idxCount) * 100);
+  })();
+
+  // Average ROM and hold across all completed exercises
+  const avgRomAll = (() => {
+    const all: number[] = [];
+    for (let i = 0; i <= sessionQueue.queueIndex; i++) all.push(...(exercisePeakMetricsRef.current[i] ?? []));
+    return all.length > 0 ? Math.round(all.reduce((a, b) => a + b, 0) / all.length) : null;
+  })();
+  const avgHoldAll = (() => {
+    const all: number[] = [];
+    for (let i = 0; i <= sessionQueue.queueIndex; i++) all.push(...(exerciseHoldDurationsRef.current[i] ?? []));
+    return all.length > 0 ? Math.round(all.reduce((a, b) => a + b, 0) / all.length / 100) / 10 : null;
+  })();
+
+  // ============================================================
   // RENDER
   // ============================================================
 
   return (
-    <div style={{ marginTop: 12, fontFamily: "system-ui, sans-serif" }}>
+    <div className="min-h-screen bg-[#0d1117] text-white" style={{ fontFamily: "system-ui, sans-serif" }}>
 
       {/* ── ROW 1: COMPACT SESSION BAR ── */}
       <div style={{

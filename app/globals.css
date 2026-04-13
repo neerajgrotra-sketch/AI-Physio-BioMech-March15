@@ -1,19 +1,31 @@
-html,body{
-margin:0;
-padding:0;
-font-family:Arial, Helvetica, sans-serif;
-background:#0e1324;
-color:white;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #0d1117;
+  color: white;
 }
 
-main{
-max-width:1200px;
-margin:auto;
+main {
+  max-width: 1200px;
+  margin: auto;
 }
 
-button{
-padding:10px 16px;
-border-radius:8px;
-border:none;
-cursor:pointer;
+button {
+  cursor: pointer;
 }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
