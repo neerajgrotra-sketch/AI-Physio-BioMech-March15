@@ -2181,7 +2181,7 @@ Reply with only the summary text, no JSON, no formatting.`;
             <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                  {["#", "Exercise", "Prescription", "ROM Target", "Push Target", "Peak ROM", "Sets", "Avg ROM", "Avg Hold", "Confidence"].map(h => (
+                  {["#", "Exercise", "ROM Target", "Push Target", "Peak ROM", "Sets", "Avg ROM", "Avg Hold", "Confidence"].map(h => (
                     <th key={h} style={{ padding: "9px 14px", textAlign: "left" as const, fontSize: 10, fontWeight: 700, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, whiteSpace: "nowrap" as const }}>{h}</th>
                   ))}
                 </tr>
