@@ -686,6 +686,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // Key = sequence index in queue, value = array of per-rep values
   const exercisePeakMetricsRef = useRef<Record<number, number[]>>({});
   const exerciseHoldDurationsRef = useRef<Record<number, number[]>>({});
+  // Per-exercise landmark confidence — captured at exercise complete, written to DB
+  const exerciseLandmarkConfidenceRef = useRef<Record<number, number | null>>({});
 
   const readinessEvaluator = useCallback((frame: any, features: any, prescription: any) => {
     const r = evaluateReadiness({ frame, features, prescription, averageBrightness: null });
@@ -849,6 +851,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     const prescription = sessionQueue.getActivePrescription();
     const exerciseCtx = patientContext.getCurrentExerciseContext();
     writeDebugLog("success", "SESSION", `Exercise complete: ${prescription?.name ?? "?"}`);
+    // Capture landmark confidence before framing resets for next exercise
+    const completedIdx = sessionQueue.queueIndex;
+    exerciseLandmarkConfidenceRef.current[completedIdx] = framingIntelligence.getLandmarkConfidencePct();
+    writeDebugLog("info", "RESULTS", `landmark_confidence[${completedIdx}]=${exerciseLandmarkConfidenceRef.current[completedIdx] ?? "null"}`);
     if (prescription && exerciseCtx) {
       coachingBrain.onExerciseCompleting({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs: Date.now() });
     }
@@ -1033,6 +1039,7 @@ Reply with only the summary text, no JSON, no formatting.`;
           failed_balance_count: ex.failureReasons.balance,
           failed_isolation_count: ex.failureReasons.isolation,
           movement_timeline: null,
+          landmark_confidence_pct: exerciseLandmarkConfidenceRef.current[i] ?? null,
         };
       });
 
@@ -1068,6 +1075,9 @@ Reply with only the summary text, no JSON, no formatting.`;
     if (combinedQueue.length === 0) return;
     sessionStartedAtMsRef.current = Date.now();
     writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
+    exerciseLandmarkConfidenceRef.current = {};
+    exercisePeakMetricsRef.current = {};
+    exerciseHoldDurationsRef.current = {};
     // Auto-check AI engine on session start
     checkAiEngine(true);
 
@@ -2171,7 +2181,7 @@ Reply with only the summary text, no JSON, no formatting.`;
             <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                  {["#", "Exercise", "Prescription", "Completed", "ROM", "AI Push", "Notes"].map(h => (
+                  {["#", "Exercise", "Prescription", "ROM Target", "Push Target", "Peak ROM", "Sets", "Avg ROM", "Avg Hold", "Confidence"].map(h => (
                     <th key={h} style={{ padding: "9px 14px", textAlign: "left" as const, fontSize: 10, fontWeight: 700, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, whiteSpace: "nowrap" as const }}>{h}</th>
                   ))}
                 </tr>
@@ -2179,21 +2189,23 @@ Reply with only the summary text, no JSON, no formatting.`;
               <tbody>
                 {combinedQueue.map((item, i) => {
                   const p = item.prescription as any;
-                  const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
-                  const isActive   = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
-                  const isPast     = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
+                  const romTarget   = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
+                  const encourage   = p.encourageThreshold ?? null;
+                  const isActive    = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
+                  const isPast      = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
                   const repsCompleted = isActive ? inferenceLoop.repCount : isPast ? item.prescription.repTarget : 0;
-                  const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
-                  const avgPeak = peakMetrics.length > 0 ? Math.round(peakMetrics.reduce((a: number, b: number) => a + b, 0) / peakMetrics.length) : null;
                   const completionRate = item.prescription.repTarget > 0 ? repsCompleted / item.prescription.repTarget : 0;
-                  const showResult = sessionQueue.sessionStarted && (isActive || isPast) && repsCompleted > 0;
 
-                  let perfLabel = ""; let perfColor = "#7a88a8"; let perfBg = "transparent";
-                  if (showResult) {
-                    if (completionRate >= 0.9)      { perfLabel = "Good";         perfColor = "#3fb950"; perfBg = "rgba(63,185,80,0.12)"; }
-                    else if (completionRate >= 0.6)  { perfLabel = "Fair";         perfColor = "#d29922"; perfBg = "rgba(210,153,34,0.12)"; }
-                    else if (repsCompleted > 0)      { perfLabel = "Below Target"; perfColor = "#f85149"; perfBg = "rgba(248,81,73,0.12)"; }
-                  }
+                  // ROM accumulators
+                  const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
+                  const maxPeak  = peakMetrics.length > 0 ? Math.max(...peakMetrics) : null;
+                  const avgPeak  = peakMetrics.length > 0 ? Math.round(peakMetrics.reduce((a: number, b: number) => a + b, 0) / peakMetrics.length) : null;
+                  const holds    = exerciseHoldDurationsRef.current[i] ?? [];
+                  const avgHold  = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const confPct  = exerciseLandmarkConfidenceRef.current[i] ?? null;
+                  const liveConf = isActive ? framingIntelligence.getLandmarkConfidencePct() : null;
+                  const confVal  = confPct ?? liveConf;
+                  const confColor = confVal !== null ? (confVal >= 80 ? "#3fb950" : confVal >= 60 ? "#d29922" : "#f85149") : "#484f58";
 
                   return (
                     <tr key={i} style={{
@@ -2202,7 +2214,8 @@ Reply with only the summary text, no JSON, no formatting.`;
                     }}>
                       {/* # */}
                       <td style={{ padding: "12px 14px", color: "#7a88a8", fontWeight: 600 }}>{i + 1}</td>
-                      {/* Exercise name */}
+
+                      {/* Exercise */}
                       <td style={{ padding: "12px 14px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
                           <div>
@@ -2216,54 +2229,81 @@ Reply with only the summary text, no JSON, no formatting.`;
                           {isActive && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: "rgba(124,198,255,0.15)", color: "#7cc6ff", fontWeight: 700, flexShrink: 0 }}>Active</span>}
                         </div>
                       </td>
-                      {/* Prescription */}
-                      <td style={{ padding: "12px 14px", color: "#aab6d3", whiteSpace: "nowrap" as const }}>
-                        {item.prescription.repTarget} reps
-                        {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
-                        {romTarget !== null ? ` · ${romTarget}°` : ""}
-                      </td>
-                      {/* Completed */}
+
+                      {/* ROM Target */}
                       <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
-                        {sessionQueue.sessionStarted ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ fontWeight: 700, color: completionRate >= 0.9 ? "#9be7b0" : completionRate >= 0.6 ? "#ffcc80" : repsCompleted > 0 ? "#ff8f8f" : "#7a88a8" }}>
-                              {repsCompleted} / {item.prescription.repTarget}
-                            </span>
-                            {isPast && completionRate >= 0.9 && <span style={{ fontSize: 14 }}>✅</span>}
+                        {romTarget !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: "#d29922" }}>{romTarget}°</div>
+                            <div style={{ fontSize: 10, color: "#7a88a8" }}>
+                              {item.prescription.repTarget} reps·{item.prescription.hold.required ? ` ${item.prescription.hold.durationMs / 1000}s` : "—"}
+                            </div>
                           </div>
                         ) : <span style={{ color: "#484f58" }}>—</span>}
                       </td>
-                      {/* ROM */}
+
+                      {/* Push Target */}
                       <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
-                        {avgPeak !== null ? (
+                        {encourage !== null ? (
+                          <div style={{ fontWeight: 700, color: "#3fb950" }}>{encourage}°</div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Peak ROM */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {maxPeak !== null ? (
                           <div>
-                            <div style={{ fontWeight: 700, color: "#7cc6ff" }}>{avgPeak}°</div>
-                            {romTarget !== null && <div style={{ fontSize: 10, color: "#7a88a8" }}>Target {romTarget}°</div>}
+                            <div style={{ fontWeight: 700, color: maxPeak >= (romTarget ?? 0) ? "#7cc6ff" : "#ffcc80" }}>{maxPeak}°</div>
+                            {romTarget !== null && <div style={{ fontSize: 10, color: maxPeak >= romTarget ? "#3fb950" : "#f85149" }}>{maxPeak >= romTarget ? "↑ target" : `↓ ${romTarget - maxPeak}° short`}</div>}
                           </div>
                         ) : isActive && inferenceLoop.activeMetricValue !== null ? (
                           <div style={{ fontWeight: 700, color: "#a78bfa" }}>{Math.round(inferenceLoop.activeMetricValue)}°</div>
                         ) : <span style={{ color: "#484f58" }}>—</span>}
                       </td>
-                      {/* AI Push (encourage threshold) */}
+
+                      {/* Sets Completed */}
                       <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
-                        {(() => {
-                          const encourage = (item.prescription as any).encourageThreshold ?? null;
-                          if (encourage === null) return <span style={{ color: "#484f58" }}>—</span>;
-                          return (
-                            <div>
-                              <div style={{ fontWeight: 700, color: "#3fb950" }}>{encourage}°</div>
-                              <div style={{ fontSize: 10, color: "#7a88a8" }}>Push target</div>
-                            </div>
-                          );
-                        })()}
+                        {sessionQueue.sessionStarted ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ fontWeight: 700, color: completionRate >= 0.9 ? "#9be7b0" : completionRate >= 0.6 ? "#ffcc80" : repsCompleted > 0 ? "#ff8f8f" : "#7a88a8" }}>
+                              {repsCompleted} / {item.prescription.repTarget}
+                            </span>
+                            {isPast && completionRate >= 1 && <span style={{ fontSize: 12 }}>✓</span>}
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
                       </td>
-                      {/* Notes */}
-                      <td style={{ padding: "12px 14px", color: "#7a88a8", fontSize: 12 }}>
-                        {isActive && inferenceLoop.phase !== "ready" ? (
-                          <span style={{ color: "#7cc6ff" }}>{inferenceLoop.phase.charAt(0).toUpperCase() + inferenceLoop.phase.slice(1)}</span>
-                        ) : isPast && completionRate < 0.9 && repsCompleted > 0 ? (
-                          <span style={{ color: "#ffcc80" }}>Raise higher</span>
-                        ) : "—"}
+
+                      {/* Avg ROM */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {avgPeak !== null ? (
+                          <div style={{ fontWeight: 700, color: "#7cc6ff" }}>{avgPeak}°</div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Avg Hold */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {avgHold !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: "white" }}>{avgHold}s</div>
+                            {item.prescription.hold.required && (
+                              <div style={{ fontSize: 10, color: parseFloat(avgHold) >= item.prescription.hold.durationMs / 1000 * 0.9 ? "#3fb950" : "#f85149" }}>
+                                target {item.prescription.hold.durationMs / 1000}s
+                              </div>
+                            )}
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Vision Confidence */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {confVal !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: confColor }}>{confVal}%</div>
+                            <div style={{ height: 3, width: 48, background: "rgba(255,255,255,0.08)", borderRadius: 2, marginTop: 3 }}>
+                              <div style={{ height: "100%", width: `${confVal}%`, background: confColor, borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
                       </td>
                     </tr>
                   );
