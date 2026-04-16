@@ -981,26 +981,69 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
     writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}${partial ? " [PARTIAL]" : ""}`);
 
-    // Generate AI summary for the patient
-    let aiSummary = "Great work completing your session!";
+    // Build per-exercise clinical data block for the AI prompt
+    const exerciseClinicalData = allEx.map((ex, i) => {
+      const queueItem = sessionQueue.getActiveQueue()[i];
+      const p = queueItem?.prescription as any;
+      const romTarget = p?.romTargetDegrees ?? p?.romAcceptableMin ?? null;
+      const encourageTarget = p?.encourageThreshold ?? null;
+      const holdTargetMs = queueItem?.prescription?.hold?.durationMs ?? null;
+      const repTimeline = exerciseRepTimelineRef.current[i] ?? [];
+      const peaks = repTimeline.filter(r => r.outcome === "success" && r.peakRomDeg !== null).map(r => r.peakRomDeg as number);
+      const firstHalfPeaks = peaks.slice(0, Math.ceil(peaks.length / 2));
+      const secondHalfPeaks = peaks.slice(Math.ceil(peaks.length / 2));
+      const avgFirst = firstHalfPeaks.length > 0 ? Math.round(firstHalfPeaks.reduce((a, b) => a + b, 0) / firstHalfPeaks.length) : null;
+      const avgSecond = secondHalfPeaks.length > 0 ? Math.round(secondHalfPeaks.reduce((a, b) => a + b, 0) / secondHalfPeaks.length) : null;
+      const romTrend = avgFirst !== null && avgSecond !== null ? (avgSecond - avgFirst) : null;
+      const holds = repTimeline.filter(r => r.outcome === "success" && r.holdMs !== null).map(r => r.holdMs as number);
+      const avgHoldS = holds.length > 0 ? (holds.reduce((a, b) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+      const holdCompliance = holdTargetMs && holds.length > 0
+        ? Math.round(holds.filter(h => h >= holdTargetMs * 0.9).length / holds.length * 100)
+        : null;
+      const conf = exerciseLandmarkConfidenceRef.current[i] ?? null;
+      const perRepStr = repTimeline.map(r =>
+        `    Rep ${r.rep}: ${r.outcome === "success" ? "✓" : "✗"} peak=${r.peakRomDeg !== null ? r.peakRomDeg.toFixed(1) + "°" : "n/a"} hold=${r.holdMs !== null ? (r.holdMs / 1000).toFixed(1) + "s" : "n/a"}${r.failureReason ? " FAIL:" + r.failureReason.replace(/_/g, " ") : ""}`
+      ).join("\n");
+      return `Exercise ${i + 1}: ${ex.exerciseName}
+  Reps: ${ex.successfulReps}/${ex.repTarget} successful (${ex.failedReps} failed)
+  ROM target: ${romTarget !== null ? romTarget + "°" : "population norm"} | Encourage-to: ${encourageTarget !== null ? encourageTarget + "°" : "not set"}
+  Avg peak ROM: ${exercisePeakMetricsRef.current[i]?.length ? Math.round(exercisePeakMetricsRef.current[i].reduce((a, b) => a + b, 0) / exercisePeakMetricsRef.current[i].length) + "°" : "n/a"}
+  ROM trend (early vs late reps): ${romTrend !== null ? (romTrend > 0 ? "+" : "") + romTrend + "° (early avg " + avgFirst + "° → late avg " + avgSecond + "°)" : "insufficient data"}
+  Hold target: ${holdTargetMs !== null ? (holdTargetMs / 1000).toFixed(1) + "s" : "none"} | Avg hold: ${avgHoldS !== null ? avgHoldS + "s" : "n/a"} | Hold compliance (≥90%): ${holdCompliance !== null ? holdCompliance + "%" : "n/a"}
+  Failures — height: ${ex.failureReasons.height} hold: ${ex.failureReasons.hold} balance: ${ex.failureReasons.balance} isolation: ${ex.failureReasons.isolation}
+  Landmark confidence: ${conf !== null ? conf + "%" : "not captured"}
+  Per-rep detail:
+${perRepStr}`;
+    }).join("\n\n");
+
+    // Generate clinical AI summary
+    let aiSummary = "Session data recorded.";
     try {
-      const exerciseSummaryText = allEx.map(ex =>
-        `${ex.exerciseName}: ${ex.successfulReps}/${ex.repTarget} reps completed`
-      ).join(", ");
-      const summaryPrompt = `You are a warm, encouraging physiotherapy coach. The patient just completed their session. Write a 2-3 sentence summary for the patient (not the physio) that is warm, specific, and motivating. Mention their mobility score and any highlights. Keep it conversational and human — no bullet points, no medical jargon.
+      const summaryPrompt = `You are a clinical physiotherapy analyst writing a session report for a physiotherapist and physician. Be analytical, specific, and clinically precise. Do not use generic praise.
 
-Session data:
-- Mobility score: ${mobilityScore}/100
-- Duration: ${Math.round(durationMs / 60000)} minutes
-- Exercises: ${exerciseSummaryText}
-- Patient type: ${patientProfile.type.replace(/_/g, " ")}
+PATIENT: ${patientProfile.type.replace(/_/g, " ")} | Session duration: ${Math.round(durationMs / 60000)} min | Mobility score: ${mobilityScore}/100${partial ? " (session ended early)" : ""}
 
-Reply with only the summary text, no JSON, no formatting.`;
+SESSION DATA:
+${exerciseClinicalData}
+
+Write a clinical summary covering:
+1. Overall session performance and mobility score interpretation
+2. Per-exercise ROM achievement vs target — did the patient meet, exceed, or fall short?
+3. Hold compliance — were prescribed hold durations maintained?
+4. Failure patterns — what types of failures occurred and what do they suggest clinically?
+5. ROM trend within exercises — any sign of fatigue or warm-up effect across reps?
+6. Any compensation or isolation failures that warrant attention
+7. Recommended focus for the next session
+
+Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing language. Write as if handing this to the treating physiotherapist.`;
 
       const res = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: summaryPrompt, system: "You are a warm physiotherapy coach. Reply with only the summary text requested — no JSON, no formatting, no preamble." }),
+        body: JSON.stringify({
+          prompt: summaryPrompt,
+          system: "You are a clinical physiotherapy analyst. Write concise, data-driven clinical session reports for physiotherapists. No praise, no patient-facing language, no bullet points. Pure clinical analysis."
+        }),
       });
       if (res.ok) {
         const d = await res.json();
