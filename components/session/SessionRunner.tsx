@@ -699,8 +699,11 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // Key = sequence index in queue, value = array of per-rep values
   const exercisePeakMetricsRef = useRef<Record<number, number[]>>({});
   const exerciseHoldDurationsRef = useRef<Record<number, number[]>>({});
-  // Per-exercise landmark confidence — captured at exercise complete, written to DB
+  // Per-exercise landmark confidence — snapshotted continuously in feedFrame, locked at exercise complete
   const exerciseLandmarkConfidenceRef = useRef<Record<number, number | null>>({});
+  // Rolling snapshot of current confidence — updated every feedFrame tick so we never
+  // read a stale/reset value at exercise completion time
+  const liveConfidenceSnapshotRef = useRef<number | null>(null);
   // Per-rep timeline — one entry per rep (success or failure) for movement_timeline jsonb
   type RepTimelineEntry = {
     rep: number; outcome: "success" | "failed"; failureReason: string | null;
@@ -848,6 +851,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       if (!prescription || !exerciseCtx) return;
+      // Continuously snapshot landmark confidence so handleExerciseComplete
+      // reads the last known good value, not a potentially-reset live value
+      const confNow = framingIntelligence.getLandmarkConfidencePct();
+      if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
       recordSnapshot({
         nowMs: params.nowMs,
         phase: params.phase,
@@ -890,9 +897,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     const prescription = sessionQueue.getActivePrescription();
     const exerciseCtx = patientContext.getCurrentExerciseContext();
     writeDebugLog("success", "SESSION", `Exercise complete: ${prescription?.name ?? "?"}`);
-    // Capture landmark confidence before framing resets for next exercise
+    // Lock in the last-known confidence value from feedFrame snapshots.
+    // getLandmarkConfidencePct() may already be stale/reset by the time this fires,
+    // so we read from liveConfidenceSnapshotRef which was updated every frame.
     const completedIdx = sessionQueue.queueIndex;
-    exerciseLandmarkConfidenceRef.current[completedIdx] = framingIntelligence.getLandmarkConfidencePct();
+    exerciseLandmarkConfidenceRef.current[completedIdx] = liveConfidenceSnapshotRef.current;
+    liveConfidenceSnapshotRef.current = null; // reset for next exercise
     writeDebugLog("info", "RESULTS", `landmark_confidence[${completedIdx}]=${exerciseLandmarkConfidenceRef.current[completedIdx] ?? "null"}`);
     if (prescription && exerciseCtx) {
       coachingBrain.onExerciseCompleting({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs: Date.now() });
@@ -1121,6 +1131,7 @@ Reply with only the summary text, no JSON, no formatting.`;
     exercisePeakMetricsRef.current = {};
     exerciseHoldDurationsRef.current = {};
     exerciseRepTimelineRef.current = {};
+    liveConfidenceSnapshotRef.current = null;
     // Auto-check AI engine on session start
     checkAiEngine(true);
 
