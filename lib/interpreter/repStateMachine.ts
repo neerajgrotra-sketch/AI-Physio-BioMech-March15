@@ -69,11 +69,13 @@ export function updateRepState(
     };
   }
 
+  // Only accumulate quality violations during the active upward phases.
+  // Lowering is explicitly excluded — natural arm swing during descent is
+  // not a clinically meaningful isolation failure and should not fail the rep.
   const activePhase =
     currentState.phase === "lifting" ||
     currentState.phase === "top" ||
-    currentState.phase === "holding" ||
-    currentState.phase === "lowering";
+    currentState.phase === "holding";
 
   if (activePhase) {
     if (!isolationOk) {
