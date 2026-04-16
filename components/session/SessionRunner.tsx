@@ -542,6 +542,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const repCycleLogRef = useRef<RepCycleEntry[]>([]);
   const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [expandedExerciseRow, setExpandedExerciseRow] = useState<number | null>(null);
+  const [expandedExerciseRow, setExpandedExerciseRow] = useState<number | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(
   initialPatientProfile ?? createDefaultPatientProfile()
 );
@@ -688,7 +690,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const exerciseHoldDurationsRef = useRef<Record<number, number[]>>({});
   // Per-exercise landmark confidence — captured at exercise complete, written to DB
   const exerciseLandmarkConfidenceRef = useRef<Record<number, number | null>>({});
-
+  // Per-rep timeline — one entry per rep (success or failure) for movement_timeline jsonb
+  type RepTimelineEntry = {
+    rep: number; outcome: "success" | "failed"; failureReason: string | null;
+    peakRomDeg: number | null; holdMs: number | null; timestampMs: number;
+  };
+  const exerciseRepTimelineRef = useRef<Record<number, RepTimelineEntry[]>>({});
   const readinessEvaluator = useCallback((frame: any, features: any, prescription: any) => {
     const r = evaluateReadiness({ frame, features, prescription, averageBrightness: null });
     return { ready: r.ready, message: r.message };
@@ -735,6 +742,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         if (!exerciseHoldDurationsRef.current[queueIdx]) exerciseHoldDurationsRef.current[queueIdx] = [];
         exerciseHoldDurationsRef.current[queueIdx].push(holdDurationMs);
       }
+      // Accumulate per-rep timeline entry
+      if (!exerciseRepTimelineRef.current[queueIdx]) exerciseRepTimelineRef.current[queueIdx] = [];
+      exerciseRepTimelineRef.current[queueIdx].push({
+        rep: (exerciseCtx?.repCount ?? 0) + 1,
+        outcome: "success",
+        failureReason: null,
+        peakRomDeg: peakMetric !== null ? Math.round(peakMetric * 10) / 10 : null,
+        holdMs: holdDurationMs,
+        timestampMs: nowMs,
+      });
 
       // coachingBrain.onRepCompleted expects 0-indexed repCount (pre-increment).
       // Pass exerciseCtx captured BEFORE recordRepOutcome increments it.
@@ -752,6 +769,17 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       recordRepFailed(failureReason, exerciseCtx.repCount, nowMs);
       patientContext.recordRepOutcome("failed", failureReason, null);
       coachingBrain.onRepFailed({ prescription, patientProfile, exerciseContext: exerciseCtx, failureReason, nowMs });
+      // Accumulate per-rep timeline entry for failed rep
+      const failedQueueIdx = sessionQueue.getActiveQueueIndex?.() ?? 0;
+      if (!exerciseRepTimelineRef.current[failedQueueIdx]) exerciseRepTimelineRef.current[failedQueueIdx] = [];
+      exerciseRepTimelineRef.current[failedQueueIdx].push({
+        rep: exerciseCtx.repCount + 1,
+        outcome: "failed",
+        failureReason,
+        peakRomDeg: inferenceLoop.activeMetricValue !== null ? Math.round(inferenceLoop.activeMetricValue * 10) / 10 : null,
+        holdMs: null,
+        timestampMs: nowMs,
+      });
     },
     onHoldStarted: (holdRequiredMs: number, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
@@ -1038,7 +1066,9 @@ Reply with only the summary text, no JSON, no formatting.`;
           failed_height_count: ex.failureReasons.height,
           failed_balance_count: ex.failureReasons.balance,
           failed_isolation_count: ex.failureReasons.isolation,
-          movement_timeline: null,
+          movement_timeline: exerciseRepTimelineRef.current[i]?.length
+            ? exerciseRepTimelineRef.current[i]
+            : null,
           landmark_confidence_pct: exerciseLandmarkConfidenceRef.current[i] ?? null,
         };
       });
@@ -1078,6 +1108,7 @@ Reply with only the summary text, no JSON, no formatting.`;
     exerciseLandmarkConfidenceRef.current = {};
     exercisePeakMetricsRef.current = {};
     exerciseHoldDurationsRef.current = {};
+    exerciseRepTimelineRef.current = {};
     // Auto-check AI engine on session start
     checkAiEngine(true);
 
@@ -2305,7 +2336,67 @@ Reply with only the summary text, no JSON, no formatting.`;
                           </div>
                         ) : <span style={{ color: "#484f58" }}>—</span>}
                       </td>
+                      {/* Expand toggle */}
+                      <td style={{ padding: "0 14px 0 0", textAlign: "right" as const }}>
+                        {(peakMetrics.length > 0 || (exerciseRepTimelineRef.current[i]?.length ?? 0) > 0) && (
+                          <button
+                            onClick={() => setExpandedExerciseRow(expandedExerciseRow === i ? null : i)}
+                            style={{ background: "none", border: "none", color: "#7a88a8", cursor: "pointer", fontSize: 11, padding: "4px 6px", borderRadius: 4, fontFamily: "inherit" }}
+                          >
+                            {expandedExerciseRow === i ? "▲" : "▼"}
+                          </button>
+                        )}
+                      </td>
                     </tr>
+                    {/* Per-rep breakdown row */}
+                    {expandedExerciseRow === i && (() => {
+                      const repTimeline = exerciseRepTimelineRef.current[i] ?? [];
+                      if (repTimeline.length === 0) return null;
+                      const romTarget = ((item.prescription as any).romTargetDegrees ?? (item.prescription as any).romAcceptableMin ?? null) as number | null;
+                      return (
+                        <tr key={`${i}-reps`} style={{ background: "rgba(0,0,0,0.2)" }}>
+                          <td colSpan={10} style={{ padding: "0 14px 12px 14px" }}>
+                            <div style={{ borderLeft: "2px solid rgba(124,198,255,0.2)", paddingLeft: 16, marginLeft: 8 }}>
+                              <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 8, marginTop: 8 }}>
+                                Per-Rep Breakdown
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "40px 70px 80px 80px 80px 1fr", gap: "4px 12px", fontSize: 11 }}>
+                                {/* Header */}
+                                {["Rep", "Outcome", "Peak ROM", "Hold", "vs Target", ""].map(h => (
+                                  <div key={h} style={{ color: "#484f58", fontWeight: 700, fontSize: 10, textTransform: "uppercase" as const, letterSpacing: 0.4, paddingBottom: 4, borderBottom: "1px solid rgba(255,255,255,0.04)" }}>{h}</div>
+                                ))}
+                                {/* Rows */}
+                                {repTimeline.map((rep, ri) => {
+                                  const isSuccess = rep.outcome === "success";
+                                  const vsTarget = rep.peakRomDeg !== null && romTarget !== null
+                                    ? rep.peakRomDeg - romTarget : null;
+                                  return (
+                                    <React.Fragment key={ri}>
+                                      <div style={{ color: "#aab6d3", fontWeight: 600 }}>{rep.rep}</div>
+                                      <div style={{ color: isSuccess ? "#3fb950" : "#f85149", fontWeight: 600 }}>
+                                        {isSuccess ? "✓ Done" : "✗ Failed"}
+                                      </div>
+                                      <div style={{ color: isSuccess ? "#7cc6ff" : "#7a88a8" }}>
+                                        {rep.peakRomDeg !== null ? `${rep.peakRomDeg}°` : "—"}
+                                      </div>
+                                      <div style={{ color: rep.holdMs !== null ? "white" : "#484f58" }}>
+                                        {rep.holdMs !== null ? `${(rep.holdMs / 1000).toFixed(1)}s` : "—"}
+                                      </div>
+                                      <div style={{ color: vsTarget === null ? "#484f58" : vsTarget >= 0 ? "#3fb950" : "#f85149" }}>
+                                        {vsTarget !== null ? `${vsTarget >= 0 ? "+" : ""}${vsTarget.toFixed(0)}°` : "—"}
+                                      </div>
+                                      <div style={{ color: "#7a88a8", fontSize: 10 }}>
+                                        {!isSuccess && rep.failureReason ? rep.failureReason.replace(/_/g, " ") : ""}
+                                      </div>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })()}
                   );
                 })}
               </tbody>
