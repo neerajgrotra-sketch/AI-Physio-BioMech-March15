@@ -307,6 +307,7 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onV
     durationMs: number;
     aiSummary: string;
     exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
+    partial?: boolean;
   };
   patientName?: string;
   sessionTitle?: string;
@@ -329,10 +330,17 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onV
 
         {/* Header */}
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>{summary.partial ? "⏹️" : "🎉"}</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#e6edf3", marginBottom: 6 }}>
-            Session Complete{patientName ? `, ${patientName.split(" ")[0]}!` : "!"}
+            {summary.partial
+              ? `Session Ended${patientName ? `, ${patientName.split(" ")[0]}` : ""}`
+              : `Session Complete${patientName ? `, ${patientName.split(" ")[0]}!` : "!"}`}
           </div>
+          {summary.partial && (
+            <div style={{ fontSize: 13, color: "#d29922", marginBottom: 4 }}>
+              Completed exercises have been saved.
+            </div>
+          )}
           {sessionTitle && (
             <div style={{ fontSize: 14, color: "#7d8590" }}>{sessionTitle}</div>
           )}
@@ -470,6 +478,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null); // stored on camera ready for pause/resume
   const sessionStartedAtMsRef = useRef<number | null>(null);
   // Ghost silhouette refs
   const ghostCanvasRef  = useRef<HTMLCanvasElement | null>(null);
@@ -550,6 +559,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  // Soft pause state — inference stops, camera stays on, timer freezes
+  const [isPaused, setIsPaused] = useState(false);
   // Rest screen state — shown between protocol blocks
   const [restScreen, setRestScreen] = useState<{ restMs: number; onDone: () => void } | null>(null);
   // Post-session summary state — shown when all exercises complete
@@ -558,6 +569,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
     aiSummary: string;
     durationMs: number;
+    partial?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -594,8 +606,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     patientContext.updatePatientProfile(patientProfile);
   }, [patientProfile]);
 
-  // Session timer — runs while engine is running
-  const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running");
+  // Session timer — runs while engine is running and not paused
+  const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running" && !isPaused);
 
   useEffect(() => {
     if (selectedSessionIds.length === 0 && sessions[0]) {
@@ -935,7 +947,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // then updates session_prescriptions.status → completed.
   // ============================================================
 
-  async function writeSessionResults() {
+  async function writeSessionResults(partial = false) {
     const summary = patientContext.buildSessionSummaryInput();
     if (!summary) {
       writeDebugLog("warning", "RESULTS", "buildSessionSummaryInput returned null — skipping write");
@@ -957,7 +969,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       : 0;
     const mobilityScore = Math.round(Math.min(100, repCompletionRate * 100));
 
-    writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}`);
+    writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}${partial ? " [PARTIAL]" : ""}`);
 
     // Generate AI summary for the patient
     let aiSummary = "Great work completing your session!";
@@ -991,6 +1003,7 @@ Reply with only the summary text, no JSON, no formatting.`;
       mobilityScore,
       durationMs,
       aiSummary,
+      partial,
       exerciseResults: allEx.map(ex => ({
         name: ex.exerciseName,
         successful: ex.successfulReps,
@@ -1082,12 +1095,12 @@ Reply with only the summary text, no JSON, no formatting.`;
       if (prescriptionId) {
         const { error: statusErr } = await supabase
           .from("sessions")
-          .update({ status: "completed" })
+          .update({ status: partial ? "partially_completed" : "completed" })
           .eq("id", prescriptionId);
         if (statusErr) {
           writeDebugLog("error", "RESULTS", "Failed to update session status", statusErr.message);
         } else {
-          writeDebugLog("success", "RESULTS", "Session status → completed");
+          writeDebugLog("success", "RESULTS", `Session status → ${partial ? "partially_completed" : "completed"}`);
         }
       }
 
@@ -1127,6 +1140,7 @@ Reply with only the summary text, no JSON, no formatting.`;
   }
 
   function handleCameraReady(video: HTMLVideoElement) {
+    videoElementRef.current = video;
     const prescription = sessionQueue.getActivePrescription();
     writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
@@ -1698,9 +1712,36 @@ Reply with only the summary text, no JSON, no formatting.`;
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
     setGhostScore(0); setGhostHoldMs(0);
+    setIsPaused(false);
+    videoElementRef.current = null;
   }
 
-  function endSession() { cameraRef.current?.stopCamera(); }
+  function pauseSession() {
+    if (!sessionQueue.sessionStarted || isPaused) return;
+    setIsPaused(true);
+    inferenceLoop.stopLoop();
+    cancelAnimationFrame(ghostAnimRef.current);
+    window.speechSynthesis?.cancel();
+    writeDebugLog("info", "SESSION", "Paused");
+  }
+
+  function resumeSession() {
+    if (!isPaused) return;
+    const video = videoElementRef.current;
+    if (!video) { writeDebugLog("error", "SESSION", "Resume failed — no video element"); return; }
+    setIsPaused(false);
+    inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
+    startGhostLoop();
+    writeDebugLog("info", "SESSION", "Resumed");
+  }
+
+  async function endSession(partial = false) {
+    if (partial && sessionQueue.sessionStarted) {
+      // Write whatever has been completed before stopping camera
+      await writeSessionResults(true);
+    }
+    cameraRef.current?.stopCamera();
+  }
 
   function resetSession() {
     sessionQueue.resetSession();
@@ -1789,6 +1830,16 @@ Reply with only the summary text, no JSON, no formatting.`;
                 <span style={{ color: "#7a88a8" }}>{patientProfile.type.replace(/_/g, " ")}</span>
               </div>
             )}
+            {/* Session ID chip — monospace, copy on click */}
+            {prescriptionId && (
+              <div
+                title="Click to copy session ID"
+                onClick={() => copyToClipboard(prescriptionId)}
+                style={{ fontSize: 10, fontFamily: "monospace", color: "#484f58", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 5, padding: "2px 7px", cursor: "pointer", letterSpacing: 0.5, userSelect: "none" }}
+              >
+                {prescriptionId.slice(0, 8)}
+              </div>
+            )}
           </div>
           {/* Stats badges */}
           {combinedQueue.length > 0 && (
@@ -1863,23 +1914,35 @@ Reply with only the summary text, no JSON, no formatting.`;
             </>
           )}
 
-          {/* In-session: progress + end/reset */}
+          {/* In-session: progress + pause/resume + end/reset */}
           {sessionQueue.sessionStarted && (
             <>
               <div style={{
                 display: "flex", alignItems: "center", gap: 8,
-                background: "rgba(155,231,176,0.08)",
-                border: "1px solid rgba(155,231,176,0.2)",
+                background: isPaused ? "rgba(255,200,80,0.08)" : "rgba(155,231,176,0.08)",
+                border: `1px solid ${isPaused ? "rgba(255,200,80,0.2)" : "rgba(155,231,176,0.2)"}`,
                 borderRadius: 8, padding: "5px 12px",
               }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#9be7b0", boxShadow: "0 0 5px #9be7b0", animation: "pulse 2s infinite" }} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#9be7b0" }}>In Progress</span>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isPaused ? "#ffcc80" : "#9be7b0", boxShadow: `0 0 5px ${isPaused ? "#ffcc80" : "#9be7b0"}`, animation: isPaused ? "none" : "pulse 2s infinite" }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: isPaused ? "#ffcc80" : "#9be7b0" }}>{isPaused ? "Paused" : "In Progress"}</span>
                 <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: "white", letterSpacing: 1 }}>{sessionTimer}</span>
               </div>
               <span style={{ fontSize: 12, color: "#7a88a8" }}>
                 {sessionQueue.queueIndex + 1}&thinsp;/&thinsp;{sessionQueue.getActiveQueue().length}
               </span>
-              <button onClick={endSession} style={{
+              {/* Pause / Resume */}
+              {isPaused ? (
+                <button onClick={resumeSession} style={{
+                  background: "rgba(155,231,176,0.15)", color: "#9be7b0", padding: "6px 14px",
+                  borderRadius: 7, border: "1px solid rgba(155,231,176,0.3)", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                }}>▶ Resume</button>
+              ) : (
+                <button onClick={pauseSession} style={{
+                  background: "rgba(255,200,80,0.1)", color: "#ffcc80", padding: "6px 12px",
+                  borderRadius: 7, border: "1px solid rgba(255,200,80,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
+                }}>⏸ Pause</button>
+              )}
+              <button onClick={() => endSession(true)} style={{
                 background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "6px 12px",
                 borderRadius: 7, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
               }}>End</button>
@@ -2412,7 +2475,7 @@ Reply with only the summary text, no JSON, no formatting.`;
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: selectorCollapsed ? 0 : 14, flexWrap: "wrap", gap: 10 }}>
           <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Session Selector</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={endSession} disabled={inferenceLoop.engineStatus !== "running"} style={{
+            <button onClick={() => endSession(true)} disabled={inferenceLoop.engineStatus !== "running"} style={{
               background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "7px 14px",
               borderRadius: 8, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 13
             }}>End</button>
