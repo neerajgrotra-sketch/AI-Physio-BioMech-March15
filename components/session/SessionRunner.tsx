@@ -543,7 +543,6 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [expandedExerciseRow, setExpandedExerciseRow] = useState<number | null>(null);
-  const [expandedExerciseRow, setExpandedExerciseRow] = useState<number | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(
   initialPatientProfile ?? createDefaultPatientProfile()
 );
@@ -2239,7 +2238,8 @@ Reply with only the summary text, no JSON, no formatting.`;
                   const confColor = confVal !== null ? (confVal >= 80 ? "#3fb950" : confVal >= 60 ? "#d29922" : "#f85149") : "#484f58";
 
                   return (
-                    <tr key={i} style={{
+                    <React.Fragment key={i}>
+                    <tr style={{
                       borderBottom: i < combinedQueue.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
                       background: isActive ? "rgba(124,198,255,0.04)" : "transparent",
                     }}>
@@ -2397,6 +2397,7 @@ Reply with only the summary text, no JSON, no formatting.`;
                         </tr>
                       );
                     })()}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
