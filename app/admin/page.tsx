@@ -56,12 +56,20 @@ interface SessionResult {
   exercise_results: ExerciseResult[];
 }
 
+interface RepTimelineEntry {
+  rep: number; outcome: "success" | "failed"; failureReason: string | null;
+  peakRomDeg: number | null; holdMs: number | null; timestampMs: number;
+}
+
 interface ExerciseResult {
   id: string; sequence_order: number;
   reps_prescribed: number; reps_attempted: number; reps_successful: number; reps_failed: number;
   hold_compliance_rate: number | null;
   failed_hold_count: number; failed_height_count: number;
   failed_balance_count: number; failed_isolation_count: number;
+  avg_metric_degrees: number | null; target_metric_degrees: number | null;
+  avg_hold_ms: number | null; landmark_confidence_pct: number | null;
+  movement_timeline: RepTimelineEntry[] | null;
 }
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -307,11 +315,12 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
   const [result, setResult] = useState<SessionResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [prescriptionExercises, setPrescriptionExercises] = useState<{ sequence_order: number; display_name: string; }[]>([]);
+  const [expandedExIdx, setExpandedExIdx] = useState<number | null>(null);
 
   useEffect(() => {
     async function load() {
       const [{ data: res }, { data: blocks }, { data: peOld }] = await Promise.all([
-        supabase.from("session_results").select("*, exercise_results(*)").eq("prescription_id", prescriptionId).order("created_at", { ascending: false }).limit(1).single(),
+        supabase.from("session_results").select("*, exercise_results(id, sequence_order, reps_prescribed, reps_attempted, reps_successful, reps_failed, hold_compliance_rate, failed_hold_count, failed_height_count, failed_balance_count, failed_isolation_count, avg_metric_degrees, target_metric_degrees, avg_hold_ms, landmark_confidence_pct, movement_timeline)").eq("prescription_id", prescriptionId).order("created_at", { ascending: false }).limit(1).single(),
         supabase.from("session_blocks").select("sequence_order, session_block_exercises(sequence_order, exercise_templates(display_name))").eq("session_id", prescriptionId).order("sequence_order"),
         supabase.from("prescription_exercises").select("sequence_order, exercise_templates(display_name)").eq("prescription_id", prescriptionId).order("sequence_order"),
       ]);
@@ -339,8 +348,10 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 300, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ width: "min(640px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "16px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ width: "min(720px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+        {/* Header */}
+        <div style={{ padding: "16px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{sessionTitle}</div>
             <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Session Results</div>
@@ -349,20 +360,37 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
-          {loading ? <div style={{ textAlign: "center", padding: "60px 0", color: C.textMuted }}>Loading results…</div> : !result ? (
+          {loading ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: C.textMuted }}>Loading results…</div>
+          ) : !result ? (
             <div style={{ textAlign: "center", padding: "60px 0", color: C.textDim }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>📊</div>
               <div>No results found for this session.</div>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-              <div style={{ background: C.bg, border: `1px solid ${scoreColor}40`, borderRadius: 12, padding: "24px", textAlign: "center" }}>
-                <div style={{ fontSize: 12, color: C.textMuted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 8 }}>Mobility Score</div>
-                <div style={{ fontSize: 72, fontWeight: 800, color: scoreColor, lineHeight: 1, marginBottom: 8 }}>{score ?? "—"}</div>
-                <div style={{ fontSize: 13, color: C.textMuted }}>out of 100</div>
-                {result.duration_ms && <div style={{ fontSize: 12, color: C.textDim, marginTop: 12 }}>Session duration: {formatDuration(result.duration_ms)}</div>}
-                {result.completed_at && <div style={{ fontSize: 12, color: C.textDim, marginTop: 4 }}>Completed: {formatDate(result.completed_at)}</div>}
+
+              {/* ── SUMMARY DASHBOARD ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                {/* Mobility score */}
+                <div style={{ background: C.bg, border: `1px solid ${scoreColor}40`, borderRadius: 12, padding: "20px", textAlign: "center", gridRow: "span 1" }}>
+                  <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 6 }}>Mobility Score</div>
+                  <div style={{ fontSize: 64, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>{score ?? "—"}</div>
+                  <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>out of 100</div>
+                </div>
+                {/* Session meta */}
+                <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {result.duration_ms && (
+                    <div><div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Duration</div><div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginTop: 2 }}>{formatDuration(result.duration_ms)}</div></div>
+                  )}
+                  {result.completed_at && (
+                    <div><div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Completed</div><div style={{ fontSize: 13, color: C.text, marginTop: 2 }}>{formatDate(result.completed_at)}</div></div>
+                  )}
+                  <div><div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Exercises</div><div style={{ fontSize: 13, color: C.text, marginTop: 2 }}>{result.exercise_results.length}</div></div>
+                </div>
               </div>
+
+              {/* ── EXERCISE BREAKDOWN ── */}
               <div>
                 <SectionHeader title="Exercise Breakdown" />
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -371,38 +399,141 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                     const completionPct = ex.reps_prescribed > 0 ? Math.round(ex.reps_successful / ex.reps_prescribed * 100) : 0;
                     const holdPct = ex.hold_compliance_rate !== null ? Math.round(ex.hold_compliance_rate * 100) : null;
                     const exColor = completionPct >= 80 ? C.green : completionPct >= 60 ? C.orange : C.red;
+                    const confColor = ex.landmark_confidence_pct !== null ? (ex.landmark_confidence_pct >= 80 ? C.green : ex.landmark_confidence_pct >= 60 ? C.orange : C.red) : C.textDim;
+                    const repTimeline = ex.movement_timeline ?? [];
+                    const peaks = repTimeline.filter(r => r.outcome === "success" && r.peakRomDeg !== null).map(r => r.peakRomDeg as number);
+                    const isExpanded = expandedExIdx === i;
+
                     return (
-                      <div key={ex.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <span style={{ width: 24, height: 24, borderRadius: "50%", background: exColor + "20", color: exColor, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-                            <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{exName}</span>
-                          </div>
-                          <span style={{ fontSize: 18, fontWeight: 700, color: exColor }}>{completionPct}%</span>
-                        </div>
-                        <div style={{ height: 4, background: C.border, borderRadius: 2, marginBottom: 12, overflow: "hidden" }}>
-                          <div style={{ height: "100%", width: `${completionPct}%`, background: exColor, borderRadius: 2, transition: "width 0.6s ease" }} />
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-                          {[
-                            { label: "Prescribed", value: ex.reps_prescribed, color: C.textMuted },
-                            { label: "Completed", value: ex.reps_successful, color: C.green },
-                            { label: "Failed", value: ex.reps_failed, color: ex.reps_failed > 0 ? C.red : C.textDim },
-                            { label: "Hold %", value: holdPct !== null ? `${holdPct}%` : "—", color: holdPct !== null && holdPct >= 80 ? C.green : C.orange },
-                          ].map(({ label, value, color }) => (
-                            <div key={label} style={{ background: C.surface, borderRadius: 6, padding: "8px", textAlign: "center" }}>
-                              <div style={{ fontSize: 16, fontWeight: 700, color }}>{value}</div>
-                              <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{label}</div>
+                      <div key={ex.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+                        {/* Exercise header row */}
+                        <div style={{ padding: "14px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <span style={{ width: 24, height: 24, borderRadius: "50%", background: exColor + "20", color: exColor, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{exName}</span>
                             </div>
-                          ))}
+                            <span style={{ fontSize: 18, fontWeight: 700, color: exColor }}>{completionPct}%</span>
+                          </div>
+                          <div style={{ height: 4, background: C.border, borderRadius: 2, marginBottom: 12, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${completionPct}%`, background: exColor, borderRadius: 2 }} />
+                          </div>
+
+                          {/* Primary metrics grid */}
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 10 }}>
+                            {[
+                              { label: "Prescribed", value: ex.reps_prescribed, color: C.textMuted },
+                              { label: "Completed", value: ex.reps_successful, color: C.green },
+                              { label: "Failed", value: ex.reps_failed, color: ex.reps_failed > 0 ? C.red : C.textDim },
+                              { label: "Hold %", value: holdPct !== null ? `${holdPct}%` : "—", color: holdPct !== null && holdPct >= 80 ? C.green : C.orange },
+                            ].map(({ label, value, color }) => (
+                              <div key={label} style={{ background: C.surface, borderRadius: 6, padding: "8px", textAlign: "center" }}>
+                                <div style={{ fontSize: 16, fontWeight: 700, color }}>{value}</div>
+                                <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{label}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* ROM + Hold metrics row */}
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 10 }}>
+                            <div style={{ background: C.surface, borderRadius: 6, padding: "8px", textAlign: "center" }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: C.blue }}>{ex.avg_metric_degrees !== null ? `${Math.round(ex.avg_metric_degrees)}°` : "—"}</div>
+                              <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Avg ROM</div>
+                              {ex.target_metric_degrees !== null && <div style={{ fontSize: 10, color: C.orange, marginTop: 2 }}>target {Math.round(ex.target_metric_degrees)}°</div>}
+                            </div>
+                            <div style={{ background: C.surface, borderRadius: 6, padding: "8px", textAlign: "center" }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: ex.avg_metric_degrees !== null && ex.target_metric_degrees !== null ? (ex.avg_metric_degrees >= ex.target_metric_degrees ? C.green : C.red) : C.textMuted }}>
+                                {ex.avg_metric_degrees !== null && ex.target_metric_degrees !== null ? `${ex.avg_metric_degrees >= ex.target_metric_degrees ? "+" : ""}${Math.round(ex.avg_metric_degrees - ex.target_metric_degrees)}°` : "—"}
+                              </div>
+                              <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>vs Target</div>
+                            </div>
+                            <div style={{ background: C.surface, borderRadius: 6, padding: "8px", textAlign: "center" }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: confColor }}>{ex.landmark_confidence_pct !== null ? `${ex.landmark_confidence_pct}%` : "—"}</div>
+                              <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Confidence</div>
+                            </div>
+                          </div>
+
+                          {/* Failure tags */}
+                          {(ex.failed_height_count > 0 || ex.failed_hold_count > 0 || ex.failed_balance_count > 0 || ex.failed_isolation_count > 0) && (
+                            <div style={{ marginBottom: 10, padding: "8px 12px", background: C.redDim, border: `1px solid ${C.red}20`, borderRadius: 6, fontSize: 12 }}>
+                              <span style={{ color: C.textMuted, marginRight: 8 }}>Failures:</span>
+                              {ex.failed_height_count > 0 && <span style={{ color: C.red, marginRight: 8 }}>Height ×{ex.failed_height_count}</span>}
+                              {ex.failed_hold_count > 0 && <span style={{ color: C.orange, marginRight: 8 }}>Hold ×{ex.failed_hold_count}</span>}
+                              {ex.failed_balance_count > 0 && <span style={{ color: C.purple, marginRight: 8 }}>Balance ×{ex.failed_balance_count}</span>}
+                              {ex.failed_isolation_count > 0 && <span style={{ color: C.blue }}>Isolation ×{ex.failed_isolation_count}</span>}
+                            </div>
+                          )}
+
+                          {/* Expand toggle */}
+                          {repTimeline.length > 0 && (
+                            <button
+                              onClick={() => setExpandedExIdx(isExpanded ? null : i)}
+                              style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 12px", color: C.textMuted, fontSize: 11, cursor: "pointer", fontFamily: "inherit", width: "100%" }}
+                            >
+                              {isExpanded ? "▲ Hide per-rep breakdown" : `▼ Show ${repTimeline.length} reps`}
+                            </button>
+                          )}
                         </div>
-                        {(ex.failed_height_count > 0 || ex.failed_hold_count > 0 || ex.failed_balance_count > 0 || ex.failed_isolation_count > 0) && (
-                          <div style={{ marginTop: 10, padding: "8px 12px", background: C.redDim, border: `1px solid ${C.red}20`, borderRadius: 6, fontSize: 12 }}>
-                            <span style={{ color: C.textMuted, marginRight: 8 }}>Failures:</span>
-                            {ex.failed_height_count > 0 && <span style={{ color: C.red, marginRight: 8 }}>Height ×{ex.failed_height_count}</span>}
-                            {ex.failed_hold_count > 0 && <span style={{ color: C.orange, marginRight: 8 }}>Hold ×{ex.failed_hold_count}</span>}
-                            {ex.failed_balance_count > 0 && <span style={{ color: C.purple, marginRight: 8 }}>Balance ×{ex.failed_balance_count}</span>}
-                            {ex.failed_isolation_count > 0 && <span style={{ color: C.blue }}>Isolation ×{ex.failed_isolation_count}</span>}
+
+                        {/* Per-rep breakdown — expanded */}
+                        {isExpanded && repTimeline.length > 0 && (
+                          <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 16px", background: "rgba(0,0,0,0.2)" }}>
+                            <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 700, marginBottom: 10 }}>Per-Rep Detail</div>
+                            <div style={{ overflowX: "auto" as const }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 12 }}>
+                                <thead>
+                                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                                    {["Rep", "Outcome", "Peak ROM", "vs Target", "Hold", "Note"].map(h => (
+                                      <th key={h} style={{ padding: "5px 10px", textAlign: "left" as const, fontSize: 10, fontWeight: 700, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", whiteSpace: "nowrap" as const }}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {repTimeline.map((rep, ri) => {
+                                    const isSuccess = rep.outcome === "success";
+                                    const vsTarget = rep.peakRomDeg !== null && ex.target_metric_degrees !== null
+                                      ? rep.peakRomDeg - ex.target_metric_degrees : null;
+                                    return (
+                                      <tr key={ri} style={{ borderBottom: `1px solid ${C.border}20` }}>
+                                        <td style={{ padding: "6px 10px", color: C.textMuted, fontWeight: 600 }}>{rep.rep}</td>
+                                        <td style={{ padding: "6px 10px", color: isSuccess ? C.green : C.red, fontWeight: 600 }}>{isSuccess ? "✓" : "✗"}</td>
+                                        <td style={{ padding: "6px 10px", color: isSuccess ? C.blue : C.textMuted, fontWeight: 600 }}>{rep.peakRomDeg !== null ? `${rep.peakRomDeg.toFixed(1)}°` : "—"}</td>
+                                        <td style={{ padding: "6px 10px", color: vsTarget === null ? C.textDim : vsTarget >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                                          {vsTarget !== null ? `${vsTarget >= 0 ? "+" : ""}${vsTarget.toFixed(0)}°` : "—"}
+                                        </td>
+                                        <td style={{ padding: "6px 10px", color: rep.holdMs !== null ? C.text : C.textDim }}>
+                                          {rep.holdMs !== null ? `${(rep.holdMs / 1000).toFixed(1)}s` : "—"}
+                                        </td>
+                                        <td style={{ padding: "6px 10px", color: C.textMuted, fontSize: 11 }}>
+                                          {!isSuccess && rep.failureReason ? rep.failureReason.replace(/_/g, " ") : ""}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                            {/* ROM sparkline — simple inline bars */}
+                            {peaks.length >= 2 && (
+                              <div style={{ marginTop: 12 }}>
+                                <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 6 }}>ROM Trend</div>
+                                <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 36 }}>
+                                  {peaks.map((p, pi) => {
+                                    const maxP = Math.max(...peaks);
+                                    const minP = Math.min(...peaks);
+                                    const range = maxP - minP || 1;
+                                    const h = Math.max(8, Math.round(((p - minP) / range) * 28 + 8));
+                                    const aboveTarget = ex.target_metric_degrees !== null && p >= ex.target_metric_degrees;
+                                    return (
+                                      <div key={pi} title={`Rep ${pi + 1}: ${p.toFixed(1)}°`} style={{ flex: 1, height: h, borderRadius: 2, background: aboveTarget ? C.green : C.orange, minWidth: 8, cursor: "default" }} />
+                                    );
+                                  })}
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginTop: 4 }}>
+                                  <span>Rep 1</span><span>Rep {peaks.length}</span>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -410,12 +541,16 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                   })}
                 </div>
               </div>
+
+              {/* ── CLINICAL SUMMARY ── */}
               {result.claude_summary && (
                 <div>
                   <SectionHeader title="Clinical Summary" />
-                  <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", fontSize: 13, color: C.text, lineHeight: 1.7 }}>{result.claude_summary}</div>
+                  <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 18px", fontSize: 13, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap" as const }}>{result.claude_summary}</div>
                 </div>
               )}
+
+              {/* ── COPY TO CLIPBOARD ── */}
               <Btn onClick={() => {
                 const lines = [
                   `Session: ${sessionTitle}`,
@@ -425,12 +560,16 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                   "", "Exercise Results:",
                   ...result.exercise_results.sort((a, b) => a.sequence_order - b.sequence_order).map((ex, i) => {
                     const name = prescriptionExercises.find(p => p.sequence_order === ex.sequence_order)?.display_name ?? `Exercise ${i + 1}`;
-                    return `  ${i + 1}. ${name}: ${ex.reps_successful}/${ex.reps_prescribed} reps (${ex.reps_failed} failed)`;
+                    const repLines = (ex.movement_timeline ?? []).map(r =>
+                      `    Rep ${r.rep}: ${r.outcome} peak=${r.peakRomDeg?.toFixed(1) ?? "n/a"}° hold=${r.holdMs !== null ? (r.holdMs/1000).toFixed(1) + "s" : "n/a"}${r.failureReason ? " (" + r.failureReason + ")" : ""}`
+                    ).join("\n");
+                    return `  ${i + 1}. ${name}: ${ex.reps_successful}/${ex.reps_prescribed} reps | avg ROM ${ex.avg_metric_degrees !== null ? Math.round(ex.avg_metric_degrees) + "°" : "n/a"} | target ${ex.target_metric_degrees !== null ? Math.round(ex.target_metric_degrees) + "°" : "n/a"}\n${repLines}`;
                   }),
-                  result.claude_summary ? `\nClinical Note:\n${result.claude_summary}` : "",
+                  result.claude_summary ? `\nClinical Summary:\n${result.claude_summary}` : "",
                 ].join("\n");
                 navigator.clipboard.writeText(lines);
-              }} variant="ghost">📋 Copy to Clipboard</Btn>
+              }} variant="ghost">📋 Copy Full Report</Btn>
+
             </div>
           )}
         </div>
