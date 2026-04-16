@@ -851,8 +851,11 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       if (!prescription || !exerciseCtx) return;
-      // Continuously snapshot landmark confidence so handleExerciseComplete
-      // reads the last known good value, not a potentially-reset live value
+      // Sample landmark confidence every frame across ALL phases (not just ready).
+      // evaluateFraming only fires during ready phase so active-phase frames were
+      // previously uncollected — causing null confidence for fast/short exercises.
+      framingIntelligence.sampleLandmarkConfidence(ghostFrameRef.current, prescription);
+      // Snapshot the running average so handleExerciseComplete reads a stable value
       const confNow = framingIntelligence.getLandmarkConfidencePct();
       if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
       recordSnapshot({
@@ -2121,9 +2124,12 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
             </div>
 
             {/* Exercise title + instructions */}
-            <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, marginBottom: 8, lineHeight: 1.2 }}>
-              {currentQueueItem?.displayName ?? "No active exercise"}
+            <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, marginBottom: 2, lineHeight: 1.2 }}>
+              {(currentQueueItem?.prescription as any)?.clinicalName ?? currentQueueItem?.displayName ?? "No active exercise"}
             </div>
+            {currentQueueItem && (
+              <div style={{ fontSize: 11, color: "#7a88a8", marginBottom: 8 }}>{currentQueueItem.displayName}</div>
+            )}
             <div style={{ fontSize: 13, color: "#aab6d3", marginBottom: 12, lineHeight: 1.5 }}>
               {instructionBody}
             </div>
@@ -2280,9 +2286,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{(nextItem.prescription as any).clinicalName ?? nextItem.displayName}</div>
-                    {(nextItem.prescription as any).clinicalName && (nextItem.prescription as any).clinicalName !== nextItem.displayName && (
-                      <div style={{ fontSize: 11, color: "#7a88a8" }}>Patient: {nextItem.displayName}</div>
-                    )}
+                    <div style={{ fontSize: 11, color: "#7a88a8", marginTop: 1 }}>{nextItem.displayName}</div>
                     <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
                       {nextItem.prescription.repTarget} reps{nextHold}
                       {nextTarget !== null && <span style={{ color: "#d29922" }}> · Target {nextTarget}°</span>}
@@ -2370,9 +2374,9 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
                             <span style={{ fontWeight: 600, color: "white" }}>
                               {(item.prescription as any).clinicalName ?? item.displayName}
                             </span>
-                            {(item.prescription as any).clinicalName && (item.prescription as any).clinicalName !== item.displayName && (
-                              <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 1 }}>Patient: {item.displayName}</div>
-                            )}
+                            <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 1 }}>
+                              {item.displayName}
+                            </div>
                           </div>
                           {isActive && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: "rgba(124,198,255,0.15)", color: "#7cc6ff", fontWeight: 700, flexShrink: 0 }}>Active</span>}
                         </div>
