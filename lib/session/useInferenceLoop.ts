@@ -50,6 +50,9 @@ export function createEmptyFeatures(): MovementFeatures {
     rightArmElevationDeg: null,
     leftArmElevationDeg: null,
     bilateralArmElevationDeg: null,
+    rightShoulderAbductionDeg: null,
+    leftShoulderAbductionDeg: null,
+    bilateralShoulderAbductionDeg: null,
     rightElbowAngleDeg: null,
     leftElbowAngleDeg: null,
     torsoLeanDeg: null,
@@ -478,9 +481,9 @@ export function useInferenceLoop() {
                   return f.bilateralArmElevationDeg;
                 }
                 if (id.includes("abduction")) {
-                  if (id.includes("right")) return f.rightArmElevationDeg;
-                  if (id.includes("left")) return f.leftArmElevationDeg;
-                  return f.bilateralArmElevationDeg;
+                  if (id.includes("right")) return f.rightShoulderAbductionDeg;
+                  if (id.includes("left")) return f.leftShoulderAbductionDeg;
+                  return f.bilateralShoulderAbductionDeg;
                 }
                 return null;
               })();
@@ -583,18 +586,22 @@ export function useInferenceLoop() {
             const rawMetricThisFrame = (() => {
               const id = activePrescription.id;
               const f = smoothedFeatures;
-              if (id.includes("flexion") || id.includes("abduction")) {
+              if (id.includes("flexion")) {
                 if (id.includes("right")) return f.rightArmElevationDeg;
                 if (id.includes("left")) return f.leftArmElevationDeg;
                 return f.bilateralArmElevationDeg;
               }
+              if (id.includes("abduction")) {
+                if (id.includes("right")) return f.rightShoulderAbductionDeg;
+                if (id.includes("left")) return f.leftShoulderAbductionDeg;
+                return f.bilateralShoulderAbductionDeg;
+              }
               return null;
             })();
 
-            // Spike threshold is exercise-dependent.
-            // Abduction is a fast lateral sweep — 50°/frame is too tight and
-            // clamps legitimate fast lifts. Use 80° for abduction, 50° for all others.
-            const SPIKE_THRESHOLD_DEG = activePrescription.id.includes("abduction") ? 80 : 50;
+            // Spike threshold: 40° per frame for abduction (wrist-based metric
+            // is smoother than elbow-based), 50° for flexion and others.
+            const SPIKE_THRESHOLD_DEG = activePrescription.id.includes("abduction") ? 40 : 50;
             if (
               rawMetricThisFrame !== null &&
               prevMetricValueRef.current !== null &&
@@ -604,13 +611,21 @@ export function useInferenceLoop() {
               // sees a stable reading — do not update prevMetricValueRef this frame
               const id = activePrescription.id;
               const prev = prevMetricValueRef.current;
-              if (id.includes("flexion") || id.includes("abduction")) {
+              if (id.includes("flexion")) {
                 if (id.includes("right")) smoothedFeatures.rightArmElevationDeg = prev;
                 else if (id.includes("left")) smoothedFeatures.leftArmElevationDeg = prev;
                 else {
                   smoothedFeatures.bilateralArmElevationDeg = prev;
                   smoothedFeatures.rightArmElevationDeg = prev;
                   smoothedFeatures.leftArmElevationDeg = prev;
+                }
+              } else if (id.includes("abduction")) {
+                if (id.includes("right")) smoothedFeatures.rightShoulderAbductionDeg = prev;
+                else if (id.includes("left")) smoothedFeatures.leftShoulderAbductionDeg = prev;
+                else {
+                  smoothedFeatures.bilateralShoulderAbductionDeg = prev;
+                  smoothedFeatures.rightShoulderAbductionDeg = prev;
+                  smoothedFeatures.leftShoulderAbductionDeg = prev;
                 }
               }
             } else if (rawMetricThisFrame !== null) {
@@ -730,22 +745,22 @@ export function useInferenceLoop() {
             const armElevation = (() => {
               const id = activePrescription.id;
               const f = smoothedFeatures;
-              // Shoulder flexion — forward raise
+              // Shoulder flexion — forward raise (unchanged)
               if (id === "right-arm-raise" || id === "shoulder_flexion_right")
                 return f.rightArmElevationDeg;
               if (id === "left-arm-raise" || id === "shoulder_flexion_left")
                 return f.leftArmElevationDeg;
               if (id === "both-arm-raise" || id === "shoulder_flexion_bilateral")
                 return f.bilateralArmElevationDeg;
-              // Shoulder abduction — sideways raise (uses same elevation metric)
-              if (id === "shoulder_abduction_right") return f.rightArmElevationDeg;
-              if (id === "shoulder_abduction_left") return f.leftArmElevationDeg;
-              if (id === "shoulder_abduction_bilateral") return f.bilateralArmElevationDeg;
-              // Knee extension — use elbow angle as proxy for knee angle
+              // Shoulder abduction — lateral raise (new metric)
+              if (id === "shoulder_abduction_right") return f.rightShoulderAbductionDeg;
+              if (id === "shoulder_abduction_left") return f.leftShoulderAbductionDeg;
+              if (id === "shoulder_abduction_bilateral") return f.bilateralShoulderAbductionDeg;
+              // Knee extension
               if (id === "knee_extension_right") return f.rightElbowAngleDeg;
               if (id === "knee_extension_left") return f.leftElbowAngleDeg;
               if (id === "knee_extension_bilateral") return f.bilateralArmElevationDeg;
-              // Sit to stand — hip height
+              // Sit to stand
               if (id === "sit-to-stand" || id === "sit_to_stand")
                 return f.hipHeightNormalized != null ? f.hipHeightNormalized * 100 : null;
               return null;
@@ -763,36 +778,24 @@ export function useInferenceLoop() {
                 const lms = normalized.landmarks as Record<string, {x:number;y:number;score?:number}|undefined>;
                 const ls = lms["left_shoulder"];
                 const rs = lms["right_shoulder"];
-                const le = lms["left_elbow"];
-                const re = lms["right_elbow"];
                 const lw = lms["left_wrist"];
                 const rw = lms["right_wrist"];
 
-                // Vertical rise: how far wrist is ABOVE shoulder (positive = above)
-                // In normalised coords Y increases downward, so above = lower Y value
                 const rWristRise = rs && rw ? Math.round((rs.y - rw.y) * 1000) / 10 : null;
                 const lWristRise = ls && lw ? Math.round((ls.y - lw.y) * 1000) / 10 : null;
-
-                // Horizontal spread: wrist x distance from shoulder (lateral movement)
                 const rWristSpread = rs && rw ? Math.round(Math.abs(rw.x - rs.x) * 1000) / 10 : null;
                 const lWristSpread = ls && lw ? Math.round(Math.abs(lw.x - ls.x) * 1000) / 10 : null;
 
                 console.log(
-                  `[ABDUCTION DEBUG] frame=${debugFrameCountRef.current}` +
-                  ` phase=${currentPhase}` +
-                  ` | armElevDeg(R)=${smoothedFeatures.rightArmElevationDeg?.toFixed(1) ?? "null"}°` +
-                  ` armElevDeg(L)=${smoothedFeatures.leftArmElevationDeg?.toFixed(1) ?? "null"}°` +
-                  ` bilateral=${smoothedFeatures.bilateralArmElevationDeg?.toFixed(1) ?? "null"}°` +
-                  ` | wristRise(R)=${rWristRise ?? "null"}%` +
-                  ` wristRise(L)=${lWristRise ?? "null"}%` +
-                  ` | wristSpread(R)=${rWristSpread ?? "null"}%` +
-                  ` wristSpread(L)=${lWristSpread ?? "null"}%` +
-                  ` | lm_R: sh=(${rs ? (rs.x*100).toFixed(1) : "?"},${rs ? (rs.y*100).toFixed(1) : "?"})` +
-                  ` el=(${re ? (re.x*100).toFixed(1) : "?"},${re ? (re.y*100).toFixed(1) : "?"})` +
-                  ` wr=(${rw ? (rw.x*100).toFixed(1) : "?"},${rw ? (rw.y*100).toFixed(1) : "?"})` +
-                  ` | lm_L: sh=(${ls ? (ls.x*100).toFixed(1) : "?"},${ls ? (ls.y*100).toFixed(1) : "?"})` +
-                  ` el=(${le ? (le.x*100).toFixed(1) : "?"},${le ? (le.y*100).toFixed(1) : "?"})` +
-                  ` wr=(${lw ? (lw.x*100).toFixed(1) : "?"},${lw ? (lw.y*100).toFixed(1) : "?"})`
+                  `[ABDUCTION DEBUG] frame=${debugFrameCountRef.current} phase=${currentPhase}` +
+                  ` | NEW: abdDeg(R)=${smoothedFeatures.rightShoulderAbductionDeg?.toFixed(1) ?? "null"}°` +
+                  ` abdDeg(L)=${smoothedFeatures.leftShoulderAbductionDeg?.toFixed(1) ?? "null"}°` +
+                  ` bilateral=${smoothedFeatures.bilateralShoulderAbductionDeg?.toFixed(1) ?? "null"}°` +
+                  ` | OLD: elevDeg(R)=${smoothedFeatures.rightArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` elevDeg(L)=${smoothedFeatures.leftArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` | wristRise(R)=${rWristRise ?? "null"}% wristRise(L)=${lWristRise ?? "null"}%` +
+                  ` | wristSpread(R)=${rWristSpread ?? "null"}% wristSpread(L)=${lWristSpread ?? "null"}%` +
+                  ` | targetThresh=${activePrescription.targetThreshold.toFixed(1)}° startThresh=${activePrescription.startThreshold.toFixed(1)}°`
                 );
               }
             }
