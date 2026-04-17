@@ -948,6 +948,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       () => {
         writeDebugLog("success", "SESSION", "All exercises complete");
         writeSessionResults();
+        flushDebugLogToSupabase("session_end");
       }
     );
   }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence, restBoundaries]);
@@ -1166,8 +1167,41 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
   }
 
   // ============================================================
-  // SESSION LIFECYCLE
+  // FLUSH DEBUG LOG TO SUPABASE
   // ============================================================
+  // Writes the full in-memory debug log as a single JSON blob.
+  // Called at session end, on pause, and on error.
+  // Claude can query session_debug_logs directly via Supabase MCP
+  // to diagnose framing and engine issues without any copy-paste.
+  // ============================================================
+
+  async function flushDebugLogToSupabase(reason: "session_end" | "pause" | "error" | "manual") {
+    if (!prescriptionId) return; // no session ID — can't associate the log
+    try {
+      const supabase = getSupabaseClient();
+      const allEntries = [...globalDebugLog]; // newest-first snapshot
+      const framingOnly = allEntries.filter(e => e.category === "FRAMING" || e.level === "FRAMING_VOICE" || e.level === "FRAMING_SNAP");
+      const exerciseCount = sessionQueue.getActiveQueue().length;
+
+      const { error } = await supabase.from("session_debug_logs").insert({
+        session_id:      prescriptionId,
+        patient_id:      patientId ?? null,
+        flush_reason:    reason,
+        log_entries:     allEntries,
+        framing_entries: framingOnly,
+        exercise_count:  exerciseCount,
+        total_entries:   allEntries.length,
+      });
+
+      if (error) {
+        console.warn("[DEBUG FLUSH] Failed to write debug log:", error.message);
+      } else {
+        console.log(`[DEBUG FLUSH] Wrote ${allEntries.length} entries (${framingOnly.length} framing) — reason=${reason} session=${prescriptionId}`);
+      }
+    } catch (err) {
+      console.warn("[DEBUG FLUSH] Threw:", err);
+    }
+  }
 
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
@@ -1882,11 +1916,10 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     setIsPaused(true);
     inferenceLoop.stopLoop();
     cancelAnimationFrame(ghostAnimRef.current);
-    // Cancel all in-flight and scheduled voice
     window.speechSynthesis?.cancel();
     coachingBrain.setVoiceEnabled(false);
-    // Cancel any in-flight framing API call and pre-exercise voice timeouts
     framingIntelligence.cancelPendingEval();
+    flushDebugLogToSupabase("pause");
     writeDebugLog("info", "SESSION", "Paused");
   }
 
@@ -1895,7 +1928,6 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     const video = videoElementRef.current;
     if (!video) { writeDebugLog("error", "SESSION", "Resume failed — no video element"); return; }
     setIsPaused(false);
-    // Re-enable voice before restarting loop so first coaching cue fires correctly
     coachingBrain.setVoiceEnabled(true);
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     startGhostLoop();
@@ -1904,8 +1936,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
 
   async function endSession(partial = false) {
     if (partial && sessionQueue.sessionStarted) {
-      // Write whatever has been completed before stopping camera
       await writeSessionResults(true);
+      flushDebugLogToSupabase("session_end");
     }
     cameraRef.current?.stopCamera();
   }
