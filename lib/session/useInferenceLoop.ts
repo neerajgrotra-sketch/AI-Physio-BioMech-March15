@@ -279,6 +279,8 @@ export function useInferenceLoop() {
   const peakMetricThisRepRef = useRef<number | null>(null);
   // Hold duration for current rep (ms) — captured when HOLDING→LOWERING transition fires
   const lastHoldDurationMsRef = useRef<number | null>(null);
+  // Frame counter for throttled debug logging
+  const debugFrameCountRef = useRef<number>(0);
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -327,6 +329,7 @@ export function useInferenceLoop() {
     prevMetricValueRef.current = null; // reset spike filter on each exercise
     peakMetricThisRepRef.current = null;
     lastHoldDurationMsRef.current = null;
+    debugFrameCountRef.current = 0;
 
     // Reset calibration for new exercise
     calibrationSamplesRef.current = [];
@@ -747,6 +750,52 @@ export function useInferenceLoop() {
                 return f.hipHeightNormalized != null ? f.hipHeightNormalized * 100 : null;
               return null;
             })();
+
+            // ------------------------------------------------
+            // ABDUCTION MEASUREMENT DEBUG (fires every 30 frames)
+            // Logs raw landmark positions and derived metrics to
+            // diagnose 2D projection accuracy for lateral arm raise.
+            // Remove once abduction metric is validated.
+            // ------------------------------------------------
+            if (activePrescription.id.includes("abduction") && normalized.personDetected) {
+              debugFrameCountRef.current += 1;
+              if (debugFrameCountRef.current % 30 === 0) {
+                const lms = normalized.landmarks as Record<string, {x:number;y:number;score?:number}|undefined>;
+                const ls = lms["left_shoulder"];
+                const rs = lms["right_shoulder"];
+                const le = lms["left_elbow"];
+                const re = lms["right_elbow"];
+                const lw = lms["left_wrist"];
+                const rw = lms["right_wrist"];
+
+                // Vertical rise: how far wrist is ABOVE shoulder (positive = above)
+                // In normalised coords Y increases downward, so above = lower Y value
+                const rWristRise = rs && rw ? Math.round((rs.y - rw.y) * 1000) / 10 : null;
+                const lWristRise = ls && lw ? Math.round((ls.y - lw.y) * 1000) / 10 : null;
+
+                // Horizontal spread: wrist x distance from shoulder (lateral movement)
+                const rWristSpread = rs && rw ? Math.round(Math.abs(rw.x - rs.x) * 1000) / 10 : null;
+                const lWristSpread = ls && lw ? Math.round(Math.abs(lw.x - ls.x) * 1000) / 10 : null;
+
+                console.log(
+                  `[ABDUCTION DEBUG] frame=${debugFrameCountRef.current}` +
+                  ` phase=${currentPhase}` +
+                  ` | armElevDeg(R)=${smoothedFeatures.rightArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` armElevDeg(L)=${smoothedFeatures.leftArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` bilateral=${smoothedFeatures.bilateralArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` | wristRise(R)=${rWristRise ?? "null"}%` +
+                  ` wristRise(L)=${lWristRise ?? "null"}%` +
+                  ` | wristSpread(R)=${rWristSpread ?? "null"}%` +
+                  ` wristSpread(L)=${lWristSpread ?? "null"}%` +
+                  ` | lm_R: sh=(${rs ? (rs.x*100).toFixed(1) : "?"},${rs ? (rs.y*100).toFixed(1) : "?"})` +
+                  ` el=(${re ? (re.x*100).toFixed(1) : "?"},${re ? (re.y*100).toFixed(1) : "?"})` +
+                  ` wr=(${rw ? (rw.x*100).toFixed(1) : "?"},${rw ? (rw.y*100).toFixed(1) : "?"})` +
+                  ` | lm_L: sh=(${ls ? (ls.x*100).toFixed(1) : "?"},${ls ? (ls.y*100).toFixed(1) : "?"})` +
+                  ` el=(${le ? (le.x*100).toFixed(1) : "?"},${le ? (le.y*100).toFixed(1) : "?"})` +
+                  ` wr=(${lw ? (lw.x*100).toFixed(1) : "?"},${lw ? (lw.y*100).toFixed(1) : "?"})`
+                );
+              }
+            }
 
             // ------------------------------------------------
             // FEED COACHING BRAIN (every frame)
