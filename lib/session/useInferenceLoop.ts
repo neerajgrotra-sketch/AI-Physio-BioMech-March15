@@ -255,6 +255,8 @@ export type FramingEventCallbacks = {
     nowMs: number
   ) => void;
   cancelPendingEval: () => void;
+  // Returns the most recent prerequisite result — read via ref, zero cost.
+  getPrerequisiteResult: () => { allMet: boolean; failures: Array<{ id: string; patientMessage: string; clinicalNote: string }> };
 };
 
 // ============================================================
@@ -284,6 +286,8 @@ export function useInferenceLoop() {
   const lastHoldDurationMsRef = useRef<number | null>(null);
   // Frame counter for throttled debug logging
   const debugFrameCountRef = useRef<number>(0);
+  // Throttle prerequisite gate speech to once every 5s
+  const lastPrereqSpeakMsRef = useRef<number | null>(null);
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -333,6 +337,7 @@ export function useInferenceLoop() {
     peakMetricThisRepRef.current = null;
     lastHoldDurationMsRef.current = null;
     debugFrameCountRef.current = 0;
+    lastPrereqSpeakMsRef.current = null;
 
     // Reset calibration for new exercise
     calibrationSamplesRef.current = [];
@@ -662,6 +667,51 @@ export function useInferenceLoop() {
               }
             } else if (rawMetricThisFrame !== null) {
               prevMetricValueRef.current = rawMetricThisFrame;
+            }
+
+            // ------------------------------------------------
+            // PREREQUISITE GATE
+            // Hard gate: if required landmarks / coverage /
+            // posture are not met, stay in "ready" and speak
+            // the first failure message. The state machine
+            // never receives a frame it cannot handle.
+            // Only applies in "ready" phase — once patient
+            // starts moving prerequisites are not re-checked
+            // (avoids interrupting a live rep if e.g. ankles
+            // briefly leave frame mid-movement).
+            // ------------------------------------------------
+            const prereqResult = framingCallbacks.getPrerequisiteResult();
+            if (
+              !prereqResult.allMet &&
+              repStateRef.current.phase === "ready" &&
+              prereqResult.failures.length > 0
+            ) {
+              const firstFailure = prereqResult.failures[0];
+              // Speak the patient message at most once every 5s
+              const nowForGate = nowMs;
+              if (
+                !lastPrereqSpeakMsRef.current ||
+                nowForGate - lastPrereqSpeakMsRef.current > 5000
+              ) {
+                lastPrereqSpeakMsRef.current = nowForGate;
+                if (typeof window !== "undefined" && window.speechSynthesis) {
+                  window.speechSynthesis.cancel();
+                  window.setTimeout(() => {
+                    const utt = new SpeechSynthesisUtterance(firstFailure.patientMessage);
+                    utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+                    const voices = window.speechSynthesis.getVoices();
+                    const preferred = voices.find(v => v.lang.startsWith("en") && (v.name.includes("Natural") || v.name.includes("Neural") || v.name.includes("Premium") || v.name.includes("Samantha") || v.name.includes("Karen") || v.name.includes("Daniel")));
+                    if (preferred) utt.voice = preferred;
+                    window.speechSynthesis.speak(utt);
+                  }, 100);
+                }
+                console.log(`[PREREQ GATE] blocking ready→lifting | id=${firstFailure.id} | ${firstFailure.clinicalNote}`);
+              }
+              // Skip interpreter entirely this frame — stay in ready
+              if (trackingActiveRef.current) {
+                rafRef.current = window.requestAnimationFrame(loop);
+              }
+              return;
             }
 
             // Run movement interpreter
