@@ -283,6 +283,141 @@ export function buildPrescription(
         },
       };
 
+    case "shoulder_abduction_right":
+      return {
+        id: "shoulder_abduction_right",
+        name: "Right Arm Out",
+        category: "upper_body",
+        template: "raise_hold_lower",
+        runtimeStatus: "active",
+        side: "right",
+        posture: "either",
+        description: "Raise your right arm out to the side to shoulder height, hold, then lower slowly.",
+        repTarget: repOverride,
+        // Abduction thresholds use shoulderAbductionDeg scale (0-180°).
+        // Rest ≈ 15-20°, arm at shoulder height ≈ 90°, overhead ≈ 150°+
+        // startThreshold: just above resting noise (calibration will refine)
+        // targetThreshold: ~90° (arm level with shoulder) — calibration refines
+        startThreshold: 35,
+        targetThreshold: 90,
+        finishThreshold: 30,
+        target: {
+          metric: "rightShoulderAbductionDeg",
+          label: "shoulder height",
+          targetValue: 90,
+          tolerance: 10,
+        },
+        hold,
+        tempo: { label: "slow and controlled" },
+        qualityLimits: {
+          maxTorsoLeanDeg: 18,
+          maxShoulderTiltDeg: 15,
+          maxOppositeArmElevationDeg: 35,
+        },
+        coaching,
+        framing: {
+          intent: "Measure right arm lateral elevation arc from resting to shoulder height.",
+          landmarks: {
+            critical: ["right_shoulder", "right_elbow", "right_wrist"],
+            supporting: ["left_shoulder", "nose", "right_hip"],
+            reference: [],
+          },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "upper_body",
+          peakMovementZone: "shoulder_height",
+          requiredStartPosture: "either",
+          bilateralSymmetryRequired: false,
+          angleGuidance: "Frontal view required. Right arm and shoulder must be fully visible.",
+          measurementRisk: "Without clear visibility of right arm landmarks, lateral elevation cannot be measured.",
+        },
+      };
+
+    case "shoulder_abduction_left":
+      return {
+        id: "shoulder_abduction_left",
+        name: "Left Arm Out",
+        category: "upper_body",
+        template: "raise_hold_lower",
+        runtimeStatus: "active",
+        side: "left",
+        posture: "either",
+        description: "Raise your left arm out to the side to shoulder height, hold, then lower slowly.",
+        repTarget: repOverride,
+        startThreshold: 35,
+        targetThreshold: 90,
+        finishThreshold: 30,
+        target: {
+          metric: "leftShoulderAbductionDeg",
+          label: "shoulder height",
+          targetValue: 90,
+          tolerance: 10,
+        },
+        hold,
+        tempo: { label: "slow and controlled" },
+        qualityLimits: {
+          maxTorsoLeanDeg: 18,
+          maxShoulderTiltDeg: 15,
+          maxOppositeArmElevationDeg: 35,
+        },
+        coaching,
+        framing: {
+          intent: "Measure left arm lateral elevation arc from resting to shoulder height.",
+          landmarks: {
+            critical: ["left_shoulder", "left_elbow", "left_wrist"],
+            supporting: ["right_shoulder", "nose", "left_hip"],
+            reference: [],
+          },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "upper_body",
+          peakMovementZone: "shoulder_height",
+          requiredStartPosture: "either",
+          bilateralSymmetryRequired: false,
+          angleGuidance: "Frontal view required. Left arm and shoulder must be fully visible.",
+          measurementRisk: "Without clear visibility of left arm landmarks, lateral elevation cannot be measured.",
+        },
+      };
+
+    case "shoulder_abduction_bilateral":
+      return {
+        id: "shoulder_abduction_bilateral",
+        name: "Both Arms Out",
+        category: "upper_body",
+        template: "raise_hold_lower",
+        runtimeStatus: "active",
+        side: "both",
+        posture: "either",
+        description: "Raise both arms out to the sides to shoulder height, hold, then lower slowly.",
+        repTarget: repOverride,
+        startThreshold: 35,
+        targetThreshold: 90,
+        finishThreshold: 30,
+        target: {
+          metric: "bilateralShoulderAbductionDeg",
+          label: "shoulder height",
+          targetValue: 90,
+          tolerance: 10,
+        },
+        hold,
+        tempo: { label: "slow and controlled" },
+        qualityLimits: { maxTorsoLeanDeg: 18, maxShoulderTiltDeg: 15 },
+        coaching,
+        framing: {
+          intent: "Measure bilateral lateral arm elevation. Both arms must be equally visible.",
+          landmarks: {
+            critical: ["left_shoulder", "left_elbow", "left_wrist", "right_shoulder", "right_elbow", "right_wrist"],
+            supporting: ["nose", "left_hip", "right_hip"],
+            reference: [],
+          },
+          confidenceThresholds: { critical: 0.5, supporting: 0.35 },
+          requiredCoverage: "upper_body",
+          peakMovementZone: "shoulder_height",
+          requiredStartPosture: "either",
+          bilateralSymmetryRequired: true,
+          angleGuidance: "Frontal view required. Patient must be centred with both arms fully visible.",
+          measurementRisk: "Without bilateral landmark visibility, asymmetry cannot be detected.",
+        },
+      };
+
     default:
       console.warn(`Unknown exercise template: "${templateName}" — skipping.`);
       return null;
