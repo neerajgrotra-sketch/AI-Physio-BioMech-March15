@@ -134,6 +134,8 @@ function shoulderAbductionDeg(
   // Clamp to valid range
   return round1(Math.max(0, Math.min(180, abductionDeg)));
 }
+
+function inferPosture(
   leftHip: PoseLandmark | null,
   rightHip: PoseLandmark | null,
   leftKnee: PoseLandmark | null,
