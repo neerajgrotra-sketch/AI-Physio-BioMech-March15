@@ -104,7 +104,7 @@ export function evaluatePrerequisites(
   const conf = (name: string): number => {
     const point = lm[name];
     if (!point || typeof point.x !== "number") return 0;
-    return typeof point.score === "number" ? point.score : 1;
+    return typeof point.score === "number" ? point.score : 0;
   };
   const visible = (name: string) => conf(name) >= PREREQ_CONFIDENCE_MIN;
 
@@ -289,7 +289,7 @@ function getLandmarkConfidence(
   const point = landmarks[landmarkName];
   if (!point || typeof point.x !== "number") return 0;
 
-  return typeof point.score === "number" ? point.score : 1;
+  return typeof point.score === "number" ? point.score : 0;
 }
 
 function buildLandmarkConfidenceReport(
