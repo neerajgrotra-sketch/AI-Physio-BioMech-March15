@@ -108,7 +108,12 @@ export function evaluatePrerequisites(
   };
   const visible = (name: string) => conf(name) >= PREREQ_CONFIDENCE_MIN;
 
-  // ── Check 2: Required coverage ────────────────────────────
+  // ── DIAGNOSTIC: confirm new framingMonitor.ts is deployed ────
+  // Remove once confirmed working. Fires once per second max via throttle in caller.
+  const hipConf = conf("left_hip");
+  const kneeConf = conf("left_knee");
+  const ankleConf = conf("left_ankle");
+  console.log(`[PREREQ v2] hip=${(hipConf*100).toFixed(0)}% knee=${(kneeConf*100).toFixed(0)}% ankle=${(ankleConf*100).toFixed(0)}% | coverage=${prescription.framing?.requiredCoverage ?? "?"} | fallback=0`);
   // Derived from prescription.requiredCoverage (from DB).
   // Each level checks the landmarks that the metric computation
   // actually depends on — not just cosmetic visibility.
