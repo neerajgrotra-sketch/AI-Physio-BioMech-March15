@@ -60,7 +60,7 @@ import {
 // DEBUG LOG
 // ============================================================
 
-type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in" | "FRAMING_VOICE";
+type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in" | "FRAMING_VOICE" | "FRAMING_SNAP";
 
 type DebugLogEntry = {
   id: string;
@@ -229,7 +229,8 @@ const LOG_COLORS: Record<LogLevel, { bg: string; color: string; label: string }>
   error:   { bg: "rgba(255,100,100,0.08)", color: "#ff8f8f", label: "ERR" },
   api_out: { bg: "rgba(180,130,255,0.08)", color: "#c4a0ff", label: "OUT" },
   api_in:        { bg: "rgba(100,220,200,0.08)", color: "#6ee7d4",  label: "IN"     },
-  FRAMING_VOICE: { bg: "rgba(210,153,34,0.10)",  color: "#ffcc80",  label: "FRAME" }
+  FRAMING_VOICE: { bg: "rgba(210,153,34,0.10)",  color: "#ffcc80",  label: "FRAME" },
+  FRAMING_SNAP:  { bg: "rgba(108,99,255,0.10)",   color: "#a78bfa",  label: "FRAME" }
 };
 
 // ============================================================
@@ -704,6 +705,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // Rolling snapshot of current confidence — updated every feedFrame tick so we never
   // read a stale/reset value at exercise completion time
   const liveConfidenceSnapshotRef = useRef<number | null>(null);
+  // Throttle the FRAMING_SNAP debug log to once every 2s
+  const lastFramingSnapMsRef = useRef<number>(0);
   // Per-rep timeline — one entry per rep (success or failure) for movement_timeline jsonb
   type RepTimelineEntry = {
     rep: number; outcome: "success" | "failed"; failureReason: string | null;
@@ -1289,6 +1292,100 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
         if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
       }
 
+      // ── FRAMING DEBUG SNAPSHOT (every 2s) ──────────────────────────────
+      // Logs the full framing intelligence state so we can diagnose
+      // exactly what the engine sees, what it tells the patient,
+      // and whether prerequisites are blocking the session.
+      const snapNow = Date.now();
+      if (snapNow - lastFramingSnapMsRef.current >= 2000) {
+        lastFramingSnapMsRef.current = snapNow;
+
+        const fp   = framingIntelligence.framingPanelState;
+        const prereq = framingIntelligence.prerequisiteResult;
+        const conf = liveConfidenceSnapshotRef.current;
+        const phase = ghostPhaseInfRef.current;
+        const prescription = ghostPrescriptionRef.current;
+        const liveObs = inferenceLoop.liveObservation;
+
+        // What landmarks are visible and at what confidence
+        const lmLines: string[] = [];
+        const lmData = (frame as any)?.landmarks ?? {};
+        const allLm = ["nose","left_shoulder","right_shoulder","left_elbow","right_elbow",
+                        "left_wrist","right_wrist","left_hip","right_hip",
+                        "left_knee","right_knee","left_ankle","right_ankle"];
+        for (const name of allLm) {
+          const pt = lmData[name];
+          if (!pt) { lmLines.push(`  ${name}: NOT DETECTED`); continue; }
+          const score = typeof pt.score === "number" ? pt.score : 1;
+          const vis = score >= 0.15 ? "✓" : "✗";
+          lmLines.push(`  ${vis} ${name}: ${(score * 100).toFixed(0)}%`);
+        }
+
+        // Prerequisite failures
+        const prereqLines = prereq.allMet
+          ? ["  ✓ All prerequisites met"]
+          : prereq.failures.map(f => `  ✗ [${f.id}] "${f.patientMessage}"\n     clinical: ${f.clinicalNote}`);
+
+        // What camera coverage is estimated
+        const coverageEstimate = (() => {
+          const lm = lmData;
+          const v = (n: string) => { const p = lm[n]; return p && typeof p.score === "number" ? p.score > 0.2 : !!p; };
+          const hasHead = v("nose");
+          const hasSh   = v("left_shoulder") && v("right_shoulder");
+          const hasHips = v("left_hip") && v("right_hip");
+          const hasKnee = v("left_knee") || v("right_knee");
+          const hasAnk  = v("left_ankle") || v("right_ankle");
+          if (hasHead && hasSh && hasHips && hasKnee && hasAnk) return "full_body";
+          if (hasHead && hasSh && hasHips && hasKnee) return "torso_and_hips (no ankles)";
+          if (hasHead && hasSh && hasHips) return "torso_and_hips (no knees)";
+          if (hasHead && hasSh) return "upper_body";
+          if (hasHead) return "head_only";
+          return "none";
+        })();
+
+        const detail = [
+          `── EXERCISE ─────────────────────────────`,
+          `  id:       ${prescription?.id ?? "none"}`,
+          `  phase:    ${phase}`,
+          `  required_coverage: ${(prescription as any)?.framing?.requiredCoverage ?? "?"}`,
+          `  required_posture:  ${prescription?.framing?.requiredStartPosture ?? "?"}`,
+          `  bilateral: ${prescription?.framing?.bilateralSymmetryRequired ?? false}`,
+          ``,
+          `── CAMERA SEES ──────────────────────────`,
+          `  coverage_estimate: ${coverageEstimate}`,
+          `  confidence_pct:    ${conf !== null ? conf + "%" : "not sampled yet"}`,
+          `  person_detected:   ${frame?.personDetected ?? false}`,
+          `  posture:           ${frame ? (liveObs.movementLines[0] ?? "unknown") : "no frame"}`,
+          ``,
+          `── LANDMARK CONFIDENCE ──────────────────`,
+          ...lmLines,
+          ``,
+          `── PREREQUISITES ────────────────────────`,
+          ...prereqLines,
+          ``,
+          `── FRAMING PANEL ────────────────────────`,
+          `  severity:  ${fp.severity}`,
+          `  tone:      ${fp.tone}`,
+          `  message:   "${fp.message}"`,
+          `  evaluating: ${fp.evaluating}`,
+          ``,
+          `── WHAT PATIENT HEARS ───────────────────`,
+          `  framing_panel_msg: "${fp.message}"`,
+          `  (voice fires once on prereq fail, then retries after 12s silence)`,
+        ].join("\n");
+
+        // Headline summarises the most important thing in one line
+        const headline = !frame?.personDetected
+          ? "❌ No person detected"
+          : !prereq.allMet
+          ? `🔴 PREREQ BLOCKED [${prereq.failures[0]?.id ?? "?"}] — ${prereq.failures[0]?.patientMessage ?? ""}`
+          : fp.severity === "ok"
+          ? `✅ Framing OK — conf=${conf ?? "?"}% phase=${phase}`
+          : `⚠ Framing ${fp.severity} — "${fp.message}" conf=${conf ?? "?"}%`;
+
+        writeDebugLog("FRAMING_SNAP", "FRAMING", headline, detail);
+      }
+
       const rawLms = poseFrameToLandmarkArray(frame);
       const lms    = mirrorLandmarks(rawLms);
       const slug   = ghostSlugRef.current;
@@ -1785,7 +1882,11 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     setIsPaused(true);
     inferenceLoop.stopLoop();
     cancelAnimationFrame(ghostAnimRef.current);
+    // Cancel all in-flight and scheduled voice
     window.speechSynthesis?.cancel();
+    coachingBrain.setVoiceEnabled(false);
+    // Cancel any in-flight framing API call and pre-exercise voice timeouts
+    framingIntelligence.cancelPendingEval();
     writeDebugLog("info", "SESSION", "Paused");
   }
 
@@ -1794,6 +1895,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     const video = videoElementRef.current;
     if (!video) { writeDebugLog("error", "SESSION", "Resume failed — no video element"); return; }
     setIsPaused(false);
+    // Re-enable voice before restarting loop so first coaching cue fires correctly
+    coachingBrain.setVoiceEnabled(true);
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     startGhostLoop();
     writeDebugLog("info", "SESSION", "Resumed");
