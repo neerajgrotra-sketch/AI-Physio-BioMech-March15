@@ -38,9 +38,9 @@ export type MetricSource =
   | "leftArmElevationDeg"
   | "bilateralArmElevationDeg"
   // Shoulder abduction (frontal plane)
-  | "rightArmAbductionDeg"
-  | "leftArmAbductionDeg"
-  | "bilateralArmAbductionDeg"
+  | "rightShoulderAbductionDeg"
+  | "leftShoulderAbductionDeg"
+  | "bilateralShoulderAbductionDeg"
   // Elbow
   | "rightElbowAngleDeg"
   | "leftElbowAngleDeg"
