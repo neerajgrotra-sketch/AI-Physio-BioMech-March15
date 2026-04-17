@@ -588,7 +588,10 @@ export function useInferenceLoop() {
               return null;
             })();
 
-            const SPIKE_THRESHOLD_DEG = 50;
+            // Spike threshold is exercise-dependent.
+            // Abduction is a fast lateral sweep — 50°/frame is too tight and
+            // clamps legitimate fast lifts. Use 80° for abduction, 50° for all others.
+            const SPIKE_THRESHOLD_DEG = activePrescription.id.includes("abduction") ? 80 : 50;
             if (
               rawMetricThisFrame !== null &&
               prevMetricValueRef.current !== null &&
