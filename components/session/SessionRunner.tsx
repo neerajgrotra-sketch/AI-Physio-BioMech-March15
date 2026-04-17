@@ -1909,6 +1909,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     setGhostScore(0); setGhostHoldMs(0);
     setIsPaused(false);
     videoElementRef.current = null;
+    // Flush debug log on every camera stop — catches navigate-away and manual end
+    flushDebugLogToSupabase("session_end");
   }
 
   function pauseSession() {
