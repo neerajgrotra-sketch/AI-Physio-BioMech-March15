@@ -8,6 +8,14 @@
 // Reads landmark confidence against the exercise's framing
 // declaration and produces a FramingStatus.
 //
+// Also exports evaluatePrerequisites() — a hard gate that
+// runs before interpretMovement() every frame. It checks
+// the minimum landmark visibility required for the exercise's
+// metric computation to succeed. If prerequisites fail the
+// inference loop stays in "ready" and speaks the failure
+// message. The state machine never receives a frame it
+// cannot handle.
+//
 // Drives:
 // - Whether to trigger an AI framing evaluation
 // - Whether to pause the exercise between reps
@@ -35,8 +43,236 @@ const CRITICAL_PAUSE_THRESHOLD_MS = 1500;
 const WARNING_AI_TRIGGER_MS = 3000;
 
 // Bilateral confidence asymmetry that counts as a problem
-// e.g. right wrist at 0.8, left wrist at 0.2 = asymmetric
 const BILATERAL_ASYMMETRY_THRESHOLD = 0.3;
+
+// Minimum confidence score for a landmark to count as "visible"
+// for prerequisite purposes. Slightly lower than critical threshold
+// to avoid false negatives on partially occluded landmarks.
+const PREREQ_CONFIDENCE_MIN = 0.15;
+
+// ============================================================
+// PREREQUISITE RESULT TYPE
+// ============================================================
+
+export type PrerequisiteFailure = {
+  id: string;
+  patientMessage: string;   // Spoken aloud to patient
+  clinicalNote: string;     // Debug panel only
+};
+
+export type PrerequisiteResult = {
+  allMet: boolean;
+  failures: PrerequisiteFailure[];
+};
+
+// ============================================================
+// PREREQUISITE EVALUATOR
+// ============================================================
+// Pure function — no side effects, no state.
+// Called every frame from the inference loop BEFORE
+// interpretMovement(). Returns immediately.
+//
+// Five checks in priority order:
+//   1. Person detected
+//   2. Required coverage (derives from prescription.requiredCoverage)
+//   3. Start posture matches requirement (seated/standing/either)
+//   4. Exercise-side landmarks visible (right/left/both/center)
+//   5. Bilateral symmetry if required
+//
+// Only the first failure is spoken — avoids overwhelming the
+// patient with multiple instructions at once.
+// ============================================================
+
+export function evaluatePrerequisites(
+  prescription: ExercisePrescription,
+  frame: PoseFrame | null,
+  features: MovementFeatures
+): PrerequisiteResult {
+  const failures: PrerequisiteFailure[] = [];
+
+  // ── Check 1: Person detected ──────────────────────────────
+  if (!frame?.personDetected) {
+    failures.push({
+      id: "no_person",
+      patientMessage: "Please step into the camera view.",
+      clinicalNote: "No person detected in frame."
+    });
+    return { allMet: false, failures };
+  }
+
+  const lm = (frame as any)?.landmarks ?? {};
+  const conf = (name: string): number => {
+    const point = lm[name];
+    if (!point || typeof point.x !== "number") return 0;
+    return typeof point.score === "number" ? point.score : 1;
+  };
+  const visible = (name: string) => conf(name) >= PREREQ_CONFIDENCE_MIN;
+
+  // ── Check 2: Required coverage ────────────────────────────
+  // Derived from prescription.requiredCoverage (from DB).
+  // Each level checks the landmarks that the metric computation
+  // actually depends on — not just cosmetic visibility.
+
+  const requiredCoverage = prescription.framing?.requiredCoverage as
+    | "upper_body"
+    | "torso_and_hips"
+    | "full_body"
+    | undefined;
+
+  if (requiredCoverage === "full_body") {
+    // sit_to_stand: inferPosture needs hip+knee+ankle bilateral
+    const needsFullBody = [
+      "left_hip", "right_hip",
+      "left_knee", "right_knee",
+      "left_ankle", "right_ankle"
+    ];
+    const missing = needsFullBody.filter(n => !visible(n));
+    if (missing.length > 0) {
+      const hasAnklesMissing = missing.some(n => n.includes("ankle"));
+      failures.push({
+        id: "coverage_full_body",
+        patientMessage: hasAnklesMissing
+          ? "Please step back so I can see your full body from head to feet."
+          : "I need to see your hips and knees — please step back a little.",
+        clinicalNote: `Full body required. Missing: ${missing.join(", ")}.`
+      });
+    }
+  } else if (requiredCoverage === "torso_and_hips") {
+    // knee_extension: needs hips and knees visible (seated)
+    const needsTorso = ["left_hip", "right_hip", "left_knee", "right_knee"];
+    const missing = needsTorso.filter(n => !visible(n));
+    if (missing.length > 0) {
+      failures.push({
+        id: "coverage_torso_hips",
+        patientMessage: "I need to see your hips and knees — please move the camera back or position it lower.",
+        clinicalNote: `Torso+hips required. Missing: ${missing.join(", ")}.`
+      });
+    }
+  } else {
+    // upper_body (default): needs shoulders on the relevant side(s)
+    const shouldersOk =
+      visible("left_shoulder") || visible("right_shoulder");
+    if (!shouldersOk) {
+      failures.push({
+        id: "coverage_upper_body",
+        patientMessage: "Please step back so I can see your shoulders and arms clearly.",
+        clinicalNote: "Upper body required but no shoulders visible."
+      });
+    }
+  }
+
+  // ── Check 3: Start posture ────────────────────────────────
+  // Only gate on posture if we already have coverage — posture
+  // detection depends on the same landmarks as coverage.
+  if (failures.length === 0) {
+    const requiredPosture = prescription.framing?.requiredStartPosture ?? "either";
+
+    if (requiredPosture === "seated" && !features.isSeated) {
+      // Only fail if posture is positively detected as standing
+      // (not "unknown") — avoids blocking when landmarks are marginal
+      if (features.isStanding) {
+        failures.push({
+          id: "posture_must_be_seated",
+          patientMessage: "Please sit down before we begin this exercise.",
+          clinicalNote: `Exercise requires seated start. Detected: standing.`
+        });
+      } else if (features.posture === "unknown" && requiredCoverage === "full_body") {
+        // Full body coverage confirmed but posture still unknown —
+        // landmarks are visible but angles are indeterminate.
+        // Patient is likely mid-transition or partially occluded.
+        failures.push({
+          id: "posture_indeterminate",
+          patientMessage: "Please sit fully in your chair so I can confirm your starting position.",
+          clinicalNote: "Full body coverage ok but posture indeterminate — patient may be mid-transition."
+        });
+      }
+    }
+
+    if (requiredPosture === "standing" && !features.isStanding) {
+      if (features.isSeated) {
+        failures.push({
+          id: "posture_must_be_standing",
+          patientMessage: "Please stand upright before we begin.",
+          clinicalNote: `Exercise requires standing start. Detected: seated.`
+        });
+      }
+    }
+  }
+
+  // ── Check 4: Side-specific landmark visibility ────────────
+  if (failures.length === 0) {
+    const side = prescription.side;
+
+    if (side === "right") {
+      if (!visible("right_shoulder") || !visible("right_elbow") || !visible("right_wrist")) {
+        failures.push({
+          id: "side_landmarks_right",
+          patientMessage: "I need to see your full right arm — make sure your shoulder, elbow and wrist are in frame.",
+          clinicalNote: "Right side landmarks insufficient for measurement."
+        });
+      }
+    } else if (side === "left") {
+      if (!visible("left_shoulder") || !visible("left_elbow") || !visible("left_wrist")) {
+        failures.push({
+          id: "side_landmarks_left",
+          patientMessage: "I need to see your full left arm — make sure your shoulder, elbow and wrist are in frame.",
+          clinicalNote: "Left side landmarks insufficient for measurement."
+        });
+      }
+    } else if (side === "both") {
+      const rightOk = visible("right_shoulder") && visible("right_wrist");
+      const leftOk  = visible("left_shoulder")  && visible("left_wrist");
+      if (!rightOk || !leftOk) {
+        if (!rightOk && !leftOk) {
+          failures.push({
+            id: "side_landmarks_bilateral",
+            patientMessage: "Please step back so both arms are fully visible.",
+            clinicalNote: "Both sides have insufficient landmark visibility."
+          });
+        } else if (!rightOk) {
+          failures.push({
+            id: "side_landmarks_bilateral_right",
+            patientMessage: "Move slightly left so your right arm is fully in frame.",
+            clinicalNote: "Right side landmarks insufficient for bilateral measurement."
+          });
+        } else {
+          failures.push({
+            id: "side_landmarks_bilateral_left",
+            patientMessage: "Move slightly right so your left arm is fully in frame.",
+            clinicalNote: "Left side landmarks insufficient for bilateral measurement."
+          });
+        }
+      }
+    }
+    // "center" (sit_to_stand) — covered by coverage check above
+  }
+
+  // ── Check 5: Bilateral symmetry ───────────────────────────
+  if (failures.length === 0 && prescription.framing?.bilateralSymmetryRequired) {
+    const pairs: Array<[string, string]> = [
+      ["left_shoulder", "right_shoulder"],
+      ["left_wrist",    "right_wrist"]
+    ];
+    for (const [left, right] of pairs) {
+      const lc = conf(left);
+      const rc = conf(right);
+      if (lc < 0.1 && rc < 0.1) continue;
+      if (Math.abs(lc - rc) > BILATERAL_ASYMMETRY_THRESHOLD) {
+        failures.push({
+          id: "bilateral_asymmetry",
+          patientMessage: "Centre yourself so both arms are equally visible to the camera.",
+          clinicalNote: `Bilateral asymmetry: ${left}=${lc.toFixed(2)} ${right}=${rc.toFixed(2)}.`
+        });
+        break;
+      }
+    }
+  }
+
+  return {
+    allMet: failures.length === 0,
+    failures
+  };
+}
 
 // ============================================================
 // LANDMARK CONFIDENCE EXTRACTION
@@ -88,19 +324,21 @@ function buildLandmarkConfidenceReport(
     landmarks[name] = getLandmarkConfidence(frame, name);
   }
 
-  // Estimate coverage based on which landmarks are visible
-  const hasHead = landmarks["nose"] > 0.2;
-  const hasShoulders =
-    landmarks["left_shoulder"] > 0.2 && landmarks["right_shoulder"] > 0.2;
-  const hasHips =
-    landmarks["left_hip"] > 0.2 && landmarks["right_hip"] > 0.2;
-  const hasKnees =
-    landmarks["left_knee"] > 0.2 || landmarks["right_knee"] > 0.2;
+  // Estimate coverage based on which landmarks are visible.
+  // full_body now correctly requires ankles — not just knees.
+  // This matches what inferPosture() actually needs.
+  const hasHead      = landmarks["nose"] > 0.2;
+  const hasShoulders = landmarks["left_shoulder"] > 0.2 && landmarks["right_shoulder"] > 0.2;
+  const hasHips      = landmarks["left_hip"]  > 0.2 && landmarks["right_hip"]  > 0.2;
+  const hasKnees     = landmarks["left_knee"] > 0.2 || landmarks["right_knee"] > 0.2;
+  const hasAnkles    = landmarks["left_ankle"] > 0.2 || landmarks["right_ankle"] > 0.2;
 
   let estimatedCoverage: LandmarkConfidenceReport["estimatedCoverage"] = "none";
 
-  if (hasHead && hasShoulders && hasHips && hasKnees) {
+  if (hasHead && hasShoulders && hasHips && hasKnees && hasAnkles) {
     estimatedCoverage = "full_body";
+  } else if (hasHead && hasShoulders && hasHips && hasKnees) {
+    estimatedCoverage = "torso_and_hips";
   } else if (hasHead && hasShoulders && hasHips) {
     estimatedCoverage = "torso_and_hips";
   } else if (hasHead && hasShoulders) {
@@ -210,7 +448,6 @@ function evaluateBilateralSymmetry(
 
   const { landmarks: confidence } = report;
 
-  // Check each critical landmark pair for symmetry
   const pairs: Array<[string, string]> = [
     ["left_shoulder", "right_shoulder"],
     ["left_elbow", "right_elbow"],
@@ -221,7 +458,6 @@ function evaluateBilateralSymmetry(
     const leftConf = confidence[left] ?? 0;
     const rightConf = confidence[right] ?? 0;
 
-    // Only check pairs where at least one side is visible
     if (leftConf < 0.1 && rightConf < 0.1) continue;
 
     const asymmetry = Math.abs(leftConf - rightConf);
@@ -244,13 +480,10 @@ function calculateSeverity(
   postureCorrect: boolean,
   bilateralSymmetryOk: boolean
 ): FramingSeverity {
-  // Critical: any critical landmark lost
   if (criticalLandmarksLost.length > 0) {
     return "critical";
   }
 
-  // Warning: multiple supporting landmarks weak,
-  // coverage inadequate, posture wrong, or bilateral asymmetry
   if (
     supportingLandmarksWeak.length > 1 ||
     !coverageAdequate ||
@@ -260,7 +493,6 @@ function calculateSeverity(
     return "warning";
   }
 
-  // Single weak supporting landmark is tolerated
   return "ok";
 }
 
@@ -279,12 +511,10 @@ function detectTriggerReason(
 ): FramingTriggerReason | null {
   if (isPreExercise) return "pre_exercise_check";
 
-  // Severity just changed
   if (current && current.severity !== newSeverity) {
     return "severity_changed";
   }
 
-  // Critical landmark suddenly lost
   if (
     criticalLandmarksLost.length > 0 &&
     (!current || current.criticalLandmarksLost.length === 0)
@@ -292,22 +522,18 @@ function detectTriggerReason(
     return "critical_landmark_lost";
   }
 
-  // Posture changed
   if (current && current.postureCorrect !== postureCorrect) {
     return "posture_changed";
   }
 
-  // Bilateral asymmetry appeared
   if (current && current.bilateralSymmetryOk && !bilateralSymmetryOk) {
     return "bilateral_asymmetry";
   }
 
-  // Coverage dropped
   if (current && current.coverageAdequate && !coverageAdequate) {
     return "coverage_degraded";
   }
 
-  // Warning persisting without correction
   if (
     newSeverity === "warning" &&
     current &&
@@ -323,10 +549,6 @@ function detectTriggerReason(
 // ============================================================
 // FALLBACK INSTRUCTION BUILDER
 // ============================================================
-// Deterministic instructions used when AI is unavailable.
-// Derived from the framing declaration's measurementRisk
-// and the specific landmarks that are lost.
-// ============================================================
 
 function buildFallbackInstruction(
   prescription: ExercisePrescription,
@@ -336,7 +558,6 @@ function buildFallbackInstruction(
   postureCorrect: boolean,
   bilateralSymmetryOk: boolean
 ): string | null {
-  // No issue — no instruction needed
   if (
     criticalLandmarksLost.length === 0 &&
     coverageAdequate &&
@@ -346,7 +567,6 @@ function buildFallbackInstruction(
     return null;
   }
 
-  // Posture mismatch — most important to fix first
   if (!postureCorrect) {
     const required = prescription.framing.requiredStartPosture;
     if (required === "seated") {
@@ -357,45 +577,37 @@ function buildFallbackInstruction(
     }
   }
 
-  // Coverage inadequate
   if (!coverageAdequate) {
     const required = prescription.framing.requiredCoverage;
     if (required === "full_body") {
       return "Step back so your full body is visible — I need to see from head to feet.";
     }
+    if (required === "torso_and_hips") {
+      return "Step back so I can see your hips and knees clearly.";
+    }
     return "Step back so I can see your full upper body.";
   }
 
-  // Bilateral symmetry off
   if (!bilateralSymmetryOk) {
-    return "Center yourself so both arms are equally visible to the camera.";
+    return "Centre yourself so both arms are equally visible to the camera.";
   }
 
-  // Critical landmarks lost — be specific about which ones
   if (criticalLandmarksLost.some(l => l.includes("hip") || l.includes("knee"))) {
     return "I need to see your hips and knees — move the camera back or position it lower.";
   }
 
-  // Bilateral exercises: if BOTH sides have missing landmarks, give a centering cue
-  // not a single-side message — avoids misleading "I can't see your right arm" on bilateral
   const bilateralRequired = prescription.framing.bilateralSymmetryRequired;
   const rightArmLost = criticalLandmarksLost.some(l => l.includes("right_wrist") || l.includes("right_elbow") || l === "right_shoulder");
   const leftArmLost  = criticalLandmarksLost.some(l => l.includes("left_wrist")  || l.includes("left_elbow")  || l === "left_shoulder");
 
   if (bilateralRequired && (rightArmLost || leftArmLost)) {
-    // Both arms need to be visible for bilateral exercises
     if (rightArmLost && leftArmLost) {
       return "Step back so both arms are fully visible — I need to see your full upper body.";
     }
-    if (rightArmLost) {
-      return "Move slightly left so your right arm is fully in frame.";
-    }
-    if (leftArmLost) {
-      return "Move slightly right so your left arm is fully in frame.";
-    }
+    if (rightArmLost) return "Move slightly left so your right arm is fully in frame.";
+    if (leftArmLost)  return "Move slightly right so your left arm is fully in frame.";
   }
 
-  // Unilateral exercises: side-specific messages
   if (!bilateralRequired) {
     if (criticalLandmarksLost.some(l => l.includes("right_wrist") || l.includes("right_elbow"))) {
       return "I can't see your right arm clearly — make sure your full right arm is in frame.";
@@ -409,7 +621,6 @@ function buildFallbackInstruction(
     return "I need to see your shoulders clearly — step back a little and face the camera.";
   }
 
-  // Generic fallback
   return "Adjust your position so I can see you clearly.";
 }
 
@@ -426,22 +637,10 @@ export class FramingMonitor {
     this.evaluationIntervalMs = evaluationIntervalMs;
   }
 
-  // ----------------------------------------------------------
-  // RESET
-  // Called when exercise changes or session resets
-  // ----------------------------------------------------------
-
   reset(): void {
     this.lastStatus = null;
     this.lastEvaluationMs = 0;
   }
-
-  // ----------------------------------------------------------
-  // EVALUATE
-  // Called from the inference loop.
-  // Returns null if the evaluation interval has not elapsed,
-  // unless forceEvaluate is true (used for pre-exercise check).
-  // ----------------------------------------------------------
 
   evaluate(
     frame: PoseFrame | null,
@@ -450,7 +649,6 @@ export class FramingMonitor {
     nowMs: number,
     forceEvaluate = false
   ): FramingStatus | null {
-    // Throttle evaluations to every 2 seconds
     if (
       !forceEvaluate &&
       nowMs - this.lastEvaluationMs < this.evaluationIntervalMs
@@ -462,7 +660,6 @@ export class FramingMonitor {
 
     const report = buildLandmarkConfidenceReport(frame, features);
 
-    // If no person detected, return critical immediately
     if (!report.personDetected) {
       const status: FramingStatus = {
         severity: "critical",
@@ -491,18 +688,13 @@ export class FramingMonitor {
       return status;
     }
 
-    // Evaluate each check
     const { criticalLandmarksLost, supportingLandmarksWeak } =
       evaluateLandmarkTiers(report, prescription);
 
     const coverageAdequate = evaluateCoverage(report, prescription);
     const postureCorrect = evaluatePosture(report, prescription);
-    const bilateralSymmetryOk = evaluateBilateralSymmetry(
-      report,
-      prescription
-    );
+    const bilateralSymmetryOk = evaluateBilateralSymmetry(report, prescription);
 
-    // Calculate severity
     const newSeverity = calculateSeverity(
       criticalLandmarksLost,
       supportingLandmarksWeak,
@@ -511,7 +703,6 @@ export class FramingMonitor {
       bilateralSymmetryOk
     );
 
-    // Track how long this severity has persisted
     const severityStartedAtMs =
       this.lastStatus?.severity === newSeverity
         ? this.lastStatus.severityStartedAtMs
@@ -519,10 +710,8 @@ export class FramingMonitor {
 
     const severityDurationMs = nowMs - severityStartedAtMs;
 
-    // Decide whether this is a pre-exercise check
     const isPreExercise = this.lastStatus === null;
 
-    // Detect trigger reason
     const triggerReason = detectTriggerReason(
       this.lastStatus,
       newSeverity,
@@ -533,10 +722,8 @@ export class FramingMonitor {
       isPreExercise
     );
 
-    // Trigger AI evaluation if there is a reason
     const triggerAiEvaluation = triggerReason !== null;
 
-    // Build fallback instruction
     const fallbackInstruction = buildFallbackInstruction(
       prescription,
       criticalLandmarksLost,
@@ -546,8 +733,6 @@ export class FramingMonitor {
       bilateralSymmetryOk
     );
 
-    // Determine whether to pause exercise
-    // Only pause if critical severity has persisted > threshold
     const shouldPauseExercise =
       newSeverity === "critical" &&
       severityDurationMs >= CRITICAL_PAUSE_THRESHOLD_MS;
@@ -578,21 +763,9 @@ export class FramingMonitor {
     return status;
   }
 
-  // ----------------------------------------------------------
-  // GET LAST STATUS
-  // Used by SessionRunner to read current framing state
-  // without triggering a new evaluation
-  // ----------------------------------------------------------
-
   getLastStatus(): FramingStatus | null {
     return this.lastStatus;
   }
-
-  // ----------------------------------------------------------
-  // FORCE PRE-EXERCISE CHECK
-  // Called before an exercise starts to get an immediate
-  // framing evaluation regardless of interval
-  // ----------------------------------------------------------
 
   forcePreExerciseCheck(
     frame: PoseFrame | null,
