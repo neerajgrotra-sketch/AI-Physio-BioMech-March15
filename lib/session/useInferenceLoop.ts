@@ -294,7 +294,7 @@ export function useInferenceLoop() {
   const calibrationCompleteRef = useRef<boolean>(false);
   const calibrationBaselineRef = useRef<number>(0);
   const calibrationStartMsRef = useRef<number | null>(null);
-  const calibrationWindowMs = 2000; // sample for 2 seconds
+  const calibrationWindowMs = 3000; // sample for 3 seconds — more resting frames
   // State mirror of calibrationBaselineRef — exported for ROM score ring
   // (ref is used internally for zero-cost reads in the rAF loop)
   const [calibrationBaseline, setCalibrationBaseline] = useState<number>(0);
@@ -496,9 +496,14 @@ export function useInferenceLoop() {
               if (nowMs - calibrationStartMsRef.current >= calibrationWindowMs) {
                 const samples = calibrationSamplesRef.current;
                 if (samples.length >= 5) {
-                  // Use median to avoid outliers
+                  // Use 10th percentile (not median) to find true resting baseline.
+                  // At rest the metric is at its minimum. Any movement during the
+                  // calibration window only pushes values higher. The 10th percentile
+                  // reliably captures the resting floor even if the patient starts
+                  // moving partway through the 2s window.
                   const sorted = [...samples].sort((a, b) => a - b);
-                  const baseline = sorted[Math.floor(sorted.length / 2)];
+                  const p10Index = Math.floor(sorted.length * 0.10);
+                  const baseline = sorted[p10Index];
                   calibrationBaselineRef.current = baseline;
                   calibrationCompleteRef.current = true;
                   setCalibrationBaseline(baseline); // mirrors ref for external consumers
@@ -519,14 +524,16 @@ export function useInferenceLoop() {
                   const effectiveTarget = physioTarget ?? romMin;
 
                   if (effectiveTarget != null) {
-                    // startThreshold: must be comfortably above baseline noise.
-                    // TF resting jitter is ±3–5°, so +15° gives clear separation.
                     const start = baseline + 15;
 
-                    // targetThreshold: used to TRIGGER hold entry (TOP phase).
-                    // Uses physio override if set, otherwise population min.
-                    // This is what the patient must reach for the hold to start.
-                    const target = effectiveTarget + offset;
+                    // For abduction exercises using the new wrist-based metric:
+                    // The metric reads ~5-8° at rest and scales naturally with arm elevation.
+                    // physioTarget is set in clinical degrees relative to anatomical zero.
+                    // Add only the small resting offset (baseline) not the full population offset.
+                    const isAbduction = activePrescription.id.includes("abduction");
+                    const target = isAbduction
+                      ? effectiveTarget + offset  // offset is small (~5-8°) for abduction — correct
+                      : effectiveTarget + offset; // flexion: same formula, larger offset (~15-20°)
 
                     // finishThreshold: used during LOWERING to detect arms returned to rest.
                     // Must be above resting noise floor (baseline ± 3-5°).
@@ -538,7 +545,9 @@ export function useInferenceLoop() {
                     // calibrated offset makes hold impossible to sustain.
                     // holdSustainFloor = romAcceptableMin + offset (population-level floor)
                     // tolerance = target - holdSustainFloor (gap between trigger and floor)
-                    const holdSustainFloor = (romMin ?? 110) + offset;
+                    const holdSustainFloor = isAbduction
+                      ? (effectiveTarget ?? 70) + offset - 20  // abduction: 20° tolerance below target
+                      : (romMin ?? 110) + offset;              // flexion: population floor
                     const holdTolerance = Math.max(10, target - holdSustainFloor);
 
                     (activePrescription as any).startThreshold = start;
