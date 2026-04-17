@@ -69,7 +69,71 @@ function armElevationDeg(
   return round1(toDegrees(angle));
 }
 
-function inferPosture(
+/**
+ * Measures shoulder abduction angle from a front-facing camera.
+ *
+ * armElevationDeg() fails for abduction because it measures the 2D projection
+ * of the upper arm vector from vertical — for a lateral sweep (coronal plane)
+ * the arm moves mostly in Z (depth) and the 2D projection caps at ~100°.
+ *
+ * This function uses the wrist position relative to the shoulder, normalised
+ * by shoulder width, to compute a robust abduction angle that works from a
+ * front camera:
+ *
+ * - Lateral displacement (dx): how far wrist has moved away from shoulder
+ *   horizontally. This is the primary abduction signal — fully visible from front.
+ * - Vertical rise (dy): how far wrist has risen above shoulder.
+ *   At 90° abduction wrist is ~level with shoulder; overhead it rises above.
+ *
+ * The angle is computed as atan2(dy_norm, dx_norm) offset from the resting
+ * position (~270° below and out), remapped to 0° (rest) → 90° (shoulder level)
+ * → 150° (overhead).
+ *
+ * Normalisation by shoulder width makes it invariant to camera distance.
+ */
+function shoulderAbductionDeg(
+  shoulder: PoseLandmark,
+  wrist: PoseLandmark | null,
+  otherShoulder: PoseLandmark | null,
+  side: "right" | "left"
+): number | null {
+  if (!wrist) return null;
+
+  // Shoulder width for normalisation — fall back to fixed fraction if unavailable
+  const shoulderWidth = otherShoulder
+    ? Math.sqrt(
+        Math.pow(shoulder.x - otherShoulder.x, 2) +
+        Math.pow(shoulder.y - otherShoulder.y, 2)
+      )
+    : 0.2; // ~20% of frame width as fallback
+
+  if (shoulderWidth < 1e-6) return null;
+
+  // Lateral displacement: positive = wrist moving away from body centerline
+  // For right arm: wrist moves right (x increases in screen coords, but mirrored
+  // so right arm moves toward lower x). Use abs() — we care about magnitude not direction.
+  const dx = Math.abs(wrist.x - shoulder.x) / shoulderWidth;
+
+  // Vertical rise: positive = wrist above shoulder
+  // Screen y increases downward, so above shoulder = wrist.y < shoulder.y
+  const dy = (shoulder.y - wrist.y) / shoulderWidth;
+
+  // Angle from horizontal: atan2(vertical_rise, lateral_spread)
+  // At rest: dx small (~0.3), dy very negative (~-2.5) → angle ≈ -83° (pointing down)
+  // At 90° abduction: dx large (~1.4), dy near zero → angle ≈ 0°
+  // Overhead: dx still large, dy positive → angle > 0°
+  const angleFromHorizontal = toDegrees(Math.atan2(dy, dx));
+
+  // Remap to clinical abduction degrees:
+  // angleFromHorizontal of -90° (arm straight down) → 0° abduction
+  // angleFromHorizontal of 0° (arm level with shoulder) → 90° abduction
+  // angleFromHorizontal of +60° (arm overhead) → 150° abduction
+  // Formula: abductionDeg = angleFromHorizontal + 90
+  const abductionDeg = angleFromHorizontal + 90;
+
+  // Clamp to valid range
+  return round1(Math.max(0, Math.min(180, abductionDeg)));
+}
   leftHip: PoseLandmark | null,
   rightHip: PoseLandmark | null,
   leftKnee: PoseLandmark | null,
@@ -125,6 +189,9 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
       rightArmElevationDeg: null,
       leftArmElevationDeg: null,
       bilateralArmElevationDeg: null,
+      rightShoulderAbductionDeg: null,
+      leftShoulderAbductionDeg: null,
+      bilateralShoulderAbductionDeg: null,
       rightElbowAngleDeg: null,
       leftElbowAngleDeg: null,
       torsoLeanDeg: null,
@@ -170,6 +237,20 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     leftShoulder ? armElevationDeg(leftShoulder, leftElbow, leftWrist) : null;
 
   const bilateralArmElevationDeg = average([rightArmElevationDeg, leftArmElevationDeg]);
+
+  // Shoulder abduction — computed separately from flexion elevation
+  const rightShoulderAbductionDeg = rightShoulder
+    ? shoulderAbductionDeg(rightShoulder, rightWrist, leftShoulder, "right")
+    : null;
+
+  const leftShoulderAbductionDeg = leftShoulder
+    ? shoulderAbductionDeg(leftShoulder, leftWrist, rightShoulder, "left")
+    : null;
+
+  const bilateralShoulderAbductionDeg = average([
+    rightShoulderAbductionDeg,
+    leftShoulderAbductionDeg,
+  ]);
 
   const rightElbowAngleDeg =
     rightShoulder && rightElbow && rightWrist
@@ -255,6 +336,9 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     rightArmElevationDeg,
     leftArmElevationDeg,
     bilateralArmElevationDeg,
+    rightShoulderAbductionDeg,
+    leftShoulderAbductionDeg,
+    bilateralShoulderAbductionDeg,
     rightElbowAngleDeg,
     leftElbowAngleDeg,
     torsoLeanDeg,
