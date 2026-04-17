@@ -886,7 +886,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const framingCallbacks = useMemo(() => ({
     evaluateFraming: framingIntelligence.evaluateFraming,
     cancelPendingEval: framingIntelligence.cancelPendingEval,
-  }), [framingIntelligence.evaluateFraming, framingIntelligence.cancelPendingEval]);
+    getPrerequisiteResult: () => framingIntelligence.prerequisiteResultRef.current,
+  }), [framingIntelligence.evaluateFraming, framingIntelligence.cancelPendingEval, framingIntelligence.prerequisiteResultRef]);
 
   // ============================================================
   // EXERCISE COMPLETE
