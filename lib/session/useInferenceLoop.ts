@@ -475,18 +475,41 @@ export function useInferenceLoop() {
               const rawMetricForCalib = (() => {
                 const id = activePrescription.id;
                 const f = smoothedFeatures;
+                // Skip calibration sampling for abduction — fixed thresholds used instead
+                if (id.includes("abduction")) return null;
                 if (id.includes("flexion")) {
                   if (id.includes("right")) return f.rightArmElevationDeg;
                   if (id.includes("left")) return f.leftArmElevationDeg;
                   return f.bilateralArmElevationDeg;
                 }
-                if (id.includes("abduction")) {
-                  if (id.includes("right")) return f.rightShoulderAbductionDeg;
-                  if (id.includes("left")) return f.leftShoulderAbductionDeg;
-                  return f.bilateralShoulderAbductionDeg;
-                }
                 return null;
               })();
+
+              // Abduction uses fixed thresholds — bypass dynamic calibration entirely.
+              // The wrist-based metric has a predictable resting floor of ~5-8°.
+              // Dynamic calibration fails for abduction because patients are often
+              // already moving during the calibration window.
+              if (activePrescription.id.includes("abduction") && !calibrationCompleteRef.current) {
+                calibrationCompleteRef.current = true;
+                calibrationBaselineRef.current = 8; // known resting floor
+                setCalibrationBaseline(8);
+                // Fixed thresholds: start=25° (well above rest), target=physioTarget or 80°,
+                // finish=20° (clearly back at rest)
+                const physioTargetAbd = (activePrescription as any).romTargetDegrees ?? null;
+                const abdTarget = physioTargetAbd ?? 80;
+                activePrescription.startThreshold = 25;
+                activePrescription.targetThreshold = abdTarget;
+                activePrescription.finishThreshold = 20;
+                if (activePrescription.target) {
+                  activePrescription.target.tolerance = 15;
+                }
+                console.log(
+                  `[CALIBRATION COMPLETE] ex=${activePrescription.id}` +
+                  ` | mode=FIXED (abduction)` +
+                  ` | start=25.0° | target=${abdTarget.toFixed(1)}° | finish=20.0°` +
+                  ` | physioTarget=${physioTargetAbd ?? "none — using 80°"}`
+                );
+              }
 
               if (rawMetricForCalib !== null && rawMetricForCalib > 0) {
                 calibrationSamplesRef.current.push(rawMetricForCalib);
