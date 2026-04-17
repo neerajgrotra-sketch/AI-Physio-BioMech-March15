@@ -262,40 +262,24 @@ export type FramingEventCallbacks = {
 // ============================================================
 // PREREQUISITE RETRY MESSAGE BUILDER
 // ============================================================
-// Returns a shorter, more specific follow-up message for each
-// failure type. Called after PREREQ_RETRY_DELAY_MS of silence.
-// Different from the initial message — assumes the patient
-// heard the first instruction and is still struggling.
-// ============================================================
+// Shorter, more specific follow-up for each failure type.
+// Fired once after PREREQ_RETRY_DELAY_MS of silence.
 
 function buildPrereqRetryMessage(failureId: string): string {
   switch (failureId) {
-    case "coverage_full_body":
-      return "I still can't see your feet — try stepping a little further back.";
-    case "coverage_torso_hips":
-      return "I still need to see your knees — move the camera down or step back.";
-    case "coverage_upper_body":
-      return "I still can't see your shoulders — step back from the camera.";
-    case "posture_must_be_seated":
-      return "Please sit down in your chair before we start.";
-    case "posture_must_be_standing":
-      return "Please stand up straight before we begin.";
-    case "posture_indeterminate":
-      return "Sit fully back in the chair so I can confirm your position.";
-    case "side_landmarks_right":
-      return "Make sure your full right arm is visible — shoulder to wrist.";
-    case "side_landmarks_left":
-      return "Make sure your full left arm is visible — shoulder to wrist.";
-    case "side_landmarks_bilateral":
-      return "Step back so both arms are fully in frame.";
-    case "side_landmarks_bilateral_right":
-      return "Shift slightly left so your right arm is fully visible.";
-    case "side_landmarks_bilateral_left":
-      return "Shift slightly right so your left arm is fully visible.";
-    case "bilateral_asymmetry":
-      return "Centre yourself so both arms are equally in view.";
-    default:
-      return "Adjust your position so I can see you clearly.";
+    case "coverage_full_body":        return "I still can't see your feet — try stepping a little further back.";
+    case "coverage_torso_hips":       return "I still need to see your knees — move the camera down or step back.";
+    case "coverage_upper_body":       return "I still can't see your shoulders — step back from the camera.";
+    case "posture_must_be_seated":    return "Please sit down in your chair before we start.";
+    case "posture_must_be_standing":  return "Please stand up straight before we begin.";
+    case "posture_indeterminate":     return "Sit fully back in the chair so I can confirm your position.";
+    case "side_landmarks_right":      return "Make sure your full right arm is visible — shoulder to wrist.";
+    case "side_landmarks_left":       return "Make sure your full left arm is visible — shoulder to wrist.";
+    case "side_landmarks_bilateral":  return "Step back so both arms are fully in frame.";
+    case "side_landmarks_bilateral_right": return "Shift slightly left so your right arm is fully visible.";
+    case "side_landmarks_bilateral_left":  return "Shift slightly right so your left arm is fully visible.";
+    case "bilateral_asymmetry":       return "Centre yourself so both arms are equally in view.";
+    default:                          return "Adjust your position so I can see you clearly.";
   }
 }
 
@@ -326,17 +310,16 @@ export function useInferenceLoop() {
   const lastHoldDurationMsRef = useRef<number | null>(null);
   // Frame counter for throttled debug logging
   const debugFrameCountRef = useRef<number>(0);
-  // Prerequisite voice state machine
+
+  // ── Prerequisite voice state machine ──────────────────────────────────────
   // States: "unsaid" → "spoken_initial" → "waiting" → "spoken_retry" → "exhausted"
-  // Resets to "unsaid" on every new exercise (resetTrackingState).
-  // Prevents the gate from repeating the same instruction endlessly.
-  const prereqVoiceStateRef = useRef<"unsaid" | "spoken_initial" | "waiting" | "spoken_retry" | "exhausted">("unsaid");
-  const prereqVoiceSpokenAtMsRef = useRef<number | null>(null);
-  // How long to wait silently after initial prompt before retry (12s)
+  // Speaks the initial instruction once, waits 12s silently, speaks a shorter
+  // retry once, then goes exhausted (visual panel only — no more speech).
+  // Resets when the failure type changes or prerequisites are met.
+  const prereqVoiceStateRef   = useRef<"unsaid" | "spoken_initial" | "waiting" | "spoken_retry" | "exhausted">("unsaid");
+  const prereqVoiceSpokenAtMs = useRef<number | null>(null);
+  const prereqLastFailureId   = useRef<string | null>(null);
   const PREREQ_RETRY_DELAY_MS = 12000;
-  // Failure id that was last spoken — if the failure changes (patient
-  // partially fixed position), reset so the new issue gets spoken fresh
-  const prereqLastFailureIdRef = useRef<string | null>(null);
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -386,9 +369,9 @@ export function useInferenceLoop() {
     peakMetricThisRepRef.current = null;
     lastHoldDurationMsRef.current = null;
     debugFrameCountRef.current = 0;
-    prereqVoiceStateRef.current = "unsaid";
-    prereqVoiceSpokenAtMsRef.current = null;
-    prereqLastFailureIdRef.current = null;
+    prereqVoiceStateRef.current   = "unsaid";
+    prereqVoiceSpokenAtMs.current = null;
+    prereqLastFailureId.current   = null;
 
     // Reset calibration for new exercise
     calibrationSamplesRef.current = [];
@@ -720,103 +703,6 @@ export function useInferenceLoop() {
               prevMetricValueRef.current = rawMetricThisFrame;
             }
 
-            // ------------------------------------------------
-            // PREREQUISITE GATE
-            // Hard gate: if required landmarks / coverage /
-            // posture are not met, stay in "ready" and speak
-            // the first failure message. The state machine
-            // never receives a frame it cannot handle.
-            // Only applies in "ready" phase — once patient
-            // starts moving prerequisites are not re-checked
-            // (avoids interrupting a live rep if e.g. ankles
-            // briefly leave frame mid-movement).
-            // ------------------------------------------------
-            const prereqResult = framingCallbacks.getPrerequisiteResult();
-            if (
-              !prereqResult.allMet &&
-              repStateRef.current.phase === "ready" &&
-              prereqResult.failures.length > 0
-            ) {
-              const firstFailure = prereqResult.failures[0];
-
-              // ── Prerequisite voice state machine ─────────────────
-              // If the failure type changed (patient partially fixed
-              // their position), reset so the new issue gets spoken.
-              if (prereqLastFailureIdRef.current !== firstFailure.id) {
-                prereqVoiceStateRef.current = "unsaid";
-                prereqVoiceSpokenAtMsRef.current = null;
-                prereqLastFailureIdRef.current = firstFailure.id;
-              }
-
-              const voiceState = prereqVoiceStateRef.current;
-              const spokenAt   = prereqVoiceSpokenAtMsRef.current;
-
-              const speakPrereq = (text: string) => {
-                if (typeof window === "undefined" || !window.speechSynthesis) return;
-                // Don't interrupt if speech is already playing from
-                // the coaching intro — wait for it to finish first
-                if (window.speechSynthesis.speaking) return;
-                window.setTimeout(() => {
-                  const utt = new SpeechSynthesisUtterance(text);
-                  utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
-                  const voices = window.speechSynthesis.getVoices();
-                  const preferred = voices.find(v =>
-                    v.lang.startsWith("en") && (
-                      v.name.includes("Natural") || v.name.includes("Neural") ||
-                      v.name.includes("Premium") || v.name.includes("Samantha") ||
-                      v.name.includes("Karen")   || v.name.includes("Daniel")
-                    )
-                  );
-                  if (preferred) utt.voice = preferred;
-                  window.speechSynthesis.speak(utt);
-                }, 150);
-              };
-
-              if (voiceState === "unsaid") {
-                // First time — speak the full instruction
-                speakPrereq(firstFailure.patientMessage);
-                prereqVoiceStateRef.current = "spoken_initial";
-                prereqVoiceSpokenAtMsRef.current = nowMs;
-                console.log(`[PREREQ GATE] initial | id=${firstFailure.id} | ${firstFailure.clinicalNote}`);
-
-              } else if (voiceState === "spoken_initial" && spokenAt !== null) {
-                // Wait silently — patient is trying to adjust
-                if (nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
-                  prereqVoiceStateRef.current = "waiting";
-                }
-                // No speech in this state
-
-              } else if (voiceState === "waiting") {
-                // Still failing after waiting — speak a shorter, more specific retry
-                const retryMessage = buildPrereqRetryMessage(firstFailure.id);
-                speakPrereq(retryMessage);
-                prereqVoiceStateRef.current = "spoken_retry";
-                prereqVoiceSpokenAtMsRef.current = nowMs;
-                console.log(`[PREREQ GATE] retry | id=${firstFailure.id} | msg="${retryMessage}"`);
-
-              } else if (voiceState === "spoken_retry") {
-                // After retry, go exhausted — visual panel only, no more speech
-                if (spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
-                  prereqVoiceStateRef.current = "exhausted";
-                  console.log(`[PREREQ GATE] exhausted | id=${firstFailure.id} | visual-only from here`);
-                }
-              }
-              // "exhausted" — no speech, panel shows message, patient must self-correct
-
-              // Skip interpreter this frame — stay in ready
-              if (trackingActiveRef.current) {
-                rafRef.current = window.requestAnimationFrame(loop);
-              }
-              return;
-            }
-
-            // Prerequisites just cleared — reset voice state for next exercise
-            if (prereqVoiceStateRef.current !== "unsaid") {
-              prereqVoiceStateRef.current = "unsaid";
-              prereqVoiceSpokenAtMsRef.current = null;
-              prereqLastFailureIdRef.current = null;
-            }
-
             // Run movement interpreter
             const output = interpretMovement(
               repStateRef.current,
@@ -1003,10 +889,6 @@ export function useInferenceLoop() {
             // ------------------------------------------------
             // FEED FRAMING MONITOR (ready phase only)
             // ------------------------------------------------
-            // Critical fix: framing evaluator must NEVER fire during active
-            // reps (lifting/holding/lowering). It calls Claude API and disrupts
-            // the session mid-rep. Gate to ready phase only — one-time check
-            // per exercise is sufficient and was already the clinical intent.
             if (currentPhase === "ready") {
               framingCallbacks.evaluateFraming(
                 normalized,
@@ -1014,6 +896,83 @@ export function useInferenceLoop() {
                 activePrescription,
                 nowMs
               );
+            }
+
+            // ------------------------------------------------
+            // PREREQUISITE GATE (ready phase only)
+            // evaluateFraming ran above so prerequisiteResult
+            // is always current before we read it here.
+            // Only gates interpretMovement — everything else
+            // (framing panel, observation panel) still runs.
+            // ------------------------------------------------
+            if (currentPhase === "ready") {
+              const prereq = framingCallbacks.getPrerequisiteResult();
+              if (!prereq.allMet && prereq.failures.length > 0) {
+                const failure = prereq.failures[0];
+
+                // Reset state machine if failure type changed
+                if (prereqLastFailureId.current !== failure.id) {
+                  prereqVoiceStateRef.current   = "unsaid";
+                  prereqVoiceSpokenAtMs.current = null;
+                  prereqLastFailureId.current   = failure.id;
+                }
+
+                const speakOnce = (text: string) => {
+                  if (typeof window === "undefined" || !window.speechSynthesis) return;
+                  if (window.speechSynthesis.speaking) return; // don't cut over coaching intro
+                  window.setTimeout(() => {
+                    const utt = new SpeechSynthesisUtterance(text);
+                    utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+                    const voices = window.speechSynthesis.getVoices();
+                    const pref = voices.find(v => v.lang.startsWith("en") && (
+                      v.name.includes("Natural") || v.name.includes("Neural") ||
+                      v.name.includes("Premium") || v.name.includes("Samantha") ||
+                      v.name.includes("Karen")   || v.name.includes("Daniel")
+                    ));
+                    if (pref) utt.voice = pref;
+                    window.speechSynthesis.speak(utt);
+                  }, 150);
+                };
+
+                const vs = prereqVoiceStateRef.current;
+                const spokenAt = prereqVoiceSpokenAtMs.current;
+
+                if (vs === "unsaid") {
+                  speakOnce(failure.patientMessage);
+                  prereqVoiceStateRef.current   = "spoken_initial";
+                  prereqVoiceSpokenAtMs.current = nowMs;
+                  console.log(`[PREREQ GATE] initial | id=${failure.id} | ${failure.clinicalNote}`);
+                } else if (vs === "spoken_initial" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
+                  prereqVoiceStateRef.current = "waiting";
+                } else if (vs === "waiting") {
+                  const retry = buildPrereqRetryMessage(failure.id);
+                  speakOnce(retry);
+                  prereqVoiceStateRef.current   = "spoken_retry";
+                  prereqVoiceSpokenAtMs.current = nowMs;
+                  console.log(`[PREREQ GATE] retry | id=${failure.id} | "${retry}"`);
+                } else if (vs === "spoken_retry" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
+                  prereqVoiceStateRef.current = "exhausted";
+                  console.log(`[PREREQ GATE] exhausted | id=${failure.id} | visual only`);
+                }
+                // "exhausted" — panel shows message, no more speech
+
+                // Block interpretMovement this frame only
+                // Jump to readiness/observation panel below
+                const readiness = readinessEvaluator(normalized, smoothedFeatures, activePrescription);
+                setLiveObservation({
+                  visibilityLines: buildVisibilityLines(normalized, readiness.message, readiness.ready),
+                  movementLines: buildMovementLines(activePrescription, currentPhase, smoothedFeatures, 0, null, "prerequisites_not_met", null)
+                });
+                if (trackingActiveRef.current) rafRef.current = window.requestAnimationFrame(loop);
+                return;
+              }
+
+              // Prerequisites just cleared — reset for next exercise
+              if (prereqLastFailureId.current !== null) {
+                prereqVoiceStateRef.current   = "unsaid";
+                prereqVoiceSpokenAtMs.current = null;
+                prereqLastFailureId.current   = null;
+              }
             }
 
             // ------------------------------------------------
