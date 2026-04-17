@@ -181,7 +181,15 @@ function getLandmark(
     | "left_ankle"
     | "right_ankle"
 ): PoseLandmark | null {
-  return frame.landmarks[key] ?? null;
+  const lm = frame.landmarks[key] ?? null;
+  if (!lm) return null;
+  // Reject landmarks whose score is defined but below minimum confidence.
+  // BlazePose returns landmark objects with score: undefined for undetected
+  // points — treat undefined score as visible (score not provided = always shown).
+  // Treat score: 0 or near-zero as not visible — prevents garbage angle
+  // calculations from hallucinated landmark positions.
+  if (typeof lm.score === "number" && lm.score < 0.15) return null;
+  return lm;
 }
 
 export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
