@@ -48,6 +48,10 @@ function emptyFeatures(): MovementFeatures {
     leftArmElevationDeg: null,
     bilateralArmElevationDeg: null,
 
+    rightShoulderAbductionDeg: null,
+    leftShoulderAbductionDeg: null,
+    bilateralShoulderAbductionDeg: null,
+
     rightElbowAngleDeg: null,
     leftElbowAngleDeg: null,
 
@@ -86,6 +90,10 @@ export function smoothMovementFeatures(history: MovementFeatures[]): MovementFea
     bilateralArmElevationDeg: average(
       history.map((item) => item.bilateralArmElevationDeg)
     ),
+
+    rightShoulderAbductionDeg: average(history.map((item) => item.rightShoulderAbductionDeg)),
+    leftShoulderAbductionDeg: average(history.map((item) => item.leftShoulderAbductionDeg)),
+    bilateralShoulderAbductionDeg: average(history.map((item) => item.bilateralShoulderAbductionDeg)),
 
     rightElbowAngleDeg: average(history.map((item) => item.rightElbowAngleDeg)),
     leftElbowAngleDeg: average(history.map((item) => item.leftElbowAngleDeg)),
