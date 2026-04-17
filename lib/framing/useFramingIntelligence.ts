@@ -119,10 +119,10 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
   // Exposed to useInferenceLoop — updated every frame in ready phase
   const [prerequisiteResult, setPrerequisiteResult] = useState<PrerequisiteResult>({
-    allMet: false,
+    allMet: true,
     failures: []
   });
-  const prerequisiteResultRef = useRef<PrerequisiteResult>({ allMet: false, failures: [] });
+  const prerequisiteResultRef = useRef<PrerequisiteResult>({ allMet: true, failures: [] });
 
   // Live refs — updated every frame so delayed checks read current data
   const liveFrameRef        = useRef<PoseFrame | null>(null);
@@ -271,7 +271,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       window.clearTimeout(voiceTimeoutRef.current);
       voiceTimeoutRef.current = null;
     }
-    const initial: PrerequisiteResult = { allMet: false, failures: [] };
+    const initial: PrerequisiteResult = { allMet: true, failures: [] };
     prerequisiteResultRef.current = initial;
     setPrerequisiteResult(initial);
     setFramingPanelState(buildPanelState(message, "warning", false));
