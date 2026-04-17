@@ -1,19 +1,18 @@
 // ============================================================
 // lib/framing/useFramingIntelligence.ts
 // ============================================================
-// M16 redesign:
-// - shouldPauseExercise removed — framing never blocks sessions
-// - Pre-exercise voice guidance: fires once after 2s delay,
-//   max 2 attempts, 8s gap
-// - Live frame/features read from refs (not stale call-time values)
-// - Mid-session: visual pill only, no voice, no blocking
-// - Tracks landmark_confidence_pct per exercise for physio dashboard
-// - Debug logging via console for tracing framing behaviour
+// M19 changes:
+// - Exposes prerequisiteResult from evaluatePrerequisites()
+//   so SessionRunner and useInferenceLoop can gate on it
+// - Fixes hardcoded estimatedCoverage: "upper_body" bug in
+//   buildConfidenceReport — now derived from the live frame
+// - Pre-exercise voice guidance and AI evaluator unchanged
 // ============================================================
 
 import { useRef, useState, useCallback } from "react";
 
-import { FramingMonitor } from "@/lib/framing/framingMonitor";
+import { FramingMonitor, evaluatePrerequisites } from "@/lib/framing/framingMonitor";
+import type { PrerequisiteResult } from "@/lib/framing/framingMonitor";
 import { FramingEvaluator } from "@/lib/framing/framingEvaluator";
 import type { PatientProfile } from "@/lib/patient/patientTypes";
 import type { FramingPanelState } from "@/lib/framing/framingTypes";
@@ -60,6 +59,40 @@ function buildPanelState(
 }
 
 // ============================================================
+// COVERAGE ESTIMATOR
+// ============================================================
+// Derives estimatedCoverage from the live frame the same way
+// FramingMonitor does. Replaces the previous hardcoded
+// "upper_body" that was being sent to the AI evaluator.
+
+function estimateCoverageFromFrame(
+  frame: PoseFrame | null
+): "none" | "head_only" | "upper_body" | "torso_and_hips" | "full_body" {
+  if (!frame || !(frame as any).personDetected) return "none";
+
+  const lm = (frame as any)?.landmarks ?? {};
+  const conf = (name: string): number => {
+    const p = lm[name];
+    if (!p || typeof p.x !== "number") return 0;
+    return typeof p.score === "number" ? p.score : 1;
+  };
+  const v = (name: string) => conf(name) > 0.2;
+
+  const hasHead      = v("nose");
+  const hasShoulders = v("left_shoulder") && v("right_shoulder");
+  const hasHips      = v("left_hip") && v("right_hip");
+  const hasKnees     = v("left_knee") || v("right_knee");
+  const hasAnkles    = v("left_ankle") || v("right_ankle");
+
+  if (hasHead && hasShoulders && hasHips && hasKnees && hasAnkles) return "full_body";
+  if (hasHead && hasShoulders && hasHips && hasKnees) return "torso_and_hips";
+  if (hasHead && hasShoulders && hasHips) return "torso_and_hips";
+  if (hasHead && hasShoulders) return "upper_body";
+  if (hasHead) return "head_only";
+  return "none";
+}
+
+// ============================================================
 // HOOK
 // ============================================================
 
@@ -69,9 +102,8 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
   const monitorRef   = useRef(new FramingMonitor(2000));
   const evaluatorRef = useRef(new FramingEvaluator());
 
-  // Routes to console via framingLog AND to SessionRunner debug panel
   const debugLoggerRef = useRef<DebugLogger | undefined>(debugLogger);
-  debugLoggerRef.current = debugLogger; // keep current without re-renders
+  debugLoggerRef.current = debugLogger;
   const debugLog = (msg: string, detail?: string) => {
     framingLog(msg, detail);
     if (debugLoggerRef.current) debugLoggerRef.current("info", "FRAMING", msg, detail);
@@ -84,6 +116,13 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     exercisePaused: false,
     severity: "ok"
   });
+
+  // Exposed to useInferenceLoop — updated every frame in ready phase
+  const [prerequisiteResult, setPrerequisiteResult] = useState<PrerequisiteResult>({
+    allMet: false,
+    failures: []
+  });
+  const prerequisiteResultRef = useRef<PrerequisiteResult>({ allMet: false, failures: [] });
 
   // Live refs — updated every frame so delayed checks read current data
   const liveFrameRef        = useRef<PoseFrame | null>(null);
@@ -100,14 +139,8 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
   // ----------------------------------------------------------
   // SPEAK FRAMING CUE
-  // Speaks immediately — does NOT wait for coaching speech.
-  // Framing cue is a one-time positional instruction that
-  // should fire even if the intro is still playing.
-  // We cancel any current speech, speak framing cue, then
-  // coaching brain will resume on next trigger naturally.
   // ----------------------------------------------------------
 
-  // Speak a framing cue immediately (cancels current speech)
   const speakFramingCue = useCallback((text: string) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -121,10 +154,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     }, 100);
   }, []);
 
-  // Speak a framing cue AFTER any current speech finishes.
-  // Used for pre-exercise framing cues so they don't interrupt
-  // the coaching intro but still fire once intro is done.
-  // Respects preExerciseActiveRef — aborts if patient starts moving.
   const speakAfterCurrentSpeech = useCallback((text: string) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     debugLog("speakAfterCurrentSpeech queued", `speaking=${window.speechSynthesis.speaking}`);
@@ -147,11 +176,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     };
 
     const poll = () => {
-      if (!preExerciseActiveRef.current) return; // patient moved, abort
+      if (!preExerciseActiveRef.current) return;
       if (window.speechSynthesis.speaking) {
         window.setTimeout(poll, 300);
       } else {
-        window.setTimeout(doSpeak, 200); // small gap after speech ends
+        window.setTimeout(doSpeak, 200);
       }
     };
 
@@ -185,7 +214,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
         voiceAttemptCountRef.current += 1;
         debugLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, msg);
-        // Wait for any current speech (coaching intro) to finish before speaking
         speakAfterCurrentSpeech(msg);
       }
       return;
@@ -206,13 +234,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
       voiceAttemptCountRef.current += 1;
       debugLog(`voice attempt ${voiceAttemptCountRef.current}/${PRE_EXERCISE_MAX_ATTEMPTS}`, message);
-      // Wait for coaching intro to finish, then speak framing cue
       speakAfterCurrentSpeech(message);
     } else {
       debugLog("runFramingCheck — max attempts reached, no voice");
     }
 
-    // AI for better instruction
     const confidenceReport = buildConfidenceReport(frame, features, prescription, nowMs);
     evaluatorRef.current.evaluate(
       prescription, status, confidenceReport, patientProfile,
@@ -245,12 +271,14 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       window.clearTimeout(voiceTimeoutRef.current);
       voiceTimeoutRef.current = null;
     }
+    const initial: PrerequisiteResult = { allMet: false, failures: [] };
+    prerequisiteResultRef.current = initial;
+    setPrerequisiteResult(initial);
     setFramingPanelState(buildPanelState(message, "warning", false));
   }, []);
 
   // ----------------------------------------------------------
   // CANCEL PENDING EVALUATION
-  // Called when patient starts moving (READY → LIFTING).
   // ----------------------------------------------------------
 
   const cancelPendingEval = useCallback(() => {
@@ -297,8 +325,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
   }, []);
 
   // ----------------------------------------------------------
-  // EVALUATE FRAMING
-  // Called every frame (ready phase only). Updates live refs.
+  // EVALUATE FRAMING (called every ready-phase frame)
+  // Updates live refs AND runs prerequisite check every frame.
+  // Prerequisite result is written to both ref and state so
+  // useInferenceLoop reads the ref (zero cost, no re-render)
+  // while SessionRunner reads the state for UI.
   // ----------------------------------------------------------
 
   const evaluateFraming = useCallback((
@@ -312,6 +343,18 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
     sampleLandmarkConfidence(frame, prescription);
 
+    // Run prerequisite check every frame — pure function, cheap
+    const prereqResult = evaluatePrerequisites(prescription, frame, features);
+    prerequisiteResultRef.current = prereqResult;
+    setPrerequisiteResult(prereqResult);
+
+    // Log first failure for debugging
+    if (!prereqResult.allMet && prereqResult.failures.length > 0) {
+      const f = prereqResult.failures[0];
+      console.log(`[PREREQ FAIL] id=${f.id} | ${f.clinicalNote}`);
+    }
+
+    // Throttled monitor evaluation for framing panel
     const status = monitorRef.current.evaluate(frame, features, prescription, nowMs);
     if (!status) return;
 
@@ -342,7 +385,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
   // ----------------------------------------------------------
   // FORCE PRE-EXERCISE CHECK
-  // Waits 2s for BlazePose to warm up, then checks with live data.
   // ----------------------------------------------------------
 
   const forcePreExerciseCheck = useCallback((
@@ -360,10 +402,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     liveFrameRef.current    = frame;
     liveFeaturesRef.current = features;
 
-    // Open the pre-exercise voice window IMMEDIATELY.
-    // This must happen before onExerciseStarted fires so that
-    // cancelPendingEval (triggered by first READY→LIFTING) correctly
-    // closes a window that was actually open.
     preExerciseActiveRef.current = true;
     voiceAttemptCountRef.current = 0;
 
@@ -373,10 +411,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
     setFramingPanelState(buildPanelState("Checking your position…", "warning", true));
 
-    // First framing check fires after INITIAL_CHECK_DELAY_MS (2s).
-    // By this time liveFrameRef will have real BlazePose data.
-    // speakAfterCurrentSpeech inside runFramingCheck ensures the
-    // voice cue waits for coaching intro to finish before speaking.
     debugLog(`pre-exercise window OPEN — first voice check in ${INITIAL_CHECK_DELAY_MS}ms`);
 
     voiceTimeoutRef.current = window.setTimeout(() => {
@@ -384,7 +418,6 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       debugLog("first framing check firing");
       runFramingCheck(prescription);
 
-      // Schedule retry after 8s if still in pre-exercise window
       voiceTimeoutRef.current = window.setTimeout(() => {
         voiceTimeoutRef.current = null;
         debugLog("second framing check firing");
@@ -404,6 +437,10 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     cancelPendingEval,
     getLandmarkConfidencePct,
     sampleLandmarkConfidence,
+    // New: prerequisite gate — read by useInferenceLoop via ref,
+    // by SessionRunner via state
+    prerequisiteResult,
+    prerequisiteResultRef,
   };
 }
 
@@ -430,13 +467,17 @@ function buildConfidenceReport(
       })
     ),
     personDetected: Boolean((frame as any)?.personDetected),
-    estimatedCoverage: "upper_body" as const,
+    // Fixed: derive coverage from live frame, not hardcoded "upper_body"
+    estimatedCoverage: estimateCoverageFromFrame(frame),
     estimatedPosture: features.isSeated
       ? ("seated" as const)
       : features.isStanding
       ? ("standing" as const)
       : ("unknown" as const),
-    isCentered: true,
+    isCentered: (() => {
+      const nose = (frame as any)?.landmarks?.["nose"];
+      return !!(nose && typeof nose.x === "number" && nose.x >= 0.18 && nose.x <= 0.82);
+    })(),
     capturedAtMs: nowMs,
   };
 }
