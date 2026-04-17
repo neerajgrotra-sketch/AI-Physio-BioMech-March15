@@ -41,6 +41,15 @@ function getMetricValue(
     case "bilateralArmElevationDeg":
       return features.bilateralArmElevationDeg;
 
+    case "rightShoulderAbductionDeg":
+      return features.rightShoulderAbductionDeg;
+
+    case "leftShoulderAbductionDeg":
+      return features.leftShoulderAbductionDeg;
+
+    case "bilateralShoulderAbductionDeg":
+      return features.bilateralShoulderAbductionDeg;
+
     case "rightElbowAngleDeg":
       return features.rightElbowAngleDeg;
 
@@ -96,9 +105,17 @@ function getEffectiveActiveMetricValue(
   ) {
     const left = features.leftArmElevationDeg;
     const right = features.rightArmElevationDeg;
-
     if (left === null || right === null) return null;
+    return Math.min(left, right);
+  }
 
+  if (
+    prescription.side === "both" &&
+    prescription.target.metric === "bilateralShoulderAbductionDeg"
+  ) {
+    const left = features.leftShoulderAbductionDeg;
+    const right = features.rightShoulderAbductionDeg;
+    if (left === null || right === null) return null;
     return Math.min(left, right);
   }
 
@@ -131,8 +148,9 @@ function getBilateralParticipationOk(
 ): boolean {
   if (prescription.side !== "both") return true;
 
-  const left = features.leftArmElevationDeg;
-  const right = features.rightArmElevationDeg;
+  const isAbduction = prescription.id.includes("abduction");
+  const left = isAbduction ? features.leftShoulderAbductionDeg : features.leftArmElevationDeg;
+  const right = isAbduction ? features.rightShoulderAbductionDeg : features.rightArmElevationDeg;
 
   if (left === null || right === null) return false;
 
