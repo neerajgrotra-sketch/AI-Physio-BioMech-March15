@@ -851,11 +851,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       if (!prescription || !exerciseCtx) return;
-      // Sample landmark confidence every frame across ALL phases (not just ready).
-      // evaluateFraming only fires during ready phase so active-phase frames were
-      // previously uncollected — causing null confidence for fast/short exercises.
-      framingIntelligence.sampleLandmarkConfidence(ghostFrameRef.current, prescription);
-      // Snapshot the running average so handleExerciseComplete reads a stable value
+      // Snapshot running confidence average — sampled in ghost rAF tick every frame
       const confNow = framingIntelligence.getLandmarkConfidencePct();
       if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
       recordSnapshot({
@@ -1281,6 +1277,16 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
 
       const frame = ghostFrameRef.current;
       if (!frame || !frame.personDetected) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+
+      // Sample landmark confidence every frame for all phases.
+      // Ghost tick is the only loop guaranteed to fire on every rAF regardless
+      // of inference phase — ensures confidence populates for all exercises.
+      const prescriptionForConf = ghostPrescriptionRef.current;
+      if (prescriptionForConf) {
+        framingIntelligence.sampleLandmarkConfidence(frame, prescriptionForConf);
+        const confNow = framingIntelligence.getLandmarkConfidencePct();
+        if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
+      }
 
       const rawLms = poseFrameToLandmarkArray(frame);
       const lms    = mirrorLandmarks(rawLms);
