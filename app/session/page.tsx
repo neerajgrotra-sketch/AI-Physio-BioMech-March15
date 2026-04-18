@@ -602,6 +602,35 @@ export default async function SessionPage({ searchParams }: PageProps) {
     }
   }
 
+  // ── Fetch previous session for greeting ─────────────────────────────────
+  let previousSession: { mobilityScore: number; sessionTitle: string; claudeSummary: string } | null = null;
+
+  if (patientId) {
+    const { data: prevResult } = await supabase
+      .from('session_results')
+      .select('mobility_score, claude_summary, prescription_id')
+      .eq('patient_id', patientId)
+      .not('claude_summary', 'is', null)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (prevResult) {
+      // Get title of that session
+      const { data: prevSession } = await supabase
+        .from('sessions')
+        .select('title')
+        .eq('id', prevResult.prescription_id)
+        .single();
+
+      previousSession = {
+        mobilityScore: prevResult.mobility_score ?? 0,
+        sessionTitle: prevSession?.title ?? 'previous session',
+        claudeSummary: (prevResult.claude_summary as string).slice(0, 400),
+      };
+    }
+  }
+
   // ── Map DB rows → ExercisePrescription[] ────────────────────────────────
   const mapped: ExercisePrescription[] = [];
   const boundaries: { afterIndex: number; restMs: number }[] = [];
@@ -655,6 +684,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
       patientProfile={patientProfile}
       patientName={patientName}
       patientId={patientId}
+      previousSession={previousSession ?? undefined}
     />
   );
 }
