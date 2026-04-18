@@ -229,7 +229,13 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       return;
     }
 
-    const message = status.fallbackInstruction ?? "Adjust your position so I can see you clearly.";
+    // Use the prereq failure message if prerequisites aren't met —
+    // it's more specific and actionable than the monitor's fallback.
+    // e.g. "Please step back so I can see your full body" rather than "Please sit down"
+    const prereqNow = prerequisiteResultRef.current;
+    const message = (!prereqNow.allMet && prereqNow.failures.length > 0)
+      ? prereqNow.failures[0].patientMessage
+      : (status.fallbackInstruction ?? "Adjust your position so I can see you clearly.");
     setFramingPanelState(buildPanelState(message, "warning", true));
 
     if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
@@ -349,9 +355,8 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     prerequisiteResultRef.current = prereqResult;
     setPrerequisiteResult(prereqResult);
 
-    // When prerequisites fail, override the framing panel with the specific
-    // prereq instruction — more actionable than the generic monitor fallback.
-    // Throttle the debug log to once every 2s to avoid flooding.
+    // When prerequisites fail, show the specific instruction in the framing panel
+    // and skip the generic monitor evaluation. Throttle the debug log to 2s.
     if (!prereqResult.allMet && prereqResult.failures.length > 0) {
       const f = prereqResult.failures[0];
       console.log(`[PREREQ FAIL] id=${f.id} | ${f.clinicalNote}`);
@@ -362,9 +367,8 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
           debugLoggerRef.current("warning", "PREREQ", `PREREQ FAIL: ${f.id}`, f.clinicalNote);
         }
       }
-      // Show the specific prereq instruction in the panel
       setFramingPanelState(buildPanelState(f.patientMessage, "warning", false));
-      return; // skip monitor evaluation — prereq message takes priority
+      return;
     }
 
     // Throttled monitor evaluation for framing panel
