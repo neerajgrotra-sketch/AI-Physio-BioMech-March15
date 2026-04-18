@@ -349,7 +349,9 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     prerequisiteResultRef.current = prereqResult;
     setPrerequisiteResult(prereqResult);
 
-    // Log first failure — throttled to once every 2s to avoid flooding debug log
+    // When prerequisites fail, override the framing panel with the specific
+    // prereq instruction — more actionable than the generic monitor fallback.
+    // Throttle the debug log to once every 2s to avoid flooding.
     if (!prereqResult.allMet && prereqResult.failures.length > 0) {
       const f = prereqResult.failures[0];
       console.log(`[PREREQ FAIL] id=${f.id} | ${f.clinicalNote}`);
@@ -360,6 +362,9 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
           debugLoggerRef.current("warning", "PREREQ", `PREREQ FAIL: ${f.id}`, f.clinicalNote);
         }
       }
+      // Show the specific prereq instruction in the panel
+      setFramingPanelState(buildPanelState(f.patientMessage, "warning", false));
+      return; // skip monitor evaluation — prereq message takes priority
     }
 
     // Throttled monitor evaluation for framing panel
