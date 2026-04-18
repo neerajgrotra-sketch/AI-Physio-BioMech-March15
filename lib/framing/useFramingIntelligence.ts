@@ -229,14 +229,14 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       return;
     }
 
-    // Use the prereq failure message if prerequisites aren't met —
-    // it's more specific and actionable than the monitor's fallback.
-    // e.g. "Please step back so I can see your full body" rather than "Please sit down"
+    // Use the prereq failure message for voice — more specific than monitor fallback.
+    // Do NOT call setFramingPanelState here — evaluateFraming owns the panel and
+    // runs every frame with the correct prereq message. Calling it here creates
+    // a race condition where the monitor's generic message overwrites the prereq message.
     const prereqNow = prerequisiteResultRef.current;
     const message = (!prereqNow.allMet && prereqNow.failures.length > 0)
       ? prereqNow.failures[0].patientMessage
       : (status.fallbackInstruction ?? "Adjust your position so I can see you clearly.");
-    setFramingPanelState(buildPanelState(message, "warning", true));
 
     if (voiceAttemptCountRef.current < PRE_EXERCISE_MAX_ATTEMPTS) {
       voiceAttemptCountRef.current += 1;
@@ -245,21 +245,7 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     } else {
       debugLog("runFramingCheck — max attempts reached, no voice");
     }
-
-    const confidenceReport = buildConfidenceReport(frame, features, prescription, nowMs);
-    evaluatorRef.current.evaluate(
-      prescription, status, confidenceReport, patientProfile,
-      (result) => {
-        if (!result.isStillRelevant) return;
-        debugLog("AI framing result", `instruction="${result.patientInstruction}"`);
-        setFramingPanelState(
-          buildPanelState(result.patientInstruction ?? "Good position.", result.severity, false)
-        );
-      },
-      (fallback) => {
-        setFramingPanelState(buildPanelState(fallback, status.severity, false));
-      }
-    );
+    // No AI evaluator call — evaluateFraming handles framing quality assessment
   }, [patientProfile, speakAfterCurrentSpeech]);
 
   // ----------------------------------------------------------
