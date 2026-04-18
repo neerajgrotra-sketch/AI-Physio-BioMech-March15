@@ -348,10 +348,17 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     prerequisiteResultRef.current = prereqResult;
     setPrerequisiteResult(prereqResult);
 
-    // Log first failure for debugging
+    // Log first failure for debugging — writes to both console AND debug panel
     if (!prereqResult.allMet && prereqResult.failures.length > 0) {
       const f = prereqResult.failures[0];
       console.log(`[PREREQ FAIL] id=${f.id} | ${f.clinicalNote}`);
+      if (debugLoggerRef.current) {
+        debugLoggerRef.current("warning", "PREREQ", `PREREQ FAIL: ${f.id}`, f.clinicalNote);
+      }
+    } else if (prereqResult.allMet) {
+      // Log allMet=true with coverage context so we can trace why gate isn't firing
+      const coverage = prescription.framing?.requiredCoverage ?? "?";
+      console.log(`[PREREQ OK] coverage=${coverage} ex=${prescription.id}`);
     }
 
     // Throttled monitor evaluation for framing panel
