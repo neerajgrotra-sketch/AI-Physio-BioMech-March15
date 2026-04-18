@@ -461,6 +461,8 @@ interface SessionRunnerProps {
   patientId?: string;
   /** Registered patient full name — shown in pre-session card and coaching panel */
   patientName?: string;
+  /** Previous session summary fetched server-side — used for greeting */
+  previousSession?: { mobilityScore: number; sessionTitle: string; claudeSummary: string };
 }
 
 // Debug entry types — defined outside component to avoid SWC/Next.js issues
@@ -475,7 +477,7 @@ type RepCycleEntry = {
   encourageThreshold: number | null; repCount: number; detail: string;
 };
 
-export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName, previousSession }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -562,6 +564,20 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [isMobile, setIsMobile] = useState(false);
   // Soft pause state — inference stops, camera stays on, timer freezes
   const [isPaused, setIsPaused] = useState(false);
+
+  // ── SESSION PHASE STATE MACHINE ──────────────────────────────────────────
+  // Controls the pre-session sequence:
+  //   idle       → patient has not clicked Begin
+  //   greeting   → greeting is speaking (camera off)
+  //   framing    → camera on, waiting for prerequisites to pass
+  //   confirmed  → prerequisites just passed, "Perfect" spoken, 1s pause
+  //   running    → exercise is underway
+  type SessionPhase = "idle" | "greeting" | "framing" | "confirmed" | "running";
+  const [sessionPhase, setSessionPhase] = useState<SessionPhase>("idle");
+  const sessionPhaseRef = useRef<SessionPhase>("idle");
+  const greetingSpokenRef = useRef(false);
+  const framingConfirmedRef = useRef(false);
+  const prereqWasFailingRef = useRef(false); // tracks transition from fail→pass for auto-advance
   // Rest screen state — shown between protocol blocks
   const [restScreen, setRestScreen] = useState<{ restMs: number; onDone: () => void } | null>(null);
   // Post-session summary state — shown when all exercises complete
@@ -882,7 +898,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     onRepCompleted: (nowMs: number, peakMetric: number | null, holdDurationMs: number | null) => coachingCallbacksRef.current.onRepCompleted(nowMs, peakMetric, holdDurationMs),
     onRepFailed: (reason: string, nowMs: number) => coachingCallbacksRef.current.onRepFailed(reason, nowMs),
     onHoldStarted: (ms: number, nowMs: number) => coachingCallbacksRef.current.onHoldStarted(ms, nowMs),
-    onExerciseStarted: (nowMs: number) => coachingCallbacksRef.current.onExerciseStarted(nowMs),
+    onExerciseStarted: (nowMs: number) => {
+      // Suppress coaching intro during framing phase — greeting already covered
+      // the protocol. The framing confirmation auto-advance fires this again
+      // once prerequisites are met.
+      if (sessionPhaseRef.current === "framing" || sessionPhaseRef.current === "greeting") {
+        writeDebugLog("info", "COACHING", "onExerciseStarted suppressed — in framing/greeting phase");
+        return;
+      }
+      coachingCallbacksRef.current.onExerciseStarted(nowMs);
+    },
     feedFrame: (params: any) => coachingCallbacksRef.current.feedFrame(params),
   }).current;
 
@@ -891,6 +916,58 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     cancelPendingEval: framingIntelligence.cancelPendingEval,
     getPrerequisiteResult: () => framingIntelligence.prerequisiteResultRef.current,
   }), [framingIntelligence.evaluateFraming, framingIntelligence.cancelPendingEval, framingIntelligence.prerequisiteResultRef]);
+
+  // ── FRAMING CONFIRMATION AUTO-ADVANCE ────────────────────────────────────
+  // Watches prerequisiteResult during the framing phase.
+  // When prerequisites transition from failing → passing, speaks confirmation
+  // then advances to the running phase after a 1.5s pause.
+  const framingPhaseStartMsRef = useRef<number>(0);
+  useEffect(() => {
+    const prereq = framingIntelligence.prerequisiteResult;
+    if (sessionPhaseRef.current !== "framing") return;
+    if (framingConfirmedRef.current) return;
+
+    if (!prereq.allMet) {
+      prereqWasFailingRef.current = true;
+      return;
+    }
+
+    // Prerequisites are met — but only auto-advance if:
+    // (a) they were previously failing (genuine correction happened), OR
+    // (b) at least 2s have passed in framing phase (enough time for patient to hear instruction)
+    const elapsed = Date.now() - framingPhaseStartMsRef.current;
+    const genuineCorrection = prereqWasFailingRef.current;
+    if (!genuineCorrection && elapsed < 2000) return;
+
+    // Prerequisites satisfied — confirm and advance
+    framingConfirmedRef.current = true;
+    sessionPhaseRef.current = "confirmed";
+    setSessionPhase("confirmed");
+    writeDebugLog("info", "SESSION", "Framing confirmed — prerequisites met, starting session");
+
+    // Speak confirmation
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance("Perfect — I can see you clearly. Let's begin.");
+      utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const pref = voices.find(v => v.lang.startsWith("en") && (
+        v.name.includes("Natural") || v.name.includes("Neural") ||
+        v.name.includes("Premium") || v.name.includes("Samantha") ||
+        v.name.includes("Karen")   || v.name.includes("Daniel")
+      ));
+      if (pref) utt.voice = pref;
+      window.speechSynthesis.speak(utt);
+    }
+
+    // Advance to running after 1.5s
+    window.setTimeout(() => {
+      sessionPhaseRef.current = "running";
+      setSessionPhase("running");
+      writeDebugLog("info", "SESSION", "Session running — firing exercise_started");
+      stableCoachingCallbacks.onExerciseStarted(Date.now());
+    }, 1500);
+  }, [framingIntelligence.prerequisiteResult, stableCoachingCallbacks]);
 
   // ============================================================
   // EXERCISE COMPLETE
@@ -1212,16 +1289,109 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     exerciseHoldDurationsRef.current = {};
     exerciseRepTimelineRef.current = {};
     liveConfidenceSnapshotRef.current = null;
-    // Auto-check AI engine on session start
     checkAiEngine(true);
 
     const started = sessionQueue.beginSession(combinedQueue);
     if (!started) { writeDebugLog("error", "SESSION", "beginSession returned false"); return; }
     setSelectorCollapsed(true);
     patientContext.beginSession();
-    writeDebugLog("info", "SESSION", `beginExercise: ${combinedQueue[0].prescription.name}`);
     patientContext.beginExercise(combinedQueue[0].prescription, 0, combinedQueue.length);
-    framingIntelligence.reset("Position yourself in view.");
+
+    // ── PHASE: greeting ──────────────────────────────────────────────────
+    // Generate and speak a personalised greeting before camera starts.
+    sessionPhaseRef.current = "greeting";
+    setSessionPhase("greeting");
+    greetingSpokenRef.current = false;
+
+    // Build greeting text
+    const firstName = patientName ? patientName.split(" ")[0] : "there";
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+    const exerciseNames = combinedQueue.map(q => q.prescription.name).join(", ");
+    const firstExerciseName = combinedQueue[0].prescription.name;
+
+    // Previous session context
+    let prevContext = "This is your first session — welcome.";
+    if (previousSession) {
+      const score = previousSession.mobilityScore;
+      prevContext = `Last session was "${previousSession.sessionTitle}" with a mobility score of ${score} out of 100.`;
+    }
+
+    // Framing instruction for first exercise
+    const firstPrescription = combinedQueue[0].prescription;
+    const coverage = (firstPrescription as any)?.framing?.requiredCoverage ?? "upper_body";
+    const framingHint = coverage === "full_body"
+      ? `For ${firstExerciseName}, I'll need to see your full body — head to feet.`
+      : coverage === "torso_and_hips"
+      ? `For ${firstExerciseName}, I'll need to see from your head to your knees.`
+      : `For ${firstExerciseName}, I'll need to see your upper body clearly.`;
+
+    // Generate greeting via Claude
+    let greetingText: string;
+    try {
+      const resp = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: `You are a warm, professional physiotherapy AI assistant. Generate a spoken session greeting of 2–3 sentences maximum. Be warm but efficient — patients are standing ready to exercise. Do not use markdown. Speak naturally as if talking to someone face-to-face.`,
+          messages: [{
+            role: "user",
+            content: `Generate a greeting for:
+- Patient: ${firstName}
+- Time of day: ${timeOfDay}
+- Today's exercises: ${exerciseNames}
+- Previous session: ${prevContext}
+- End with this framing instruction: "${framingHint}"
+
+Keep it to 2–3 natural spoken sentences. No lists.`
+          }]
+        })
+      });
+      const data = await resp.json();
+      greetingText = data.content?.[0]?.text ?? `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${framingHint}`;
+    } catch {
+      greetingText = `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${prevContext} ${framingHint}`;
+    }
+
+    writeDebugLog("info", "GREETING", "Speaking greeting", greetingText.slice(0, 100));
+
+    // Speak the greeting, then start camera for framing phase
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(greetingText);
+      utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const pref = voices.find(v => v.lang.startsWith("en") && (
+        v.name.includes("Natural") || v.name.includes("Neural") ||
+        v.name.includes("Premium") || v.name.includes("Samantha") ||
+        v.name.includes("Karen")   || v.name.includes("Daniel")
+      ));
+      if (pref) utt.voice = pref;
+      utt.onend = () => {
+        greetingSpokenRef.current = true;
+        startFramingPhase();
+      };
+      // Fallback — if onend never fires (browser bug), start framing after 12s
+      window.setTimeout(() => {
+        if (!greetingSpokenRef.current) startFramingPhase();
+      }, 12000);
+      window.speechSynthesis.speak(utt);
+    } else {
+      // No speech synthesis — skip greeting
+      startFramingPhase();
+    }
+  }
+
+  async function startFramingPhase() {
+    if (framingConfirmedRef.current) return; // already advanced
+    greetingSpokenRef.current = true;
+    sessionPhaseRef.current = "framing";
+    setSessionPhase("framing");
+    prereqWasFailingRef.current = false;
+    framingPhaseStartMsRef.current = Date.now();
+    writeDebugLog("info", "SESSION", "Framing phase started — camera on");
+
+    framingIntelligence.reset("Checking your position…");
     try {
       await cameraRef.current?.startCamera();
     } catch (error) {
@@ -1233,8 +1403,11 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
   function handleCameraReady(video: HTMLVideoElement) {
     videoElementRef.current = video;
     const prescription = sessionQueue.getActivePrescription();
-    writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
+    writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"} phase=${sessionPhaseRef.current}`);
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
+
+    // In framing phase — start inference loop but suppress exercise_started coaching
+    // (greeting already explained the protocol). forcePreExerciseCheck handles voice.
     framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     // Start ghost render loop
@@ -2176,13 +2349,19 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
             borderRadius: 9,
             fontSize: 13,
             fontWeight: 600,
-            background: framingPanelState.tone === "good"
+            background: sessionPhase === "confirmed"
+              ? "rgba(63,185,80,0.10)"
+              : sessionPhase === "greeting"
+              ? "rgba(108,99,255,0.10)"
+              : framingPanelState.tone === "good"
               ? "rgba(63,185,80,0.10)"
               : framingPanelState.tone === "critical"
               ? "rgba(248,81,73,0.10)"
               : "rgba(210,153,34,0.10)",
             border: `1px solid ${
-              framingPanelState.tone === "good" ? "rgba(63,185,80,0.30)"
+              sessionPhase === "confirmed" ? "rgba(63,185,80,0.30)"
+              : sessionPhase === "greeting" ? "rgba(108,99,255,0.30)"
+              : framingPanelState.tone === "good" ? "rgba(63,185,80,0.30)"
               : framingPanelState.tone === "critical" ? "rgba(248,81,73,0.30)"
               : "rgba(210,153,34,0.30)"
             }`,
@@ -2190,59 +2369,112 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
             alignItems: "center",
             gap: 10,
           }}>
-            {/* Status dot */}
             <div style={{
               width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-              background: framingPanelState.tone === "good" ? "#3fb950"
+              background: sessionPhase === "confirmed" ? "#3fb950"
+                : sessionPhase === "greeting" ? "#a78bfa"
+                : framingPanelState.tone === "good" ? "#3fb950"
                 : framingPanelState.tone === "critical" ? "#f85149" : "#d29922",
               boxShadow: `0 0 6px ${
-                framingPanelState.tone === "good" ? "#3fb950"
+                sessionPhase === "confirmed" ? "#3fb950"
+                : sessionPhase === "greeting" ? "#a78bfa"
+                : framingPanelState.tone === "good" ? "#3fb950"
                 : framingPanelState.tone === "critical" ? "#f85149" : "#d29922"
               }`,
-              animation: framingPanelState.evaluating ? "pulse 1s infinite" : "none",
+              animation: sessionPhase === "greeting" ? "pulse 1.5s infinite" : framingPanelState.evaluating ? "pulse 1s infinite" : "none",
             }} />
-            {/* Message */}
             <span style={{
               flex: 1,
-              color: framingPanelState.tone === "good" ? "#9be7b0"
+              color: sessionPhase === "confirmed" ? "#9be7b0"
+                : sessionPhase === "greeting" ? "#c4b5fd"
+                : framingPanelState.tone === "good" ? "#9be7b0"
                 : framingPanelState.tone === "critical" ? "#ff8f8f" : "#ffcc80",
             }}>
-              {framingPanelState.message}
+              {sessionPhase === "greeting"
+                ? "Preparing your session…"
+                : sessionPhase === "confirmed"
+                ? "Perfect — I can see you clearly. Starting…"
+                : framingPanelState.message}
             </span>
-            {/* Severity chip */}
-            {framingPanelState.severity && framingPanelState.severity !== "ok" && (
-              <span style={{
-                fontSize: 10, padding: "2px 8px", borderRadius: 999, fontWeight: 700, flexShrink: 0,
-                background: framingPanelState.tone === "good" ? "rgba(63,185,80,0.15)"
-                  : framingPanelState.tone === "critical" ? "rgba(248,81,73,0.15)"
-                  : "rgba(210,153,34,0.15)",
-                color: framingPanelState.tone === "good" ? "#3fb950"
-                  : framingPanelState.tone === "critical" ? "#f85149" : "#d29922",
-              }}>
-                {framingPanelState.severity}
-              </span>
-            )}
           </div>
 
           {/* ── CAMERA CARD ── */}
           <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ position: "relative" }}>
-              <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
-              <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-                <PoseCanvasOverlay frame={inferenceLoop.frame} />
-              </div>
-              {/* Ghost silhouette canvas — layered on top of pose skeleton */}
-              <canvas
-                ref={ghostCanvasRef}
-                width={640} height={480}
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
-              />
-            </div>
-            {inferenceLoop.engineError && (
-              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
-                {inferenceLoop.engineError}
+
+            {/* GREETING PHASE OVERLAY — shown while greeting is speaking, camera off */}
+            {(sessionPhase === "greeting") && (
+              <div style={{
+                minHeight: 280, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 16,
+                padding: 24,
+              }}>
+                {/* Animated waveform */}
+                <div style={{ display: "flex", alignItems: "center", gap: 4, height: 40 }}>
+                  {[0.4, 0.7, 1.0, 0.7, 0.4, 0.9, 0.5].map((h, i) => (
+                    <div key={i} style={{
+                      width: 4, borderRadius: 2,
+                      background: "linear-gradient(180deg, #6C63FF, #00C2C7)",
+                      height: `${h * 100}%`,
+                      animation: `wave 1.2s ease-in-out infinite`,
+                      animationDelay: `${i * 0.15}s`,
+                    }} />
+                  ))}
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#e6edf3", marginBottom: 6 }}>
+                    {patientName ? `Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${patientName.split(" ")[0]}` : "Welcome"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#7a88a8" }}>
+                    Preparing your session…
+                  </div>
+                </div>
+                {previousSession && (
+                  <div style={{
+                    background: "rgba(108,99,255,0.08)", border: "1px solid rgba(108,99,255,0.2)",
+                    borderRadius: 8, padding: "8px 14px", fontSize: 11, color: "#a78bfa",
+                    maxWidth: 280, textAlign: "center",
+                  }}>
+                    Last session: {previousSession.sessionTitle} · Score {previousSession.mobilityScore}/100
+                  </div>
+                )}
               </div>
             )}
+
+            {/* FRAMING CONFIRMED OVERLAY */}
+            {sessionPhase === "confirmed" && (
+              <div style={{
+                minHeight: 280, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 12,
+                padding: 24,
+              }}>
+                <div style={{ fontSize: 32 }}>✅</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#9be7b0" }}>
+                  Perfect — I can see you clearly
+                </div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>Starting your session…</div>
+              </div>
+            )}
+
+            {/* CAMERA — shown during framing and running phases */}
+            <div style={{ display: sessionPhase === "greeting" || sessionPhase === "confirmed" ? "none" : "block" }}>
+              <div style={{ position: "relative" }}>
+                <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                  <PoseCanvasOverlay frame={inferenceLoop.frame} />
+                </div>
+                {/* Ghost silhouette canvas — layered on top of pose skeleton */}
+                <canvas
+                  ref={ghostCanvasRef}
+                  width={640} height={480}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
+                />
+              </div>
+              {inferenceLoop.engineError && (
+                <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
+                  {inferenceLoop.engineError}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -2975,6 +3207,10 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
       <MovementTimelinePanel defaultOpen={true} />
 
       <style>{`
+        @keyframes wave {
+          0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+          50% { transform: scaleY(1); opacity: 1; }
+        }
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
