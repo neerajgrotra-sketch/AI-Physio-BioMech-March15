@@ -899,13 +899,15 @@ export function useInferenceLoop() {
             }
 
             // ------------------------------------------------
-            // PREREQUISITE GATE (ready phase only)
-            // evaluateFraming ran above so prerequisiteResult
-            // is always current before we read it here.
-            // Only gates interpretMovement — everything else
-            // (framing panel, observation panel) still runs.
+            // PREREQUISITE GATE (before first rep only)
+            // Hard gate: blocks ready→lifting until prerequisites
+            // are met. Only applies when repCount === 0 — once
+            // a session is underway, the patient has already
+            // demonstrated adequate framing and the gate relaxes.
+            // Between reps (repCount > 0) framing issues are
+            // advisory only — shown visually, never blocking.
             // ------------------------------------------------
-            if (currentPhase === "ready") {
+            if (currentPhase === "ready" && output.repState.repCount === 0) {
               const prereq = framingCallbacks.getPrerequisiteResult();
               if (!prereq.allMet && prereq.failures.length > 0) {
                 const failure = prereq.failures[0];
@@ -917,12 +919,10 @@ export function useInferenceLoop() {
                   prereqLastFailureId.current   = failure.id;
                 }
 
-                // speakAfterSilence: waits for any current speech to finish,
-                // then speaks. Does NOT advance state until speech is queued.
-                // Uses a flag to prevent double-firing across rAF frames.
-                const speakAfterSilence = (text: string, onQueued: () => void) => {
+                const speakOnce = (text: string) => {
                   if (typeof window === "undefined" || !window.speechSynthesis) return;
-                  const doSpeak = () => {
+                  if (window.speechSynthesis.speaking) return; // don't cut over coaching intro
+                  window.setTimeout(() => {
                     const utt = new SpeechSynthesisUtterance(text);
                     utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
                     const voices = window.speechSynthesis.getVoices();
@@ -933,41 +933,25 @@ export function useInferenceLoop() {
                     ));
                     if (pref) utt.voice = pref;
                     window.speechSynthesis.speak(utt);
-                    onQueued(); // advance state machine only after queuing
-                  };
-                  const poll = () => {
-                    if (window.speechSynthesis.speaking) {
-                      window.setTimeout(poll, 300);
-                    } else {
-                      window.setTimeout(doSpeak, 200);
-                    }
-                  };
-                  if (window.speechSynthesis.speaking) {
-                    window.setTimeout(poll, 300);
-                  } else {
-                    window.setTimeout(doSpeak, 200);
-                  }
+                  }, 150);
                 };
 
                 const vs = prereqVoiceStateRef.current;
                 const spokenAt = prereqVoiceSpokenAtMs.current;
 
                 if (vs === "unsaid") {
-                  // Mark as pending immediately so we don't double-schedule
-                  prereqVoiceStateRef.current = "spoken_initial";
-                  speakAfterSilence(failure.patientMessage, () => {
-                    prereqVoiceSpokenAtMs.current = Date.now();
-                    console.log(`[PREREQ GATE] initial | id=${failure.id} | ${failure.clinicalNote}`);
-                  });
+                  speakOnce(failure.patientMessage);
+                  prereqVoiceStateRef.current   = "spoken_initial";
+                  prereqVoiceSpokenAtMs.current = nowMs;
+                  console.log(`[PREREQ GATE] initial | id=${failure.id} | ${failure.clinicalNote}`);
                 } else if (vs === "spoken_initial" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
                   prereqVoiceStateRef.current = "waiting";
                 } else if (vs === "waiting") {
                   const retry = buildPrereqRetryMessage(failure.id);
-                  prereqVoiceStateRef.current = "spoken_retry";
-                  speakAfterSilence(retry, () => {
-                    prereqVoiceSpokenAtMs.current = Date.now();
-                    console.log(`[PREREQ GATE] retry | id=${failure.id} | "${retry}"`);
-                  });
+                  speakOnce(retry);
+                  prereqVoiceStateRef.current   = "spoken_retry";
+                  prereqVoiceSpokenAtMs.current = nowMs;
+                  console.log(`[PREREQ GATE] retry | id=${failure.id} | "${retry}"`);
                 } else if (vs === "spoken_retry" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
                   prereqVoiceStateRef.current = "exhausted";
                   console.log(`[PREREQ GATE] exhausted | id=${failure.id} | visual only`);
