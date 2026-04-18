@@ -1335,7 +1335,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
         lastFramingSnapMsRef.current = snapNow;
 
         const fp   = framingIntelligence.framingPanelState;
-        const prereq = framingIntelligence.prerequisiteResult;
+        // Read ref directly — state may be 1 render behind, ref is always current
+        const prereq = framingIntelligence.prerequisiteResultRef.current;
         const conf = liveConfidenceSnapshotRef.current;
         const phase = ghostPhaseInfRef.current;
         const prescription = ghostPrescriptionRef.current;
