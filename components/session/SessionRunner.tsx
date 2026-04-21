@@ -82,7 +82,7 @@ function writeDebugLog(level: LogLevel, category: string, message: string, detai
     }),
     level, category, message, detail
   };
-  globalDebugLog = [entry, ...globalDebugLog].slice(0, 50);
+  globalDebugLog = [entry, ...globalDebugLog].slice(0, 500);
   if (globalSetDebugLog) globalSetDebugLog([...globalDebugLog]);
 }
 
@@ -1256,7 +1256,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     if (!prescriptionId) return; // no session ID — can't associate the log
     try {
       const supabase = getSupabaseClient();
-      const allEntries = [...globalDebugLog]; // newest-first snapshot
+      // globalDebugLog is newest-first — reverse to get chronological order for Supabase
+      const allEntries = [...globalDebugLog].reverse();
       const framingOnly = allEntries.filter(e => e.category === "FRAMING" || e.level === "FRAMING_VOICE" || e.level === "FRAMING_SNAP");
       const exerciseCount = sessionQueue.getActiveQueue().length;
 
@@ -1283,6 +1284,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
     sessionStartedAtMsRef.current = Date.now();
+    globalDebugLog = []; // clear buffer from any previous session
     writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
     exerciseLandmarkConfidenceRef.current = {};
     exercisePeakMetricsRef.current = {};
