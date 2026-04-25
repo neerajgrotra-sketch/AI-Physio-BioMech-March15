@@ -43,6 +43,9 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { getBodyFrame } from "@/lib/pose/bodyFrame";
 import { drawLive, drawHoldRing } from "@/lib/pose/ghostRenderer";
 import { poseFrameToLandmarkArray, mirrorLandmarks } from "@/lib/pose/poseFrameBridge";
+import { getGhostConfig } from "@/lib/pose/ghostConfig";
+import { computeGhostAnim } from "@/lib/pose/ghostAnimator";
+import { dispatchGhostDraw } from "@/lib/pose/ghostDrawers";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
 import MovementTimelinePanel from "@/components/debug/MovementTimelinePanel";
@@ -515,15 +518,15 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostSmoothedTorso   = useRef<number>(0);
   const ghostSmoothedSW      = useRef<number>(0);
   const ghostFrameInitRef    = useRef<boolean>(false);
-  const ghostRepCountRef  = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
-  const ghostPrevPhaseRef = useRef<string>("");  // detect phase transitions for debug log
-  const ghostReadyStartRef = useRef<number>(0); // when ready phase started, for animation after wait
-  const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
-  const ghostStartRef  = useRef<number>(performance.now());
-  const ghostHoldRef   = useRef<number|null>(null);
-  const ghostLowRef    = useRef<number>(0);
-  const ghostRepRef    = useRef<boolean>(false);
-  const ghostHistRef   = useRef<number[]>([]);
+  const ghostRepCountRef   = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
+  const ghostPrevPhaseRef  = useRef<string>("");  // detect phase transitions for debug log
+  const ghostReadyStartRef = useRef<number>(0);  // when ready phase started, for animation after wait
+  // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
+  const ghostTransitionRef = useRef<{ active: boolean; startMs: number; fromGhostT: number }>({
+    active: false, startMs: 0, fromGhostT: 0,
+  });
+  // ghostPhaseRef, ghostStartRef, ghostHoldRef, ghostLowRef, ghostRepRef, ghostHistRef
+  // removed — replaced by computeGhostAnim() in ghostAnimator.ts
   const [ghostScore, setGhostScore]         = useState(0);
   const [ghostHoldMs, setGhostHoldMs]       = useState(0);
   const [ghostPhase, setGhostPhase]         = useState<"demo"|"attempt"|"holding"|"rep_complete">("demo");
@@ -1000,9 +1003,20 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
         const startNextExercise = () => {
           framingIntelligence.reset("Position yourself for the next exercise.");
-          // Reset ghost to demo phase for new exercise
-          ghostPhaseRef.current="demo"; ghostStartRef.current=performance.now();
-          ghostHoldRef.current=null; ghostLowRef.current=0; ghostRepRef.current=false; ghostHistRef.current=[];
+          // ── TRANSITION: capture current ghostT before reset ────────────────
+          // The tick loop will lerp ghostT from this value down to 0 over
+          // TRANSITION_MS (300ms) before the new exercise teaching anim starts.
+          // This prevents the arm snapping from one exercise position to another.
+          const currentGhostT = ghostPhaseInfRef.current === "holding" ? 1
+            : ghostPhaseInfRef.current === "lifting" ? 1
+            : ghostPhaseInfRef.current === "lowering" ? 0.5
+            : 0;
+          ghostTransitionRef.current = { active: true, startMs: performance.now(), fromGhostT: currentGhostT };
+          // Reset ghost smoothing so new exercise anchors to fresh shoulder position
+          ghostFrameInitRef.current = false;
+          ghostRepCountRef.current = 0;
+          ghostPrevPhaseRef.current = "";
+          ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
           framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
@@ -1413,18 +1427,12 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     // Start ghost render loop
-    ghostPhaseRef.current = "demo";
-    ghostStartRef.current = performance.now();
-    ghostHoldRef.current = null;
-    ghostLowRef.current = 0;
-    ghostRepRef.current = false;
-    ghostHistRef.current = [];
-    // Do NOT clear ghostLastFrameRef here — cached frame keeps ghost visible at rest
-    // Reset frame smoothing so new exercise anchors cleanly
+    // Reset frame smoothing so first exercise anchors cleanly to fresh pose
     ghostFrameInitRef.current = false;
     ghostRepCountRef.current = 0;
     ghostPrevPhaseRef.current = "";
     ghostReadyStartRef.current = performance.now();
+    ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
     ghostSetLogRef.current?.([]);
     startGhostLoop();
@@ -1463,37 +1471,34 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
   function startGhostLoop() {
     cancelAnimationFrame(ghostAnimRef.current);
-    const DEMO_CYCLE_S = 7;
-    const INTENT_DELTA = 0.10; const INTENT_MIN = 0.20; const INTENT_WIN = 20;
-    const MATCH_THRESHOLD = 0.85; const FAIL_THRESHOLD = 0.55; const LOW_TIMEOUT = 8;
+
+    // ── TRANSITION_MS: time to fade ghost to rest between exercises ──────────
+    const TRANSITION_MS = 300;
+
     let lastT = performance.now();
 
-    function easeInOut(t: number) { return t<0.5?4*t*t*t:1-(-2*t+2)**3/2; }
-    function cycleT(e: number) {
-      const t=(e%DEMO_CYCLE_S)/DEMO_CYCLE_S;
-      if(t<0.14)return 0; if(t<0.43)return easeInOut((t-0.14)/0.29);
-      if(t<0.64)return 1; if(t<0.93)return 1-easeInOut((t-0.64)/0.29); return 0;
-    }
-
     function tick() {
-      const canvas = ghostCanvasRef.current; if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
-      const ctx = canvas.getContext("2d"); if (!ctx) return;
-      // Use fixed 640x480 buffer — canvas is styled to 100% via CSS
-      // Landmarks are normalised 0-1 so they scale correctly with any W/H
+      const canvas = ghostCanvasRef.current;
+      if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Fixed 640×480 buffer — CSS scales it to 100%
       const W = 640; const H = 480;
-      if (canvas.width !== W || canvas.height !== H) {
-        canvas.width = W; canvas.height = H;
-      }
+      if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+
       const now = performance.now();
-      const deltaS = Math.min((now - lastT) / 1000, 0.1); lastT = now;
+      lastT = now;
       ctx.clearRect(0, 0, W, H);
 
+      // ── 1. Get live frame ─────────────────────────────────────────────────
       const frame = ghostFrameRef.current;
-      if (!frame || !frame.personDetected) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      if (!frame || !frame.personDetected) {
+        ghostAnimRef.current = requestAnimationFrame(tick);
+        return;
+      }
 
-      // Sample landmark confidence every frame for all phases.
-      // Ghost tick is the only loop guaranteed to fire on every rAF regardless
-      // of inference phase — ensures confidence populates for all exercises.
+      // ── 2. Sample landmark confidence every frame ─────────────────────────
       const prescriptionForConf = ghostPrescriptionRef.current;
       if (prescriptionForConf) {
         framingIntelligence.sampleLandmarkConfidence(frame, prescriptionForConf);
@@ -1501,47 +1506,34 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
       }
 
-      // ── FRAMING DEBUG SNAPSHOT (every 2s) ──────────────────────────────
-      // Logs the full framing intelligence state so we can diagnose
-      // exactly what the engine sees, what it tells the patient,
-      // and whether prerequisites are blocking the session.
+      // ── 3. Framing debug snapshot (every 2s) ──────────────────────────────
       const snapNow = Date.now();
       if (snapNow - lastFramingSnapMsRef.current >= 2000) {
         lastFramingSnapMsRef.current = snapNow;
-
-        const fp   = framingIntelligence.framingPanelState;
-        // Read ref directly — state may be 1 render behind, ref is always current
+        const fp     = framingIntelligence.framingPanelState;
         const prereq = framingIntelligence.prerequisiteResultRef.current;
-        const conf = liveConfidenceSnapshotRef.current;
-        const phase = ghostPhaseInfRef.current;
+        const conf   = liveConfidenceSnapshotRef.current;
+        const phase  = ghostPhaseInfRef.current;
         const prescription = ghostPrescriptionRef.current;
         const liveObs = inferenceLoop.liveObservation;
-
-        // What landmarks are visible and at what confidence
         const lmLines: string[] = [];
         const lmData = (frame as any)?.landmarks ?? {};
         const allLm = ["nose","left_shoulder","right_shoulder","left_elbow","right_elbow",
-                        "left_wrist","right_wrist","left_hip","right_hip",
-                        "left_knee","right_knee","left_ankle","right_ankle"];
+                       "left_wrist","right_wrist","left_hip","right_hip",
+                       "left_knee","right_knee","left_ankle","right_ankle"];
         for (const name of allLm) {
           const pt = lmData[name];
           if (!pt) { lmLines.push(`  ${name}: NOT DETECTED`); continue; }
           const score = typeof pt.score === "number" ? pt.score : 1;
-          const vis = score >= 0.15 ? "✓" : "✗";
-          lmLines.push(`  ${vis} ${name}: ${(score * 100).toFixed(0)}%`);
+          lmLines.push(`  ${score >= 0.15 ? "✓" : "✗"} ${name}: ${(score * 100).toFixed(0)}%`);
         }
-
-        // Prerequisite failures
         const prereqLines = prereq.allMet
           ? ["  ✓ All prerequisites met"]
-          : prereq.failures.map(f => `  ✗ [${f.id}] "${f.patientMessage}"\n     clinical: ${f.clinicalNote}`);
-
-        // What camera coverage is estimated
+          : prereq.failures.map((f: any) => `  ✗ [${f.id}] "${f.patientMessage}"\n     clinical: ${f.clinicalNote}`);
         const coverageEstimate = (() => {
           const lm = lmData;
           const v = (n: string) => { const p = lm[n]; return p && typeof p.score === "number" ? p.score > 0.2 : !!p; };
-          const hasHead = v("nose");
-          const hasSh   = v("left_shoulder") && v("right_shoulder");
+          const hasHead = v("nose"); const hasSh = v("left_shoulder") && v("right_shoulder");
           const hasHips = v("left_hip") && v("right_hip");
           const hasKnee = v("left_knee") || v("right_knee");
           const hasAnk  = v("left_ankle") || v("right_ankle");
@@ -1549,10 +1541,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           if (hasHead && hasSh && hasHips && hasKnee) return "torso_and_hips (no ankles)";
           if (hasHead && hasSh && hasHips) return "torso_and_hips (no knees)";
           if (hasHead && hasSh) return "upper_body";
-          if (hasHead) return "head_only";
-          return "none";
+          return hasHead ? "head_only" : "none";
         })();
-
         const detail = [
           `── EXERCISE ─────────────────────────────`,
           `  id:       ${prescription?.id ?? "none"}`,
@@ -1565,7 +1555,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           `  coverage_estimate: ${coverageEstimate}`,
           `  confidence_pct:    ${conf !== null ? conf + "%" : "not sampled yet"}`,
           `  person_detected:   ${frame?.personDetected ?? false}`,
-          `  posture:           ${frame ? (liveObs.movementLines[0] ?? "unknown") : "no frame"}`,
+          `  posture:           ${liveObs.movementLines[0] ?? "unknown"}`,
           ``,
           `── LANDMARK CONFIDENCE ──────────────────`,
           ...lmLines,
@@ -1578,13 +1568,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           `  tone:      ${fp.tone}`,
           `  message:   "${fp.message}"`,
           `  evaluating: ${fp.evaluating}`,
-          ``,
-          `── WHAT PATIENT HEARS ───────────────────`,
-          `  framing_panel_msg: "${fp.message}"`,
-          `  (voice fires once on prereq fail, then retries after 12s silence)`,
         ].join("\n");
-
-        // Headline summarises the most important thing in one line
         const headline = !frame?.personDetected
           ? "❌ No person detected"
           : !prereq.allMet
@@ -1592,31 +1576,27 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           : fp.severity === "ok"
           ? `✅ Framing OK — conf=${conf ?? "?"}% phase=${phase}`
           : `⚠ Framing ${fp.severity} — "${fp.message}" conf=${conf ?? "?"}%`;
-
         writeDebugLog("FRAMING_SNAP", "FRAMING", headline, detail);
       }
 
+      // ── 4. Landmarks ──────────────────────────────────────────────────────
       const rawLms = poseFrameToLandmarkArray(frame);
       const lms    = mirrorLandmarks(rawLms);
       const slug   = ghostSlugRef.current;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
-      // Simple landmark-based ghost: anchor directly to detected shoulder positions.
-      // No body frame coordinate system — eliminates all drift and rotation bugs.
-      // We only show the relevant arm(s) for each exercise, nothing else.
+      // ── 5. Config — loaded once per slug, no branching in tick ───────────
+      const config = getGhostConfig(slug);
+
+      // ── 6. Smoothed body frame (anchor + sizing) ──────────────────────────
       const freshFrame = getBodyFrame(lms as any, W, H);
-      // SMOOTHED BODY FRAME: LERP the origin and axes to prevent ghost drift
-      // when shoulder landmarks shift as arms raise overhead.
-      // During active movement phases, freeze the frame (only update in ready phase).
-      const currentInfPhase = ghostPhaseInfRef.current;
-      const canUpdateFrame = freshFrame !== null && (
-        currentInfPhase === "ready" || currentInfPhase === "idle" || currentInfPhase === "unknown"
-      );
-      if (freshFrame && canUpdateFrame) {
-        // LERP speed: fast during ready (0.15), frozen during active phases
+      const infPhase   = ghostPhaseInfRef.current;
+      const canUpdate  = freshFrame !== null &&
+        (infPhase === "ready" || infPhase === "idle" || infPhase === "unknown");
+
+      if (freshFrame && canUpdate) {
         const L = 0.15;
         if (!ghostFrameInitRef.current) {
-          // First frame — snap immediately, no lerp
           ghostSmoothedOriginX.current = freshFrame.origin.x;
           ghostSmoothedOriginY.current = freshFrame.origin.y;
           ghostSmoothedADX.current = freshFrame.axisDown.x;
@@ -1624,24 +1604,21 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           ghostSmoothedARX.current = freshFrame.axisRight.x;
           ghostSmoothedARY.current = freshFrame.axisRight.y;
           ghostSmoothedTorso.current = freshFrame.torsoLen;
-          ghostSmoothedSW.current = freshFrame.shoulderWidth;
-          ghostFrameInitRef.current = true;
+          ghostSmoothedSW.current    = freshFrame.shoulderWidth;
+          ghostFrameInitRef.current  = true;
         } else {
           ghostSmoothedOriginX.current += (freshFrame.origin.x - ghostSmoothedOriginX.current) * L;
           ghostSmoothedOriginY.current += (freshFrame.origin.y - ghostSmoothedOriginY.current) * L;
-          // LERP axes then RE-NORMALIZE — lerped vectors lose unit length and orthogonality
-          const adX = ghostSmoothedADX.current + (freshFrame.axisDown.x - ghostSmoothedADX.current) * L;
-          const adY = ghostSmoothedADY.current + (freshFrame.axisDown.y - ghostSmoothedADY.current) * L;
+          const adX = ghostSmoothedADX.current + (freshFrame.axisDown.x  - ghostSmoothedADX.current) * L;
+          const adY = ghostSmoothedADY.current + (freshFrame.axisDown.y  - ghostSmoothedADY.current) * L;
           const adM = Math.sqrt(adX*adX + adY*adY) || 1;
-          ghostSmoothedADX.current = adX / adM;
-          ghostSmoothedADY.current = adY / adM;
+          ghostSmoothedADX.current = adX / adM; ghostSmoothedADY.current = adY / adM;
           const arX = ghostSmoothedARX.current + (freshFrame.axisRight.x - ghostSmoothedARX.current) * L;
           const arY = ghostSmoothedARY.current + (freshFrame.axisRight.y - ghostSmoothedARY.current) * L;
           const arM = Math.sqrt(arX*arX + arY*arY) || 1;
-          ghostSmoothedARX.current = arX / arM;
-          ghostSmoothedARY.current = arY / arM;
-          ghostSmoothedTorso.current += (freshFrame.torsoLen - ghostSmoothedTorso.current) * L;
-          ghostSmoothedSW.current += (freshFrame.shoulderWidth - ghostSmoothedSW.current) * L;
+          ghostSmoothedARX.current = arX / arM; ghostSmoothedARY.current = arY / arM;
+          ghostSmoothedTorso.current += (freshFrame.torsoLen      - ghostSmoothedTorso.current) * L;
+          ghostSmoothedSW.current    += (freshFrame.shoulderWidth  - ghostSmoothedSW.current)    * L;
         }
         ghostLastFrameRef.current = freshFrame;
       } else if (freshFrame && !ghostFrameInitRef.current) {
@@ -1653,355 +1630,123 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         ghostSmoothedARX.current = freshFrame.axisRight.x;
         ghostSmoothedARY.current = freshFrame.axisRight.y;
         ghostSmoothedTorso.current = freshFrame.torsoLen;
-        ghostSmoothedSW.current = freshFrame.shoulderWidth;
-        ghostFrameInitRef.current = true;
-        ghostLastFrameRef.current = freshFrame;
+        ghostSmoothedSW.current    = freshFrame.shoulderWidth;
+        ghostFrameInitRef.current  = true;
+        ghostLastFrameRef.current  = freshFrame;
       }
-      // Build stable body frame from smoothed values
+
       if (!ghostFrameInitRef.current) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
-      const lastF = ghostLastFrameRef.current!;
-      const bodyFrame: import("@/lib/pose/bodyFrame").BodyFrame = {
-        ...lastF,
-        origin:      { x: ghostSmoothedOriginX.current, y: ghostSmoothedOriginY.current },
-        axisDown:    { x: ghostSmoothedADX.current,     y: ghostSmoothedADY.current },
-        axisRight:   { x: ghostSmoothedARX.current,     y: ghostSmoothedARY.current },
-        torsoLen:    ghostSmoothedTorso.current,
-        shoulderWidth: ghostSmoothedSW.current,
-      };
 
-      // ── Ghost v18: Fixed-direction, shoulder-anchored ────────────────────────
-      // Architecture:
-      // 1. Shoulder pixel position = anchor (most stable landmark always)
-      // 2. Arm length = shoulderWidth * ratio, measured during ready phase
-      //    and FROZEN once active — never recalculated during movement
-      // 3. Direction vectors are fixed per exercise type — no elbow/wrist
-      //    landmarks used in ghost geometry at all
-      // 4. ghostT (0→1) drives animation smoothly via infPhase
-      //
-      // This eliminates all size instability and tilt/snap issues.
-      // The ghost is a clean leading indicator, not a follower.
-
-      // ── ROM score: elevation-based, patient-specific ─────────────────────
-      // Both values read from refs that hold live object references.
-      // ALL inferenceLoop state values are stale in the rAF closure — must use refs.
-      // ghostActiveMetricRef: current activeMetricValue, assigned at render time
-      // calibrationBaselineRef: mutated in-place by useInferenceLoop when calibration completes
-      // ghostPrescriptionRef: same prescription object calibration mutates in-place
+      // ── 7. ROM score ──────────────────────────────────────────────────────
       const activePxMetric = ghostActiveMetricRef.current;
-      const calibBaseline = inferenceLoop.calibrationBaselineRef.current;
-      const tgtThreshForScore = ghostPrescriptionRef.current?.targetThreshold ?? null;
+      const calibBaseline  = inferenceLoop.calibrationBaselineRef.current;
+      const tgtThresh      = ghostPrescriptionRef.current?.targetThreshold ?? null;
       let score = 0;
-      if (activePxMetric !== null && tgtThreshForScore !== null && tgtThreshForScore > calibBaseline) {
-        score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThreshForScore - calibBaseline)));
+      if (activePxMetric !== null && tgtThresh !== null && tgtThresh > calibBaseline) {
+        score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThresh - calibBaseline)));
       }
       setGhostScore(score);
 
-      // ── SCORE DEBUG LOG (fires every ~2s) ──────────────────────────────
-      if (Math.floor(now / 2000) !== Math.floor((now - 16) / 2000)) {
-        console.log(
-          `[SCORE DEBUG] score=${Math.round(score * 100)}%` +
-          ` | metric=${activePxMetric?.toFixed(1) ?? "null"}°` +
-          ` | calibBaseline=${calibBaseline.toFixed(1)}°` +
-          ` | tgtThresh=${tgtThreshForScore?.toFixed(1) ?? "null"}°` +
-          ` | prescriptionNull=${ghostPrescriptionRef.current === null}`
-        );
-      }
-
-      // Shoulder anchors — most reliable landmarks at all arm positions
-      const lsLm = lms[11]; const rsLm = lms[12];
-      const lsVis = !!lsLm && (lsLm.visibility ?? 1) > 0.25;
-      const rsVis = !!rsLm && (rsLm.visibility ?? 1) > 0.25;
-
-      if (!lsVis && !rsVis) {
-        drawLive(ctx, lms, W, H, score);
-        ghostAnimRef.current = requestAnimationFrame(tick);
-        return;
-      }
-
-      // ── Arm length — computed from smoothed shoulder width, frozen when active ──
-      // shoulderWidth is already smoothed and frozen during active phases
-      // by the body frame system above. Use it directly.
-      // shoulderWidth from bodyFrame is already in canvas pixels — do NOT multiply by W
-      const swPx = ghostSmoothedSW.current;
-      const upperArmPx = swPx * 1.05; // tuned for correct visual proportion
-      const foreArmPx  = swPx * 0.90;
-
-      // ── Exercise flags ────────────────────────────────────────────────────
-      const isFlexion   = slug.includes("flexion");
-      const isAbduction = slug.includes("abduction");
-      const isKnee      = slug.includes("knee_extension");
-      const isSTS       = slug === "sit_to_stand";
-      const isRight     = slug.includes("_right") || slug.includes("bilateral");
-      const isLeft      = slug.includes("_left")  || slug.includes("bilateral");
-
-      // ── Phase → ghostT ────────────────────────────────────────────────────
-      const infPhase  = ghostPhaseInfRef.current;
-      const holdRem   = ghostHoldRemRef.current;
-      const holdTotal = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+      // ── 8. Animation state — pure function, no exercise knowledge ─────────
+      const holdRem    = ghostHoldRemRef.current;
+      const holdTotal  = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+      const repsDone   = ghostRepCountRef.current;
       const readyElapsedS = (now - ghostReadyStartRef.current) / 1000;
-      const repsDone  = ghostRepCountRef.current;
 
-      let ghostT = 0; // 0 = rest, 1 = full target
-      let ghostOpacity = 0.72;
-      let isHolding = false;
+      let anim = computeGhostAnim({
+        infPhase, holdRemainingMs: holdRem, holdTotalMs: holdTotal,
+        repsDone, readyElapsedS, nowMs: now,
+      });
 
-      if (infPhase === "ready" || infPhase === "idle") {
-        if (repsDone === 0) {
-          // Teaching animation: oscillate 0→1→0 so patient sees the movement
-          ghostT = 0.5 + 0.5 * Math.sin(now / 3200);
-          ghostOpacity = 0.65;
-        } else if (readyElapsedS < 5) {
-          // Between reps: ghost dims at rest
-          ghostT = 0; ghostOpacity = 0.18 + 0.08 * Math.sin(now / 900);
+      // ── 9. Exercise transition — fade ghostT to 0 over TRANSITION_MS ─────
+      // Triggered by handleExerciseComplete setting ghostTransitionRef.active.
+      // Prevents the ghost snapping from one exercise position to another.
+      const trans = ghostTransitionRef.current;
+      if (trans.active) {
+        const elapsed = now - trans.startMs;
+        if (elapsed < TRANSITION_MS) {
+          // Override ghostT: lerp from previous ghostT down to 0
+          const progress = elapsed / TRANSITION_MS;
+          anim = { ...anim, ghostT: trans.fromGhostT * (1 - progress), opacity: anim.opacity * (1 - progress * 0.5) };
         } else {
-          // Encouragement ramp after 5s rest: ghost rises to invite next rep
-          ghostT = Math.min(1, (readyElapsedS - 5) / 6);
-          ghostOpacity = 0.72;
+          // Transition complete — clear flag
+          ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
         }
-      } else if (infPhase === "lifting") {
-        ghostT = 1; ghostOpacity = 0.72; // ghost at target: "get here"
-      } else if (infPhase === "top" || infPhase === "holding") {
-        ghostT = 1; ghostOpacity = 0.88; isHolding = true;
-      } else if (infPhase === "lowering") {
-        // Pulse between 40% and 75% to signal "come back down"
-        ghostT = 0.4 + 0.35 * Math.sin(now / 800); ghostOpacity = 0.72;
-      } else if (infPhase === "complete" || infPhase === "bottom") {
-        ghostT = 1; ghostOpacity = 1.0;
-      } else {
-        ghostT = 1; ghostOpacity = 0.6;
       }
 
-      // ── Phase badge ───────────────────────────────────────────────────────
-      if (infPhase === "holding" || infPhase === "top") {
-        setGhostPhase("holding");
-        setGhostHoldMs(holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0);
-      } else if (infPhase === "ready" && repsDone === 0) setGhostPhase("demo");
-      else if (infPhase === "complete") setGhostPhase("rep_complete");
-      else { setGhostPhase("attempt"); setGhostHoldMs(0); }
-
-      // ── Phase transition log ──────────────────────────────────────────────
+      // ── 10. Phase transition logging ──────────────────────────────────────
       if (infPhase !== ghostPrevPhaseRef.current) {
         if (infPhase === "ready") ghostReadyStartRef.current = now;
         const entry: GhostLogEntry = {
-          id: `${now}-${Math.random().toString(36).slice(2,5)}`,
+          id: `${now}-${Math.random().toString(36).slice(2, 5)}`,
           time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
           phase: infPhase, score: Math.round(score * 100), rep: repsDone,
-          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
+          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score * 100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem) + "ms" : "n/a"}`,
         };
         ghostPrevPhaseRef.current = infPhase;
         ghostLogRef.current = [entry, ...ghostLogRef.current].slice(0, 80);
         ghostSetLogRef.current?.([...ghostLogRef.current]);
       }
 
-      // ── Colour: blue → green as ghostT goes 0 → 1 ────────────────────────
-      const r = Math.floor(96  + (74  - 96)  * ghostT);
-      const g = Math.floor(165 + (222 - 165) * ghostT);
-      const b = Math.floor(250 + (128 - 250) * ghostT);
-      const col = `rgba(${r},${g},${b},${ghostOpacity})`;
+      // ── 11. UI badge sync ─────────────────────────────────────────────────
+      setGhostPhase(anim.badgePhase);
+      setGhostHoldMs(anim.holdElapsedMs);
 
-      // ── Core arm drawing: shoulder → elbow → wrist ────────────────────────
-      // All positions computed from shoulder anchor + fixed direction vectors.
-      // No other landmarks involved. Size from frozen shoulderWidth only.
-      const drawArm = (
-        shX: number, shY: number, // shoulder pixel position (anchor)
-        dX: number, dY: number,   // interpolated direction (normalised)
-      ) => {
-        const dm = Math.sqrt(dX*dX + dY*dY) || 1;
-        const nx = dX/dm; const ny = dY/dm;
-        const elX = shX + nx * upperArmPx;
-        const elY = shY + ny * upperArmPx;
-        const wrX = elX + nx * foreArmPx;
-        const wrY = elY + ny * foreArmPx;
+      // ── 12. DRAW — dispatch to the correct draw function for this exercise ─
+      // getGhostConfig() already ran above. dispatchGhostDraw() reads drawMode
+      // and calls the right function. Zero exercise branching here.
+      const { r, g, b } = anim.colorRGB;
+      const physioTargetDeg = (ghostPrescriptionRef.current as any)?.romTargetDegrees
+        ?? ghostPrescriptionRef.current?.targetThreshold
+        ?? null;
 
-        ctx.setLineDash([9, 5]);
-        ctx.lineWidth = 6;
-        ctx.lineCap = "round";
-        ctx.strokeStyle = col;
-        ctx.beginPath(); ctx.moveTo(shX, shY); ctx.lineTo(elX, elY); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(elX, elY); ctx.lineTo(wrX, wrY); ctx.stroke();
-        ctx.setLineDash([]);
+      dispatchGhostDraw({
+        ctx,
+        config,
+        lms: lms as any,
+        ghostT:          anim.ghostT,
+        opacity:         anim.opacity,
+        colorRGB:        { r, g, b },
+        W, H,
+        shoulderWidthPx: ghostSmoothedSW.current,
+        torsoLenPx:      ghostSmoothedTorso.current,
+        physioTargetDeg,
+      });
 
-        for (const [px, py, r2] of [[shX, shY, 9], [elX, elY, 8], [wrX, wrY, 7]] as [number,number,number][]) {
-          ctx.beginPath(); ctx.arc(px, py, r2, 0, Math.PI*2);
-          ctx.fillStyle = col; ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
-        }
-      };
-
-      // ── Fixed direction vectors per exercise type ─────────────────────────
-      // REST direction: arm hangs straight down along torso
-      // Canvas Y increases downward, so rest = (small_x, positive_y)
-      // TARGET direction: depends on exercise
-      // Flexion target:   arm sweeps forward and UP → (slight_x, -1)
-      // Abduction target: arm sweeps OUT sideways  → (±1, slight_y)
-      //
-      // ghostT interpolates REST → TARGET linearly.
-      // Vectors are normalised inside drawArm so magnitudes don't matter.
-
-      if (isFlexion || isAbduction) {
-        const restDX = 0.12; // slight outward lean at rest (natural arm hang)
-        const restDY = 1.0;  // straight down
-
-        const tgtDX = isFlexion ? 0.06 : 1.0;
-        const tgtDY = isFlexion ? -1.0 : 0.04;
-
-        const dX = restDX + (tgtDX - restDX) * ghostT;
-        const dY = restDY + (tgtDY - restDY) * ghostT;
-
-        if (isRight && rsVis) drawArm(rsLm.x * W, rsLm.y * H,  dX, dY);
-        if (isLeft  && lsVis) drawArm(lsLm.x * W, lsLm.y * H, -dX, dY);
-
-      } else if (isKnee) {
-        // ── Knee extension: hip anchor → leg extends forward ────────────────
-        // Use hip landmarks as anchor (seated exercise).
-        // Lower body landmarks: 23=L_hip 24=R_hip 25=L_knee 26=R_knee
-        const lhLm = lms[23]; const rhLm = lms[24];
-        const lkLm = lms[25]; const rkLm = lms[26];
-        const hipVis = (lm: typeof lhLm) => !!lm && (lm.visibility ?? 1) > 0.25;
-
-        // Knee segment length from hip→knee if visible, else estimate from sw
-        const kneeLenR = (hipVis(rhLm) && hipVis(rkLm))
-          ? Math.sqrt(Math.pow((rkLm!.x - rhLm!.x)*W, 2) + Math.pow((rkLm!.y - rhLm!.y)*H, 2))
-          : upperArmPx;
-        const kneeLenL = (hipVis(lhLm) && hipVis(lkLm))
-          ? Math.sqrt(Math.pow((lkLm!.x - lhLm!.x)*W, 2) + Math.pow((lkLm!.y - lhLm!.y)*H, 2))
-          : upperArmPx;
-        const shinLen = foreArmPx;
-
-        // Rest: lower leg hangs down from knee. Target: leg extends forward.
-        const kRestDX = 0.1; const kRestDY = 1.0;
-        const kTgtDX  = 0.85; const kTgtDY = 0.1;
-        const kdX = kRestDX + (kTgtDX - kRestDX) * ghostT;
-        const kdY = kRestDY + (kTgtDY - kRestDY) * ghostT;
-        const kdm = Math.sqrt(kdX*kdX + kdY*kdY) || 1;
-        const knx = kdX/kdm; const kny = kdY/kdm;
-
-        const drawLeg = (
-          hipX: number, hipY: number,
-          kneeX: number, kneeY: number,
-          legLen: number, flipX: number
-        ) => {
-          // Thigh: hip to knee (drawn on detected positions — thigh doesn't move in knee ext)
-          ctx.setLineDash([9, 5]); ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.strokeStyle = col;
-          ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
-          ctx.setLineDash([]);
-          // Shin: knee → extended position (animated by ghostT)
-          const shX2 = kneeX + knx * flipX * legLen;
-          const shY2 = kneeY + kny * shinLen;
-          ctx.setLineDash([9, 5]); ctx.strokeStyle = col;
-          ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(shX2, shY2); ctx.stroke();
-          ctx.setLineDash([]);
-          for (const [px, py] of [[hipX, hipY], [kneeX, kneeY], [shX2, shY2]]) {
-            ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI*2);
-            ctx.fillStyle = col; ctx.fill();
-            ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
-          }
-        };
-
-        if (isRight && hipVis(rhLm) && hipVis(rkLm)) {
-          drawLeg(rhLm!.x*W, rhLm!.y*H, rkLm!.x*W, rkLm!.y*H, kneeLenR, 1);
-        }
-        if (isLeft && hipVis(lhLm) && hipVis(lkLm)) {
-          drawLeg(lhLm!.x*W, lhLm!.y*H, lkLm!.x*W, lkLm!.y*H, kneeLenL, -1);
-        }
-
-      } else if (isSTS) {
-        // ── Sit to Stand: show body rising ───────────────────────────────────
-        const lhLm = lms[23]; const rhLm = lms[24];
-        const hVis = (lm: typeof lhLm) => !!lm && (lm.visibility ?? 1) > 0.25;
-
-        if (hVis(lhLm) && hVis(rhLm)) {
-          const hipMidX = (lhLm!.x + rhLm!.x) * 0.5 * W;
-          const hipMidY = (lhLm!.y + rhLm!.y) * 0.5 * H;
-          const riseLen = ghostSmoothedTorso.current * H * ghostT;
-          const arrowTipY = hipMidY - riseLen * 0.8;
-
-          ctx.setLineDash([9, 5]); ctx.lineWidth = 8; ctx.strokeStyle = col; ctx.lineCap = "round";
-          ctx.beginPath(); ctx.moveTo(hipMidX, hipMidY); ctx.lineTo(hipMidX, arrowTipY); ctx.stroke();
-          ctx.setLineDash([]);
-
-          // Arrowhead
-          ctx.beginPath();
-          ctx.moveTo(hipMidX, arrowTipY);
-          ctx.lineTo(hipMidX - 16, arrowTipY + 20);
-          ctx.lineTo(hipMidX + 16, arrowTipY + 20);
-          ctx.closePath();
-          ctx.fillStyle = col; ctx.fill();
-
-          // Joint dot at hip
-          ctx.beginPath(); ctx.arc(hipMidX, hipMidY, 9, 0, Math.PI*2);
-          ctx.fillStyle = col; ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
-        }
-      }
-
-      // ── ROM score ring — top-left corner ─────────────────────────────────
-      // Mirror of hold ring (top-right). Shows patient's current ROM as a
-      // percentage of their target. Orange→yellow→green as score improves.
-      // Dimmed during ready phase; full opacity during lifting/holding.
+      // ── 13. ROM score ring (top-left) ─────────────────────────────────────
       {
-        const romPct = score; // 0–1 from elevation formula above
+        const romPct    = score;
         const romRadius = Math.min(W, H) * 0.13;
         const romStrokeW = romRadius * 0.14;
-        const romCx = romRadius + romStrokeW * 2 + 12; // top-left
+        const romCx = romRadius + romStrokeW * 2 + 12;
         const romCy = romRadius + romStrokeW * 2 + 12;
         const isActivePhase = infPhase === "lifting" || infPhase === "holding" || infPhase === "lowering";
-        const ringOpacity = isActivePhase ? 1.0 : 0.35;
-
-        // Colour: orange (0%) → yellow (50%) → green (100%)
-        const rRom = romPct < 0.5
-          ? 210
-          : Math.floor(210 + (63 - 210) * ((romPct - 0.5) / 0.5));
-        const gRom = romPct < 0.5
-          ? Math.floor(100 + (185 - 100) * (romPct / 0.5))
-          : Math.floor(185 + (222 - 185) * ((romPct - 0.5) / 0.5));
+        const ringOpacity   = isActivePhase ? 1.0 : 0.35;
+        const rRom = romPct < 0.5 ? 210 : Math.floor(210 + (63  - 210) * ((romPct - 0.5) / 0.5));
+        const gRom = romPct < 0.5 ? Math.floor(100 + (185 - 100) * (romPct / 0.5)) : Math.floor(185 + (222 - 185) * ((romPct - 0.5) / 0.5));
         const bRom = romPct < 0.5 ? 34 : Math.floor(34 + (128 - 34) * ((romPct - 0.5) / 0.5));
         const ringColor = `rgba(${rRom},${gRom},${bRom},${ringOpacity})`;
-
         ctx.save();
         ctx.globalAlpha = ringOpacity;
-
-        // Dark backdrop
-        ctx.beginPath();
-        ctx.arc(romCx, romCy, romRadius + romStrokeW * 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(8,12,20,0.80)";
-        ctx.fill();
-
-        // Track ring
-        ctx.beginPath();
-        ctx.arc(romCx, romCy, romRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(255,255,255,0.10)";
-        ctx.lineWidth = romStrokeW;
-        ctx.lineCap = "round";
-        ctx.stroke();
-
-        // Progress arc
+        ctx.beginPath(); ctx.arc(romCx, romCy, romRadius + romStrokeW * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(8,12,20,0.80)"; ctx.fill();
+        ctx.beginPath(); ctx.arc(romCx, romCy, romRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = romStrokeW; ctx.lineCap = "round"; ctx.stroke();
         if (romPct > 0) {
-          ctx.beginPath();
-          ctx.arc(romCx, romCy, romRadius, -Math.PI / 2, -Math.PI / 2 + romPct * Math.PI * 2);
-          ctx.strokeStyle = ringColor;
-          ctx.lineWidth = romStrokeW;
-          ctx.lineCap = "round";
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(romCx, romCy, romRadius, -Math.PI / 2, -Math.PI / 2 + romPct * Math.PI * 2);
+          ctx.strokeStyle = ringColor; ctx.lineWidth = romStrokeW; ctx.lineCap = "round"; ctx.stroke();
         }
-
-        // Percentage number — shifted up slightly to make room for phase label
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#ffffff";
         ctx.font = `800 ${Math.round(romRadius * 0.72)}px system-ui, sans-serif`;
         ctx.fillText(`${Math.round(romPct * 100)}`, romCx, romCy - romRadius * 0.18);
-
-        // Phase label — replaces static "ROM %" text, shows current action
-        // Colours match the old DOM badge
         const phaseLabel = (() => {
           if (!sessionQueue.sessionStarted) return "ROM %";
           switch (infPhase) {
-            case "lifting":  return "Raise \u2191";
+            case "lifting":  return "Raise ↑";
             case "holding":  return "Hold";
-            case "lowering": return "Lower \u2193";
+            case "lowering": return "Lower ↓";
             case "ready":    return "Ready";
-            case "complete": return "Done \u2713";
+            case "complete": return "Done ✓";
             default:         return "ROM %";
           }
         })();
@@ -2018,58 +1763,37 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         ctx.fillStyle = phaseLabelColor;
         ctx.font = `700 ${Math.round(romRadius * 0.28)}px system-ui, sans-serif`;
         ctx.fillText(phaseLabel, romCx, romCy + romRadius * 0.42);
-
         ctx.restore();
       }
 
-      // ── Hold countdown ring — top-right corner ───────────────────────────
-      if (isHolding) {
-        const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
-        const pct = Math.min(1, holdElapsed / holdTotal);
-        const remaining = Math.max(0, Math.ceil((holdTotal - holdElapsed) / 1000));
-        const radius = Math.min(W, H) * 0.13;   // smaller than centre ring
-        const strokeW = radius * 0.14;
-        const cx = W - radius - strokeW * 2 - 12; // top-right, with padding
+      // ── 14. Hold countdown ring (top-right) ───────────────────────────────
+      if (anim.isHolding) {
+        const pct       = Math.min(1, anim.holdElapsedMs / holdTotal);
+        const remaining = Math.max(0, Math.ceil((holdTotal - anim.holdElapsedMs) / 1000));
+        const radius    = Math.min(W, H) * 0.13;
+        const strokeW   = radius * 0.14;
+        const cx = W - radius - strokeW * 2 - 12;
         const cy = radius + strokeW * 2 + 12;
-
-        // Dark backdrop
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius + strokeW * 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(8,12,20,0.80)';
-        ctx.fill();
-
-        // Track ring
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-        ctx.lineWidth = strokeW;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-
-        // Progress arc
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
-        ctx.strokeStyle = '#4ade80';
-        ctx.lineWidth = strokeW;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-
-        // Countdown number
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(cx, cy, radius + strokeW * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(8,12,20,0.80)"; ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = strokeW; ctx.lineCap = "round"; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+        ctx.strokeStyle = "#4ade80"; ctx.lineWidth = strokeW; ctx.lineCap = "round"; ctx.stroke();
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#ffffff";
         ctx.font = `800 ${Math.round(radius * 0.85)}px system-ui, sans-serif`;
         ctx.fillText(String(remaining), cx, cy - radius * 0.08);
-
-        // HOLD label
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
         ctx.font = `600 ${Math.round(radius * 0.28)}px system-ui, sans-serif`;
-        ctx.fillText('HOLD', cx, cy + radius * 0.45);
+        ctx.fillText("HOLD", cx, cy + radius * 0.45);
       }
 
+      // ── 15. Live skeleton overlay ─────────────────────────────────────────
       drawLive(ctx, lms, W, H, score);
+
       ghostAnimRef.current = requestAnimationFrame(tick);
     }
+
     ghostAnimRef.current = requestAnimationFrame(tick);
   }
 
