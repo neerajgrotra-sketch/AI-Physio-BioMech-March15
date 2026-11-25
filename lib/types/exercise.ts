@@ -17,6 +17,11 @@ export type ExerciseSide = "left" | "right" | "both" | "center";
 
 export type ExercisePosture = "seated" | "standing" | "either";
 
+// exercise_templates.camera_position: which way the physio wants the
+// patient to face the camera. Only honoured where the measurement works
+// from that view (lib/positioning/positionCoach.ts positionSetupFor).
+export type CameraPreference = "front" | "side" | "either";
+
 export type ExerciseTemplate = "raise_hold_lower" | "rise_hold_lower";
 
 export type ExerciseRuntimeStatus = "active" | "draft" | "disabled";
@@ -173,6 +178,8 @@ export type ExercisePrescription = {
   runtimeStatus: ExerciseRuntimeStatus;
   side: ExerciseSide;
   posture: ExercisePosture;
+  /** From the template's camera_position; absent means the exercise's default. */
+  camera?: CameraPreference;
   description: string;
 
   repTarget: number;

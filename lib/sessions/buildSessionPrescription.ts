@@ -7,7 +7,7 @@
 // (lib/sessions/buildSessionPrescription.test.ts).
 // ============================================================
 
-import type { ExercisePrescription } from '@/lib/types/exercise';
+import type { CameraPreference, ExercisePosture, ExercisePrescription } from '@/lib/types/exercise';
 import { kneeExtensionThresholds } from '@/lib/exercises/kneeThresholds';
 
 // ─── Prescription builder ─────────────────────────────────────────────────────
@@ -15,7 +15,48 @@ import { kneeExtensionThresholds } from '@/lib/exercises/kneeThresholds';
 // display_name from the DB is passed through as the patient-facing exercise name.
 // clinical_name is used server-side only and not needed in the prescription payload.
 
+export type TemplateSetup = {
+  /** exercise_templates.camera_position: 'front' | 'side' | 'either' */
+  cameraPosition?: string | null;
+  /** exercise_templates.patient_position: 'standing' | 'seated' | 'either' */
+  patientPosition?: string | null;
+};
+
+const CAMERAS: CameraPreference[] = ['front', 'side', 'either'];
+const POSTURES: ExercisePosture[] = ['standing', 'seated', 'either'];
+
+/**
+ * The prescription for a template, with the physio's Clinical Setup from
+ * the exercise library applied: camera_position becomes `camera`, and
+ * patient_position the posture the positioning coach asks for (arm
+ * exercises only: knee extension and sit to stand always start seated).
+ */
 export function buildPrescription(
+  slug: string,
+  displayName: string,
+  repOverride: number,
+  holdMsOverride: number,
+  coachingStrings: Record<string, unknown>,
+  romStart: number | null = null,
+  romNorm: number | null = null,
+  romAcceptableMin: number | null = null,
+  romTargetDegrees: number | null = null,
+  romEncourageDegrees: number | null = null,
+  setup: TemplateSetup = {},
+): ExercisePrescription | null {
+  const p = buildBase(slug, displayName, repOverride, holdMsOverride, coachingStrings, romStart, romNorm, romAcceptableMin, romTargetDegrees, romEncourageDegrees);
+  if (!p) return null;
+  const cam = setup.cameraPosition as CameraPreference;
+  if (CAMERAS.includes(cam)) p.camera = cam;
+  const posture = setup.patientPosition as ExercisePosture;
+  if (p.category === 'upper_body' && POSTURES.includes(posture)) {
+    p.posture = posture;
+    if (p.framing) p.framing.requiredStartPosture = posture;
+  }
+  return p;
+}
+
+function buildBase(
   slug: string,
   displayName: string,
   repOverride: number,

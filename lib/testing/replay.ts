@@ -2,13 +2,14 @@
 // lib/testing/replay.ts — run pose frames through the engine
 // ============================================================
 // Mirrors the per-frame steps of lib/session/useInferenceLoop.ts:
-//   extract -> 5-frame smoothing -> calibration (arm exercises) ->
+//   extract -> 5-frame smoothing -> facing view (flexionView) -> calibration (arm exercises) ->
 //   spike filter -> interpretMovement
 // If you change the order or the steps there, change them here too.
 // ============================================================
 
 import { extractMovementFeatures, emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
+import { FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement, getEffectiveActiveMetricValue } from "@/lib/interpreter/movementInterpreter";
@@ -25,6 +26,7 @@ export function replay(prescription: ExercisePrescription, frames: PoseFrame[]) 
   let rep = createInitialRepState();
   const history = new FeatureHistory(5);
   const spikes = new FeatureSpikeFilter();
+  const view = new FlexionViewEstimator();
   const samples: number[] = [];
   let calibStart: number | null = null;
   let calibrated = false;
@@ -36,6 +38,7 @@ export function replay(prescription: ExercisePrescription, frames: PoseFrame[]) 
     if (frame.personDetected) history.push(extractMovementFeatures(frame));
     else history.clear();
     const f = frame.personDetected ? smoothMovementFeatures(history.getAll()) : emptyMovementFeatures();
+    if (frame.personDetected) view.apply(f);
 
     if (frame.personDetected && !calibrated) {
       if (calibrationKindFor(p.target.metric) === "none") calibrated = true;
@@ -66,7 +69,7 @@ export function replay(prescription: ExercisePrescription, frames: PoseFrame[]) 
     if (rep.justCompletedHold) events.push({ t: now, kind: "hold" });
   }
 
-  return { repCount: rep.repCount, phase: rep.phase, events, metric, prescription: p };
+  return { repCount: rep.repCount, phase: rep.phase, events, metric, prescription: p, view: view.currentView() };
 }
 
 /** A timeline of [durationMs, value-or-function-of-progress] segments, sampled at `fps`. */

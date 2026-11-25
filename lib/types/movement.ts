@@ -5,10 +5,21 @@ export type MovementFeatures = {
   leftArmElevationDeg: number | null;
   bilateralArmElevationDeg: number | null;
 
+  // Raw upper-arm geometry for front-view flexion (lib/biomechanics/
+  // flexionView.ts), in units of the torso length (shoulder centre to hip
+  // centre), which does not change when the patient turns:
+  //   *UpperArmDrop  = how far the elbow is BELOW the shoulder (negative above)
+  //   *UpperArmReach = the upper arm's length as seen in the image
+  //   shoulderWidthRatio = shoulder width / torso: ~0.7-0.9 facing the
+  //   camera, under ~0.35 side on.
+  rightUpperArmDrop: number | null;
+  rightUpperArmReach: number | null;
+  leftUpperArmDrop: number | null;
+  leftUpperArmReach: number | null;
+  shoulderWidthRatio: number | null;
+
   // Shoulder abduction metrics — separate from flexion elevation.
-  // Computed from wrist position relative to shoulder, normalised by
-  // shoulder width. Reliable from a front-facing camera for lateral
-  // arm raises where armElevationDeg underestimates due to 2D projection.
+  // The whole arm from straight down, measured from a front camera.
   // 0° = arm at rest (hanging down), ~90° = arm level with shoulder,
   // ~150° = arm fully overhead.
   rightShoulderAbductionDeg: number | null;
