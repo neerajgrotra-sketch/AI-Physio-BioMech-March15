@@ -89,6 +89,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   `PrerequisiteResult` that the inference loop and `SessionRunner` already use (met = locked). The loop's gate stops the
   rep state machine before the first rep until it is met, and the voice repeats the short instruction every 8 s while a
   problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrow, instruction and hold ring.
+- One thing at a time on the camera panel (`SessionRunner`: `positioningOnScreen`, `exerciseOnScreen`): while being
+  positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
+  patient is placed, and the ghost's demo timer starts then. Facing the camera, the ghost is not drawn for forward
+  raises (it would sweep the arm sideways, demonstrating the wrong movement).
 - `lib/engine/readinessEngine.ts` and `framingMonitor.evaluatePrerequisites` are the older checks; the readiness text
   is still shown in the observation panel, `evaluatePrerequisites` is no longer called.
 

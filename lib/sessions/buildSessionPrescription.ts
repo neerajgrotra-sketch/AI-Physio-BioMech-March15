@@ -20,6 +20,8 @@ export type TemplateSetup = {
   cameraPosition?: string | null;
   /** exercise_templates.patient_position: 'standing' | 'seated' | 'either' */
   patientPosition?: string | null;
+  /** exercise_templates.clinical_name, shown as the exercise's title above the patient name */
+  clinicalName?: string | null;
 };
 
 const CAMERAS: CameraPreference[] = ['front', 'side', 'either'];
@@ -46,6 +48,7 @@ export function buildPrescription(
 ): ExercisePrescription | null {
   const p = buildBase(slug, displayName, repOverride, holdMsOverride, coachingStrings, romStart, romNorm, romAcceptableMin, romTargetDegrees, romEncourageDegrees);
   if (!p) return null;
+  if (setup.clinicalName) p.clinicalName = setup.clinicalName;
   const cam = setup.cameraPosition as CameraPreference;
   if (CAMERAS.includes(cam)) p.camera = cam;
   const posture = setup.patientPosition as ExercisePosture;

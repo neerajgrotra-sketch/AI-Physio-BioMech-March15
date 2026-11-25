@@ -968,6 +968,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     window.setTimeout(() => {
       sessionPhaseRef.current = "running";
       setSessionPhase("running");
+      ghostReadyStartRef.current = performance.now(); // the ghost's demo starts now, not at Begin
       writeDebugLog("info", "SESSION", "Session running — firing exercise_started");
       stableCoachingCallbacks.onExerciseStarted(Date.now());
     }, 1500);
@@ -1589,6 +1590,14 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       // ── 5. Config — loaded once per slug, no branching in tick ───────────
       const config = getGhostConfig(slug);
 
+      // Facing the camera, a forward raise comes toward the lens. The ghost
+      // draws the arm sweeping across the image, which from the front would
+      // demonstrate the wrong movement (a sideways raise), so it is not drawn.
+      if (slug.startsWith("shoulder_flexion") && inferenceLoop.getFacingView() === "front") {
+        ghostAnimRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
       // ── 6. Smoothed body frame (anchor + sizing) ──────────────────────────
       const freshFrame = getBodyFrame(lms as any, W, H);
       const infPhase   = ghostPhaseInfRef.current;
@@ -1881,6 +1890,16 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     const holdLine = currentPrescription?.hold.required
     ? " Hold each rep for " + Math.round((currentPrescription.hold.durationMs ?? 0) / 1000) + "s."
     : "";
+  // ── What the camera panel shows (one thing at a time) ─────────────────
+  // Positioning: until the patient is placed and still, before the first rep.
+  const positioningOnScreen =
+    !!framingIntelligence.positionGuide &&
+    framingIntelligence.positionGuide.state !== "locked" &&
+    (sessionPhase === "framing" || sessionPhase === "running") &&
+    inferenceLoop.repCount === 0;
+  // The exercise layer (skeleton, ghost demo): only once running and placed.
+  const exerciseOnScreen = sessionPhase === "running" && !positioningOnScreen;
+
   const instructionBody = currentPrescription
     ? getExerciseRequirement(currentPrescription.id) + " Target: " + currentPrescription.repTarget + " rep(s)." + holdLine
     : "Choose a session and begin when ready.";
@@ -2190,22 +2209,20 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             <div style={{ display: sessionPhase === "greeting" || sessionPhase === "confirmed" ? "none" : "block" }}>
               <div style={{ position: "relative" }}>
                 <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
-                <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                {/* One thing at a time. While the patient is being positioned, only
+                    the positioning guide shows; the skeleton and the ghost demo
+                    appear once they are in place and the exercise is running. */}
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: exerciseOnScreen ? 0.55 : 0, transition: "opacity 0.5s ease" }}>
                   <PoseCanvasOverlay frame={inferenceLoop.frame} />
                 </div>
                 {/* Ghost silhouette canvas — layered on top of pose skeleton */}
                 <canvas
                   ref={ghostCanvasRef}
                   width={640} height={480}
-                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: exerciseOnScreen ? 1 : 0, transition: "opacity 0.5s ease" }}
                 />
                 {/* Positioning coach: until the patient is placed and still (before the first rep) */}
-                {framingIntelligence.positionGuide &&
-                  framingIntelligence.positionGuide.state !== "locked" &&
-                  (sessionPhase === "framing" || sessionPhase === "running") &&
-                  inferenceLoop.repCount === 0 && (
-                    <PositionGuideOverlay guide={framingIntelligence.positionGuide} />
-                  )}
+                {positioningOnScreen && <PositionGuideOverlay guide={framingIntelligence.positionGuide!} />}
               </div>
               {inferenceLoop.engineError && (
                 <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>

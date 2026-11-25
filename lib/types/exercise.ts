@@ -173,6 +173,8 @@ export type ExerciseCoachingStrings = {
 export type ExercisePrescription = {
   id: string;
   name: string;
+  /** The clinical name (e.g. "Shoulder Flexion — Unilateral Right"); `name` is the patient's name for it. */
+  clinicalName?: string;
   category: ExerciseCategory;
   template: ExerciseTemplate;
   runtimeStatus: ExerciseRuntimeStatus;

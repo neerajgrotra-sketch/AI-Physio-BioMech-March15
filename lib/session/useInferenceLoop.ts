@@ -897,6 +897,8 @@ export function useInferenceLoop() {
   );
 
   return {
+    /** Facing the camera or side on, as the arm measurement judges it (null until seen). */
+    getFacingView: () => flexionViewRef.current.currentView(),
     // State
     engineStatus,
     engineError,
