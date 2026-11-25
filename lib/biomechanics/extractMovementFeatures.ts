@@ -160,6 +160,11 @@ export function emptyMovementFeatures(): MovementFeatures {
     rightArmElevationDeg: null,
     leftArmElevationDeg: null,
     bilateralArmElevationDeg: null,
+    rightUpperArmDrop: null,
+    rightUpperArmReach: null,
+    leftUpperArmDrop: null,
+    leftUpperArmReach: null,
+    shoulderWidthRatio: null,
     rightShoulderAbductionDeg: null,
     leftShoulderAbductionDeg: null,
     bilateralShoulderAbductionDeg: null,
@@ -205,6 +210,19 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
   const rightArmElevationDeg = rSh ? armElevationDeg(rSh, rEl, rWr) : null;
   const leftArmElevationDeg = lSh ? armElevationDeg(lSh, lEl, lWr) : null;
   const bilateralArmElevationDeg = average([rightArmElevationDeg, leftArmElevationDeg]);
+
+  // Upper-arm geometry in torso units, for the front-view flexion
+  // estimate (see lib/biomechanics/flexionView.ts).
+  const torsoMid = lHip && rHip ? mid(lHip, rHip) : null;
+  const shMid0 = lSh && rSh ? mid(lSh, rSh) : null;
+  const torsoLen = torsoMid && shMid0 ? dist(torsoMid, shMid0) : null;
+  const perTorso = (v: number | null): number | null =>
+    v === null || torsoLen === null || torsoLen < 1e-3 ? null : round3(v / torsoLen);
+  const rightUpperArmDrop = rSh && rEl ? perTorso(rEl.y - rSh.y) : null;
+  const rightUpperArmReach = rSh && rEl ? perTorso(dist(rSh, rEl)) : null;
+  const leftUpperArmDrop = lSh && lEl ? perTorso(lEl.y - lSh.y) : null;
+  const leftUpperArmReach = lSh && lEl ? perTorso(dist(lSh, lEl)) : null;
+  const shoulderWidthRatio = lSh && rSh ? perTorso(Math.abs(lSh.x - rSh.x)) : null;
 
   const rightShoulderAbductionDeg = rSh ? shoulderAbductionDeg(rSh, rWr, rEl) : null;
   const leftShoulderAbductionDeg = lSh ? shoulderAbductionDeg(lSh, lWr, lEl) : null;
@@ -262,6 +280,11 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     rightArmElevationDeg,
     leftArmElevationDeg,
     bilateralArmElevationDeg,
+    rightUpperArmDrop,
+    rightUpperArmReach,
+    leftUpperArmDrop,
+    leftUpperArmReach,
+    shoulderWidthRatio,
     rightShoulderAbductionDeg,
     leftShoulderAbductionDeg,
     bilateralShoulderAbductionDeg,

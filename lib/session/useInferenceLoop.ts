@@ -31,6 +31,7 @@ import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { extractMovementFeatures, emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
+import { FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement, getEffectiveActiveMetricValue } from "@/lib/interpreter/movementInterpreter";
 import { calibrationKindFor, calibrateThresholds, applyThresholds, FeatureSpikeFilter } from "@/lib/engine/calibration";
@@ -280,6 +281,8 @@ export function useInferenceLoop() {
   const holdEnteredAtMsRef = useRef<number | null>(null);
   // Spike filter: tracks previous frame metric to reject impossible jumps (>50° per frame)
   const spikeFilterRef = useRef(new FeatureSpikeFilter());
+  // Arm elevation facing the camera or side on (lib/biomechanics/flexionView.ts).
+  const flexionViewRef = useRef(new FlexionViewEstimator());
   // Peak metric reached during current rep (reset on READY→LIFTING, updated each LIFTING/HOLDING frame)
   // Passed to onRepCompleted so session results can store the actual achieved ROM
   const peakMetricThisRepRef = useRef<number | null>(null);
@@ -343,6 +346,7 @@ export function useInferenceLoop() {
     prevPhaseRef.current = "ready";
     holdEnteredAtMsRef.current = null;
     spikeFilterRef.current.reset(); // reset spike filter on each exercise
+    flexionViewRef.current.reset(); // the arm length is learned again per exercise
     peakMetricThisRepRef.current = null;
     lastHoldDurationMsRef.current = null;
     debugFrameCountRef.current = 0;
@@ -472,6 +476,11 @@ export function useInferenceLoop() {
             const smoothedFeatures = normalized.personDetected
               ? smoothMovementFeatures(featureHistoryRef.current.getAll())
               : createEmptyFeatures();
+
+            // ── Facing the camera or side on (lib/biomechanics/flexionView.ts) ──
+            // Facing the camera, arm elevation comes from the elbow's height
+            // and the patient's learned arm length instead of the 2D angle.
+            if (normalized.personDetected) flexionViewRef.current.apply(smoothedFeatures);
 
             setFeatures(smoothedFeatures);
 
@@ -611,7 +620,8 @@ export function useInferenceLoop() {
                 ` | finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°` +
                 ` | targetThreshold=${activePrescription.targetThreshold.toFixed(1)}°` +
                 ` | startThreshold=${activePrescription.startThreshold.toFixed(1)}°` +
-                ` | calib_baseline=${calibrationBaselineRef.current.toFixed(1)}°`
+                ` | calib_baseline=${calibrationBaselineRef.current.toFixed(1)}°` +
+                ` | view=${flexionViewRef.current.currentView() ?? "?"}`
               );
               coachingCallbacks.onRepCompleted(nowMs, peakMetricThisRepRef.current, lastHoldDurationMsRef.current);
             }
@@ -887,6 +897,8 @@ export function useInferenceLoop() {
   );
 
   return {
+    /** Facing the camera or side on, as the arm measurement judges it (null until seen). */
+    getFacingView: () => flexionViewRef.current.currentView(),
     // State
     engineStatus,
     engineError,

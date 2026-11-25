@@ -9,6 +9,13 @@ function average(values: Array<number | null>): number | null {
   return Math.round((total / valid.length) * 10) / 10;
 }
 
+function average3(values: Array<number | null>): number | null {
+  const valid = values.filter((value): value is number => value !== null);
+  if (valid.length === 0) return null;
+  const total = valid.reduce((sum, value) => sum + value, 0);
+  return Math.round((total / valid.length) * 1000) / 1000;
+}
+
 function majorityBoolean(values: boolean[]): boolean {
   if (values.length === 0) return false;
   const trueCount = values.filter(Boolean).length;
@@ -56,6 +63,12 @@ export function smoothMovementFeatures(history: MovementFeatures[]): MovementFea
     bilateralArmElevationDeg: average(
       history.map((item) => item.bilateralArmElevationDeg)
     ),
+
+    rightUpperArmDrop: average3(history.map((item) => item.rightUpperArmDrop)),
+    rightUpperArmReach: average3(history.map((item) => item.rightUpperArmReach)),
+    leftUpperArmDrop: average3(history.map((item) => item.leftUpperArmDrop)),
+    leftUpperArmReach: average3(history.map((item) => item.leftUpperArmReach)),
+    shoulderWidthRatio: average3(history.map((item) => item.shoulderWidthRatio)),
 
     rightShoulderAbductionDeg: average(history.map((item) => item.rightShoulderAbductionDeg)),
     leftShoulderAbductionDeg: average(history.map((item) => item.leftShoulderAbductionDeg)),

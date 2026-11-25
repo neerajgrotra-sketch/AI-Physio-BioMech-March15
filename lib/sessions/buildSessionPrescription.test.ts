@@ -4,7 +4,7 @@
 // for the right reason.
 import { describe, expect, it } from "vitest";
 import { buildPrescription } from "@/lib/sessions/buildSessionPrescription";
-import { frameFromPixels, flexionSide, seatedSide, standingFront, standingSide, type PixelBody } from "@/lib/testing/poses";
+import { frameFromPixels, flexionFront, flexionSide, seatedSide, standingFront, standingSide, type PixelBody } from "@/lib/testing/poses";
 import { hold, ramp, replay, timeline } from "@/lib/testing/replay";
 import type { PoseFrame } from "@/lib/types/pose";
 
@@ -160,5 +160,76 @@ describe("sit to stand", () => {
     const r = replay(p, sts([[2000, "sit"], [800, "stand"], [3000, "sit"]]));
     expect(r.repCount).toBe(0);
     expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_hold");
+  });
+});
+
+describe("arm forward facing the camera (camera_position front or either)", () => {
+  const slug = "shoulder_flexion_right";
+  const front = (pts: Array<{ t: number; v: number }>, opts: Parameters<typeof flexionFront>[1] = {}) =>
+    pts.map(({ t, v }) => frameFromPixels(flexionFront(v, opts), 1280, 720, { timestamp: t }));
+  const buildWith = (camera: string | null, posture: string | null = null) => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: camera, patientPosition: posture })!;
+  };
+
+  it("a good rep counts, standing", () => {
+    const p = buildWith("either");
+    const r = replay(p, front(oneRep(3, 140, p.hold.durationMs)));
+    expect(r.view).toBe("front");
+    expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(1);
+  });
+
+  it("a good rep counts, seated", () => {
+    const p = buildWith("either", "either");
+    const r = replay(p, front(oneRep(3, 140, p.hold.durationMs), { seated: true }));
+    expect(r.repCount).toBe(1);
+  });
+
+  it("three reps in a row", () => {
+    const p = buildWith("front");
+    const h = p.hold.durationMs + 600;
+    const rep: Array<[number, (u: number) => number]> = [[1000, ramp(3, 140)], [h, hold(140)], [1000, ramp(140, 3)], [800, hold(3)]];
+    const r = replay(p, front(timeline([[3500, hold(3)], ...rep, ...rep, ...rep])));
+    expect(r.repCount).toBe(3);
+  });
+
+  it("stopping at 90° (below the 110° pass mark) fails on height", () => {
+    const p = buildWith("either");
+    const r = replay(p, front(oneRep(3, 90, p.hold.durationMs)));
+    expect(r.repCount).toBe(0);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_height");
+  });
+
+  it("raising the other arm too fails on isolation", () => {
+    const p = buildWith("either");
+    const r = replay(p, front(oneRep(3, 140, p.hold.durationMs), { side: "both" }));
+    expect(r.repCount).toBe(0);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_isolation");
+  });
+});
+
+describe("the exercise library's Clinical Setup is honoured", () => {
+  const b = (slug: string, camera: string | null, posture: string | null) => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: camera, patientPosition: posture })!;
+  };
+
+  it("camera_position and patient_position reach the prescription", () => {
+    const p = b("shoulder_flexion_right", "either", "seated");
+    expect(p.camera).toBe("either");
+    expect(p.posture).toBe("seated");
+    expect(p.framing.requiredStartPosture).toBe("seated");
+  });
+
+  it("unknown values are ignored", () => {
+    const p = b("shoulder_flexion_right", "ceiling", "lying");
+    expect(p.camera).toBeUndefined();
+    expect(p.posture).toBe("either");
+  });
+
+  it("knee exercises keep their seated start whatever the setting", () => {
+    const p = b("knee_extension_right", "front", "standing");
+    expect(p.posture).not.toBe("standing");
   });
 });

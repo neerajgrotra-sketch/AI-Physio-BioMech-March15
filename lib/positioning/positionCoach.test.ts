@@ -144,3 +144,49 @@ describe("PositionTracker", () => {
     expect(t.update(bad("too_close"), 3000 + UNLOCK_AFTER_MS).state).toBe("adjusting");
   });
 });
+
+describe("arm forward with camera_position either / front", () => {
+  const withCam = (camera: string) =>
+    positionSetupFor(buildPrescription("shoulder_flexion_right", "x", 3, 2000, {}, 0, 160, 110, null, null, { cameraPosition: camera, patientPosition: "either" })!);
+  const EITHER = withCam("either");
+  const FRONT = withCam("front");
+
+  it("asks for the view the physio chose, front outline first", () => {
+    expect(EITHER).toMatchObject({ view: "either", reach: "arm_up_forward", posture: "either" });
+    expect(FRONT.view).toBe("front");
+    expect(withCam("side").view).toBe("side");
+    expect(silhouetteFor(EITHER)).toBe("front_upper");
+  });
+
+  it("either: facing the screen is fine", () => {
+    expect(assessPosition(at(goodFront()), EITHER, { mirrored: false }).ok).toBe(true);
+  });
+
+  it("either: side on is fine too", () => {
+    expect(assessPosition(at(goodSide()), EITHER, { mirrored: false }).ok).toBe(true);
+  });
+
+  it("either: half turned is not", () => {
+    const b = goodFront();
+    // Squeeze the shoulders together: about 45° turned.
+    const mx = (b.left_shoulder!.x + b.right_shoulder!.x) / 2;
+    b.left_shoulder = { x: mx + 30, y: b.left_shoulder!.y };
+    b.right_shoulder = { x: mx - 30, y: b.right_shoulder!.y };
+    expect(assessPosition(at(b), EITHER, { mirrored: false }).issue?.id).toBe("face_front");
+  });
+
+  it("front: side on is told to face the screen", () => {
+    expect(assessPosition(at(goodSide()), FRONT, { mirrored: false }).issue?.id).toBe("face_front");
+  });
+
+  it("facing the camera needs no room to the side for the forward arm", () => {
+    // Near the right edge of the frame, but body inside: fine facing front.
+    const b = place(standingFront(), 0.62, 640 + 300, 470);
+    const a = assessPosition(at(b), FRONT, { mirrored: false });
+    expect(a.issue?.id ?? "ok").not.toBe("too_close_wide");
+  });
+
+  it("the default (no setting) is still side on", () => {
+    expect(FLEX_R.view).toBe("side");
+  });
+});

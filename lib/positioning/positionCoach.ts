@@ -33,7 +33,8 @@ import type { PoseFrame } from "@/lib/types/pose";
 // for measuring, so the patient is placed where tracking is solid).
 export const POSITION_MIN_SCORE = 0.5;
 
-export type CameraView = "front" | "side";
+// "either": front or side on are both fine (front is the default shown).
+export type CameraView = "front" | "side" | "either";
 export type Coverage = "upper_body" | "torso_and_hips" | "full_body";
 export type Reach = "arm_up_forward" | "arm_up_side" | "leg_forward" | "stand_up" | "none";
 export type Silhouette = "front_upper" | "front_standing" | "front_seated" | "side_upper" | "side_seated" | "side_standing";
@@ -82,8 +83,12 @@ export function positionSetupFor(p: ExercisePrescription): PositionSetup {
     return { view: "side", side, posture: "seated", coverage: "torso_and_hips", reach: "leg_forward" };
   }
   if (ARM_FLEXION.includes(metric)) {
-    // A forward raise moves toward a front camera, so flexion is measured side on.
-    return { view: "side", side, posture, coverage: "upper_body", reach: "arm_up_forward" };
+    // Side on reads the angle directly. Facing the camera it is worked out
+    // from the elbow's height (lib/biomechanics/flexionView.ts): a little
+    // coarser near overhead, but patients can watch the screen. The
+    // physio picks with camera_position; side on unless they chose.
+    const view: CameraView = p.camera ?? "side";
+    return { view, side, posture, coverage: "upper_body", reach: "arm_up_forward" };
   }
   if (ARM_ABDUCTION.includes(metric)) {
     return { view: "front", side, posture, coverage: "upper_body", reach: "arm_up_side" };
@@ -92,7 +97,7 @@ export function positionSetupFor(p: ExercisePrescription): PositionSetup {
 }
 
 export function silhouetteFor(setup: PositionSetup): Silhouette {
-  if (setup.view === "front") {
+  if (setup.view === "front" || setup.view === "either") {
     if (setup.coverage === "upper_body") return "front_upper";
     return setup.posture === "seated" ? "front_seated" : "front_standing";
   }
@@ -103,7 +108,7 @@ export function silhouetteFor(setup: PositionSetup): Silhouette {
 /** The camera-setup line shown before the patient steps in. */
 export function setupInstruction(setup: PositionSetup): string {
   const where = setup.posture === "seated" ? "Sit on a chair" : setup.posture === "standing" ? "Stand" : "Sit or stand";
-  if (setup.view === "front") return `${where} facing the screen, and fit yourself inside the outline.`;
+  if (setup.view === "front" || setup.view === "either") return `${where} facing the screen, and fit yourself inside the outline.`;
   const s = setup.side === "right" ? "your right side" : setup.side === "left" ? "your left side" : "one side";
   return `${where} side-on, with ${s} toward the screen, and fit yourself inside the outline.`;
 }
@@ -161,7 +166,11 @@ export function assessPosition(
   if (setup.view === "front" && !facingFront) {
     return { ok: false, body: null, issue: issue("face_front", "Turn to face the screen.", "Turn so your whole front faces the screen.", "turn") };
   }
-  if (setup.view === "side") {
+  // Either way round: half turned is the one view that can't be measured.
+  if (setup.view === "either" && !facingFront && !sideOn) {
+    return { ok: false, body: null, issue: issue("face_front", "Turn to face the screen.", "Turn so your whole front faces the screen.", "turn") };
+  }
+  if (setup.view === "side" || (setup.view === "either" && sideOn)) {
     const which = setup.side === "right" ? "right" : setup.side === "left" ? "left" : null;
     if (!sideOn) {
       const say = which ? `Turn sideways, so your ${which} side faces the screen.` : "Turn sideways to the screen.";
@@ -258,7 +267,9 @@ export function assessPosition(
     if (setup.side !== "left") needLeft = Math.min(needLeft, Math.min(lsx, rsx) - arm);    // patient's right arm: image-left
     if (setup.side !== "right") needRight = Math.max(needRight, Math.max(lsx, rsx) + arm); // patient's left arm: image-right
   }
-  if (setup.reach === "arm_up_forward") {
+  if (setup.reach === "arm_up_forward" && sideOn) {
+    // Side on the raised arm reaches out in front; facing the camera it
+    // comes toward the lens and needs no room to the side.
     if (facingSign > 0) needRight = Math.max(needRight, shMid.x + arm);
     else needLeft = Math.min(needLeft, shMid.x - arm);
   }
@@ -282,7 +293,7 @@ export function assessPosition(
     // raw image-left is the patient's RIGHT, so to move to higher x they
     // step to their LEFT. Side view: say it in screen terms.
     const arrow = needHigherX ? towardHighX : towardLowX;
-    if (setup.view === "front") {
+    if (setup.view === "front" || (setup.view === "either" && facingFront)) {
       const dir = needHigherX ? "left" : "right";
       return { ok: false, body: null, issue: issue(`move_${dir}`, `Take a small step to your ${dir}.`, `A little more to your ${dir}.`, arrow) };
     }

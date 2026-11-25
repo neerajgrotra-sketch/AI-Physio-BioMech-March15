@@ -153,3 +153,39 @@ export function place(body: PixelBody, scale: number, cx: number, cy: number): P
   }
   return out;
 }
+
+/**
+ * Facing the camera, raising an arm FORWARD (toward the lens) `deg` from
+ * down, with real perspective: points nearer the camera look bigger, as
+ * through a webcam about 2.5 m away. `outDeg` swings the arm a little out
+ * to the side as well (patients rarely raise perfectly straight).
+ * `seated` uses the seated body. The patient's right is image-left.
+ */
+export function flexionFront(
+  deg: number,
+  opts: { side?: "right" | "left" | "both"; outDeg?: number; seated?: boolean; restDeg?: number } = {}
+): PixelBody {
+  const side = opts.side ?? "right";
+  const base = opts.seated ? seatedFront() : standingFront({ rightArmDeg: 0, leftArmDeg: 0 });
+  const CAM = 6800; // camera distance in px at the body's depth (~2.5 m)
+  const out = rad(opts.outDeg ?? 0);
+  const project = (sh: Px, p3: { x: number; y: number; z: number }): Px => {
+    const k = CAM / (CAM - p3.z); // z = toward the camera
+    return { x: sh.x + p3.x * k, y: sh.y + p3.y * k };
+  };
+  const arm = (sh: Px, a: number, sx: number) => {
+    // Unit direction: down component cos(a); the rest forward, tilted out by `out`.
+    const t = rad(a);
+    const dir = { x: sx * Math.sin(t) * Math.sin(out), y: Math.cos(t), z: Math.sin(t) * Math.cos(out) };
+    const el3 = { x: dir.x * 140, y: dir.y * 140, z: dir.z * 140 };
+    const wr3 = { x: dir.x * 260, y: dir.y * 260, z: dir.z * 260 };
+    return { el: project(sh, el3), wr: project(sh, wr3) };
+  };
+  const rest = opts.restDeg ?? 3;
+  const b = { ...base };
+  const rSh = base.right_shoulder!, lSh = base.left_shoulder!;
+  const r = arm(rSh, side === "left" ? rest : deg, -1);
+  const l = arm(lSh, side === "right" ? rest : deg, 1);
+  Object.assign(b, { right_elbow: r.el, right_wrist: r.wr, left_elbow: l.el, left_wrist: l.wr });
+  return b;
+}

@@ -2,6 +2,43 @@
 
 Parked ideas and decisions waiting on something. Newest first.
 
+## Test runs logged to Supabase (owner's idea 2026-11-25)
+
+Agile testing: the owner makes a numbered test protocol (a test case), runs it, and every run's whole interaction is
+saved against that test case, with the owner's feedback and screenshots, so Claude can analyse it from Supabase.
+
+- Already there: `SessionRunner.flushDebugLogToSupabase` writes the debug log to `session_debug_logs` at session end,
+  pause or error (7 rows, the last in April 2026). Only at the end, so a closed tab loses it, and it is mostly text.
+- Plan: (1) a test case number on protocols and a run record per session (app version / commit, browser, camera size,
+  frame rate); (2) structured events instead of text: position instructions and lock, calibration result, each rep
+  (peak, hold, pass or fail and why, view, thresholds), every spoken line; (3) a 10-15 Hz trace of the landmarks
+  (no video) and the metric, uploaded every ~10 s; (4) a feedback box at the end (notes, screenshots to Storage).
+- The big win: recorded landmarks can be replayed through `lib/testing/replay.ts`, so a real run becomes a
+  regression test and tuning can be checked against real movement, not only synthetic poses.
+- Size: about 1-2 MB per 5-minute run with landmarks. Only body points, no images; use test patients.
+
+## Session screen layout (owner's note 2026-11-25)
+
+The current session screen (`SessionRunner`: header with Begin Session, camera panel, Live Coaching, Camera Sees,
+Session Details table, and the developer logs underneath: Ghost Intelligence, Rep Cycle Log, Debug Log, Movement
+Timeline) is not very functional for patients. Fine for the proof-of-concept stage. Replace it with the portrait
+patient screen from the mockups, and move the developer logs behind a hidden debug switch (keep them: they are how
+we diagnose real-camera tests).
+
+## Expected ROM and Encourage-to ROM (problem area, owner's note 2026-11-25)
+
+Set per exercise when a protocol is assigned to a patient (admin, Patients → Assign Protocol; saved as
+`session_block_exercises.rom_target_degrees` and `rom_encourage_degrees`).
+
+- **Expected ROM ("hold fires here")** becomes the rep's pass mark (`romTargetDegrees` → `targetThreshold`). The
+  slider defaults to the template's minimum (110° for arm-forward right) and runs from 0° to the norm (160°).
+- **Encourage-to ROM** is meant to be the "push a bit further" goal for the coaching (`encourageThreshold`, read in
+  `SessionRunner`). When "Not set", its slider thumb still sits part-way along the track, which looks like a value.
+- Seen on the assign screen: a horizontal scrollbar under the exercise card (the row is wider than the panel).
+- To work through with the owner: what each number should mean clinically, sensible defaults and limits (encourage
+  above expected; expected not below what the camera can tell apart), how they show on the patient's screen, and
+  how the front-view measurement's accuracy near overhead (±6-10°) affects targets above about 150°.
+
 ## 3D depth camera for front-facing measurement
 
 - **Why:** the product mockups have the patient facing the screen (kiosk, desk monitor). A forward arm raise and a

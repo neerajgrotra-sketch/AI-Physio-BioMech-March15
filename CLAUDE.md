@@ -32,7 +32,11 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
 2. `lib/biomechanics/extractMovementFeatures.ts`: joint angles and body state. **All geometry is done in true image
    proportions** (`toBodySpace` rescales x by width / height). Never compute an angle from raw normalised x and y: on
    16:9 that turns 45° into 29°. Landmarks under `MIN_LANDMARK_SCORE` (0.35) are treated as not seen.
-3. `lib/biomechanics/smoothMovementFeatures.ts`: average of the last 5 frames.
+3. `lib/biomechanics/smoothMovementFeatures.ts`: average of the last 5 frames. Then
+   `lib/biomechanics/flexionView.ts` (`FlexionViewEstimator`): when the patient faces the camera, arm elevation is
+   replaced by `acos(elbow drop / arm length)` (drop and the seen upper-arm length in torso lengths; the arm length is
+   learned as a high percentile of the seen length, since an arm never looks longer than it is). Side on, the plain
+   2D angle is kept. Which way they face: shoulder width / torso, side under 0.35, front over 0.5.
 4. `lib/engine/calibration.ts`: for arm exercises, a 3 s resting baseline sets start / target / finish
    (`calibrateThresholds`; the target is never shifted by the baseline). Then `FeatureSpikeFilter` drops one-frame
    glitches on the fields the exercise reads.
@@ -48,7 +52,7 @@ replay too**, or the tests stop proving anything.
 
 | Exercise slugs | Metric | Convention | Camera |
 |---|---|---|---|
-| `shoulder_flexion_*` (arm forward) | `*ArmElevationDeg` | upper arm from straight down: 0 rest, 90 level, 180 overhead | **side** |
+| `shoulder_flexion_*` (arm forward) | `*ArmElevationDeg` | upper arm from straight down: 0 rest, 90 level, 180 overhead | side, or front / either if the template says so (front: about ±3° mid-range, ±6-10° near overhead) |
 | `shoulder_abduction_*` (arm out) | `*ShoulderAbductionDeg` | whole arm from straight down, same scale | front |
 | `knee_extension_*` | `*KneeExtensionDeg` = `kneeAngleLeft/Right` | interior hip-knee-ankle: ~90 seated, 180 straight | side |
 | `sit_to_stand` | posture (`isSeated` / `isStanding`) | seated from the knee angle (side) or thigh/shin ratio (front) | side |
@@ -62,10 +66,12 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 - Knee templates store ROM as **flexion** (90 bent, 0 straight; `rom_acceptable_min` 30 = within 30° of straight).
   `lib/exercises/kneeThresholds.ts` converts to the interior angle the app measures. A physio knee target of 90 or
   less is read as flexion, above 90 as an interior angle.
-- The camera side and set-up for each exercise are decided in code by `positionSetupFor`
-  (`lib/positioning/positionCoach.ts`), from the metric; `exercise_templates.camera_position` is display only (it was
-  corrected to match by `20261125000200_camera_position_fixes.sql`). `measurement_spec` is not read at runtime (and is
-  wrong for several rows).
+- The camera side and set-up for each exercise are decided by `positionSetupFor` (`lib/positioning/positionCoach.ts`).
+  The template's Clinical Setup is read (`buildPrescription(..., { cameraPosition, patientPosition })`, from
+  `app/session/page.tsx`): `camera_position` (front / side / either) is honoured for arm-forward raises only (knees and
+  sit to stand are always side on, abduction always front); `patient_position` sets the posture asked for on arm
+  exercises (knees and sit to stand always start seated). `measurement_spec` is not read at runtime (and is wrong for
+  several rows).
 - `lib/exercises/exerciseLibrary.ts` and `lib/exercises/definitions/*` are the older, hard-coded exercise set
   (`right-arm-raise` etc.), still used by `SessionRunner`/`SessionBuilder` for the local demo flow. The live sessions
   use the Supabase templates.
@@ -83,6 +89,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   `PrerequisiteResult` that the inference loop and `SessionRunner` already use (met = locked). The loop's gate stops the
   rep state machine before the first rep until it is met, and the voice repeats the short instruction every 8 s while a
   problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrow, instruction and hold ring.
+- One thing at a time on the camera panel (`SessionRunner`: `positioningOnScreen`, `exerciseOnScreen`): while being
+  positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
+  patient is placed, and the ghost's demo timer starts then. Facing the camera, the ghost is not drawn for forward
+  raises (it would sweep the arm sideways, demonstrating the wrong movement).
 - `lib/engine/readinessEngine.ts` and `framingMonitor.evaluatePrerequisites` are the older checks; the readiness text
   is still shown in the observation panel, `evaluatePrerequisites` is no longer called.
 

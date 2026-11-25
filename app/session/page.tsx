@@ -33,12 +33,15 @@ interface SupabaseSessionBlock {
     exercise_templates: {
       slug: string;
       display_name: string;
+      clinical_name?: string | null;
       default_reps: number;
       default_hold_ms: number;
       coaching_strings: Record<string, unknown>;
       rom_start_degrees: number | null;
       rom_norm_degrees: number | null;
       rom_acceptable_min: number | null;
+      camera_position?: string | null;
+      patient_position?: string | null;
     } | null;
   }[];
 }
@@ -50,12 +53,15 @@ interface SupabasePrescriptionExercise {
   exercise_templates: {
     slug: string;
     display_name: string;
+    clinical_name?: string | null;
     default_reps: number;
     default_hold_ms: number;
     coaching_strings: Record<string, unknown>;
     rom_start_degrees: number | null;
     rom_norm_degrees: number | null;
     rom_acceptable_min: number | null;
+    camera_position?: string | null;
+    patient_position?: string | null;
   } | null;
 }
 
@@ -98,12 +104,16 @@ export default async function SessionPage({ searchParams }: PageProps) {
           exercise_templates (
             slug,
             display_name,
+          clinical_name,
+            clinical_name,
             default_reps,
             default_hold_ms,
             coaching_strings,
             rom_start_degrees,
             rom_norm_degrees,
-            rom_acceptable_min
+            rom_acceptable_min,
+            camera_position,
+            patient_position
           )
         )
       ),
@@ -119,7 +129,9 @@ export default async function SessionPage({ searchParams }: PageProps) {
           coaching_strings,
           rom_start_degrees,
           rom_norm_degrees,
-          rom_acceptable_min
+          rom_acceptable_min,
+          camera_position,
+          patient_position
         )
       )
     `)
@@ -223,7 +235,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
         if (!tmpl) continue;
         const reps = ex.reps_override ?? tmpl.default_reps;
         const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null, ex.rom_target_degrees ?? null, ex.rom_encourage_degrees ?? null);
+        const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null, ex.rom_target_degrees ?? null, ex.rom_encourage_degrees ?? null, { cameraPosition: tmpl.camera_position, patientPosition: tmpl.patient_position, clinicalName: tmpl.clinical_name });
         if (prescription) mapped.push(prescription);
       }
     }
@@ -238,7 +250,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
       if (!tmpl) continue;
       const reps = ex.reps_override ?? tmpl.default_reps;
       const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
-      const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null);
+      const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null, null, null, { cameraPosition: tmpl.camera_position, patientPosition: tmpl.patient_position, clinicalName: tmpl.clinical_name });
       if (prescription) mapped.push(prescription);
     }
   }
