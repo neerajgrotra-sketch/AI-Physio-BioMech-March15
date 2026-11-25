@@ -143,6 +143,25 @@ describe("PositionTracker", () => {
     t.update(bad("too_close"), 3000);
     expect(t.update(bad("too_close"), 3000 + UNLOCK_AFTER_MS).state).toBe("adjusting");
   });
+
+  it("once locked, drifting off centre or a little further away never interrupts", () => {
+    const t = new PositionTracker();
+    t.update(ok(), 0);
+    t.update(ok(), LOCK_STILL_MS + 10);
+    expect(t.isLocked()).toBe(true);
+    for (let ms = 2000; ms < 20000; ms += 500) {
+      expect(t.update(bad(ms % 1000 ? "move_left" : "too_far"), ms).state).toBe("locked");
+    }
+  });
+
+  it("once locked, stepping out of view for under 3 s is forgiven", () => {
+    const t = new PositionTracker();
+    t.update(ok(), 0);
+    t.update(ok(), LOCK_STILL_MS + 10);
+    expect(t.update(bad("no_person"), 3000).state).toBe("locked");
+    expect(t.update(bad("no_person"), 5500).state).toBe("locked");
+    expect(t.update(ok(), 5600).state).toBe("locked");
+  });
 });
 
 describe("arm forward with camera_position either / front", () => {

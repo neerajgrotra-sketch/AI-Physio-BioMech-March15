@@ -486,10 +486,14 @@ export function useInferenceLoop() {
 
             // ── Resting-baseline calibration (lib/engine/calibration.ts) ──
             // For arm exercises, sample the metric for the first few seconds
-            // after the person is seen and set start / target / finish from
-            // the resting reading. Knees and sit-to-stand use fixed thresholds.
+            // once the patient is in position (locked by the positioning
+            // coach), not from the first frame they are seen: before that
+            // they may still be walking in or sitting down. Then set start /
+            // target / finish from the resting reading. Knees and
+            // sit-to-stand use fixed thresholds.
             const activeMetric = activePrescription.target.metric;
-            if (normalized.personDetected && !calibrationCompleteRef.current) {
+            const positioned = framingCallbacks.getPrerequisiteResult().allMet;
+            if (normalized.personDetected && positioned && !calibrationCompleteRef.current) {
               if (calibrationKindFor(activeMetric) === "none") {
                 calibrationCompleteRef.current = true;
               } else {
@@ -899,6 +903,8 @@ export function useInferenceLoop() {
   return {
     /** Facing the camera or side on, as the arm measurement judges it (null until seen). */
     getFacingView: () => flexionViewRef.current.currentView(),
+    /** The learned upper-arm length in torso lengths (front-view flexion), or null. */
+    getArmLength: (side: "right" | "left") => flexionViewRef.current.armLength(side),
     // State
     engineStatus,
     engineError,

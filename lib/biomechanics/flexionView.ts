@@ -16,10 +16,9 @@
 //     θ = acos(drop / L)
 //
 // where drop is how far the elbow is below the shoulder (negative when
-// above). L is learned from the patient: an arm can never look LONGER
-// than it is, and it looks its full length while hanging at rest (and
-// near overhead), so L is a high percentile of the upper arm's seen
-// length. Both are measured in torso lengths, so stepping nearer or
+// above). L is learned from the patient while the arm hangs at rest,
+// where it looks its full length: a high percentile of the upper arm's
+// seen length in those frames. Both are measured in torso lengths, so stepping nearer or
 // further from the camera changes nothing.
 //
 // Accuracy: best in the middle of the range (60°-130°), where the elbow's
@@ -42,13 +41,22 @@ export const FRONT_ABOVE = 0.5;
 const WINDOW = 600;       // seen-length samples kept (about 20 s at 30 fps)
 const MIN_SAMPLES = 10;   // before this, the arm length is not known yet
 const PERCENTILE = 0.8;
+const HANGING = 0.9;      // drop / seen length above this = arm hanging down
 
 class ArmLength {
   private seen: number[] = [];
   private length: number | null = null;
 
-  observe(reach: number | null): void {
-    if (reach === null || !(reach > 0)) return;
+  /**
+   * Learns from a frame only while the arm hangs roughly straight down
+   * (the elbow's drop is most of its seen length), where the arm is
+   * square to the camera. A raised arm is nearer the lens and can look
+   * longer than it is (perspective, or a tracking glitch), which would
+   * make the resting arm read too high.
+   */
+  observe(reach: number | null, drop: number | null): void {
+    if (reach === null || drop === null || !(reach > 0)) return;
+    if (drop < HANGING * reach) return;
     this.seen.push(reach);
     if (this.seen.length > WINDOW) this.seen.shift();
     if (this.seen.length < MIN_SAMPLES) return;
@@ -80,6 +88,11 @@ export class FlexionViewEstimator {
     this.view = null;
   }
 
+  /** The learned upper-arm length (torso lengths), or null until known. */
+  armLength(side: "right" | "left"): number | null {
+    return (side === "right" ? this.right : this.left).get();
+  }
+
   /** The view the last frame was judged to be in. */
   currentView(): FacingView | null {
     return this.view;
@@ -91,8 +104,8 @@ export class FlexionViewEstimator {
    * elevation fields on `f` with the drop-based estimate. In place.
    */
   apply(f: MovementFeatures): void {
-    this.right.observe(f.rightUpperArmReach);
-    this.left.observe(f.leftUpperArmReach);
+    this.right.observe(f.rightUpperArmReach, f.rightUpperArmDrop);
+    this.left.observe(f.leftUpperArmReach, f.leftUpperArmDrop);
 
     const w = f.shoulderWidthRatio;
     if (w === null) {

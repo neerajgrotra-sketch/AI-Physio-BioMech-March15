@@ -10,8 +10,8 @@ describe("calibrateThresholds", () => {
     const t = calibrateThresholds(rest, { romAcceptableMin: 110, romTargetDegrees: null })!;
     expect(t.baseline).toBe(14);
     expect(t.target).toBe(110);
-    expect(t.start).toBe(29);
-    expect(t.finish).toBe(24);
+    expect(t.finish).toBe(42.8); // 14 + 30% of 96
+    expect(t.start).toBe(47.8);  // just above the finish
   });
 
   it("uses the physio target, and lets the hold sag to the population minimum", () => {
@@ -25,6 +25,14 @@ describe("calibrateThresholds", () => {
     const t = calibrateThresholds(moving, { romAcceptableMin: 110, romTargetDegrees: null })!;
     expect(t.baseline).toBe(MAX_BASELINE_DEG);
     expect(t.target).toBeGreaterThanOrEqual(t.start + 20);
+  });
+
+  it("a hand resting on the desk (upper arm ~35° forward) still leaves room to finish a rep", () => {
+    const desk = [34, 35, 36, 35, 34, 36, 35, 35, 37, 34];
+    const t = calibrateThresholds(desk, { romAcceptableMin: 110, romTargetDegrees: null })!;
+    expect(t.baseline).toBe(34);
+    expect(t.finish).toBeGreaterThan(36); // coming back to the desk finishes the rep
+    expect(t.target).toBe(110);
   });
 
   it("needs at least 5 samples", () => {

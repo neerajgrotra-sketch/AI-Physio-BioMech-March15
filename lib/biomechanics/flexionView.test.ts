@@ -140,3 +140,26 @@ describe("with webcam-like tracking jitter", () => {
     console.log("front-view error with jitter: " + rows.join(", "));
   });
 });
+
+describe("a close laptop camera (strong perspective)", () => {
+  const near = { camPx: 700 };
+  it("after several raises, the resting arm still reads near 0", () => {
+    const bodies: PixelBody[] = [];
+    for (let rep = 0; rep < 3; rep++) {
+      bodies.push(...repeat(flexionFront(3, near), 30));
+      for (let d = 3; d <= 160; d += 4) bodies.push(flexionFront(d, near));
+      bodies.push(...repeat(flexionFront(160, near), 30));
+      for (let d = 160; d >= 3; d -= 4) bodies.push(flexionFront(d, near));
+    }
+    bodies.push(...repeat(flexionFront(3, near), 30));
+    const out = run(bodies);
+    expect(out[out.length - 1].f.rightArmElevationDeg!).toBeLessThan(10);
+  });
+
+  it("mid-range readings stay usable (within 12°) despite the perspective", () => {
+    for (const deg of [60, 90, 120]) {
+      const r = readAt(deg, near);
+      expect(Math.abs(r.f.rightArmElevationDeg! - deg), `at ${deg}°`).toBeLessThanOrEqual(12);
+    }
+  });
+});

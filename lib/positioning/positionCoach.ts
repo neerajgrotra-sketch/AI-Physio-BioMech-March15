@@ -10,8 +10,9 @@
 //                                 instruction must last 500 ms before
 //                                 it replaces the last one, and a good
 //                                 position must be held still 1.5 s
-//                                 to lock in (and stays locked unless
-//                                 something is wrong for 1.2 s)
+//                                 to lock in (and then stays locked
+//                                 unless something serious is wrong
+//                                 for 3 s; small shifts are tolerated)
 //   positionSetupFor(prescription) what each exercise needs
 //
 // Checks, in order; the first that fails is the one instruction given:
@@ -317,7 +318,17 @@ export function assessPosition(
 
 export const ISSUE_SETTLE_MS = 500;   // a new instruction must last this long to show
 export const LOCK_STILL_MS = 1500;    // good + still this long to lock in
-export const UNLOCK_AFTER_MS = 1200;  // once locked, a problem must last this long
+export const UNLOCK_AFTER_MS = 3000;  // once locked, a real problem must last this long
+
+// Once locked in, these no longer interrupt the exercise: drifting a little
+// off centre, or a little nearer or further, doesn't stop the camera from
+// measuring. (They used to unlock after 1.2 s, so the slightest shift
+// stopped the exercise and brought the guide back.) Only real problems
+// (out of view, turned the wrong way, cut off by the frame, wrong posture)
+// unlock, and only after UNLOCK_AFTER_MS.
+export const TOLERATED_WHEN_LOCKED = new Set([
+  "move_left", "move_right", "shift_left", "shift_right", "too_far", "hold_still",
+]);
 
 export type PositionState = "adjusting" | "hold_still" | "locked";
 
@@ -358,7 +369,7 @@ export class PositionTracker {
 
   update(a: PositionAssessment, nowMs: number): TrackedPosition {
     if (this.locked) {
-      if (a.ok) {
+      if (a.ok || (a.issue && TOLERATED_WHEN_LOCKED.has(a.issue.id))) {
         this.badSince = null;
         return { state: "locked", issue: null, progress: 1 };
       }
