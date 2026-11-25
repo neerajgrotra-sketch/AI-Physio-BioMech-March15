@@ -1639,8 +1639,12 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
       // ── 7. ROM score ──────────────────────────────────────────────────────
       const activePxMetric = ghostActiveMetricRef.current;
-      const calibBaseline  = inferenceLoop.calibrationBaselineRef.current;
       const tgtThresh      = ghostPrescriptionRef.current?.targetThreshold ?? null;
+      // Arm exercises calibrate a resting baseline. Knees are not calibrated
+      // (baseline stays 0) but rest at ~90°, so their score starts from rest:
+      // the start threshold minus its 15° margin.
+      const calibBaseline  = inferenceLoop.calibrationBaselineRef.current ||
+        Math.max(0, (ghostPrescriptionRef.current?.startThreshold ?? 15) - 15);
       let score = 0;
       if (activePxMetric !== null && tgtThresh !== null && tgtThresh > calibBaseline) {
         score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThresh - calibBaseline)));
