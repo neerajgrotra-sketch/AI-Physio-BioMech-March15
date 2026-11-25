@@ -362,6 +362,7 @@ export function useCoachingBrain() {
         const fbMs = Date.now();
         recordMessage({ source: "fallback", trigger, text: fallbackText, tone: "neutral", nowMs: fbMs });
         setPanelState({ message: fallbackText, tone: "neutral", isThinking: false, source: "fallback", setAtMs: fbMs });
+        if (voiceEnabledRef.current) speakMessage(sanitizeForSpeech(fallbackText), 0.95);
       } else {
         setPanelState(prev => ({ ...prev, isThinking: false }));
       }
@@ -481,11 +482,17 @@ export function useCoachingBrain() {
         timeoutHandleRef.current = null;
       }
 
-      if (activeCallIdRef.current !== callId) return;
+      // Bail only if a newer call has taken over. (The try block clears
+      // activeCallIdRef before checking response.ok, so the old check,
+      // `!== callId`, always bailed on an API error and left "Thinking…"
+      // on screen with nothing said: the exercise looked as if it never
+      // started.)
+      if (activeCallIdRef.current !== null && activeCallIdRef.current !== callId) return;
       activeCallIdRef.current = null;
       activePriorityRef.current = 0;
 
       if (fallbackText) {
+        recordMessage({ source: "fallback", trigger, text: fallbackText, tone: "neutral", nowMs: Date.now() });
         setPanelState({
           message: fallbackText,
           tone: "neutral",
@@ -493,6 +500,7 @@ export function useCoachingBrain() {
           source: "fallback",
           setAtMs: Date.now()
         });
+        if (voiceEnabledRef.current) speakMessage(sanitizeForSpeech(fallbackText), 0.95);
       } else {
         setPanelState(prev => ({ ...prev, isThinking: false }));
       }

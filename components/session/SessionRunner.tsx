@@ -1268,7 +1268,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
   // to diagnose framing and engine issues without any copy-paste.
   // ============================================================
 
-  async function flushDebugLogToSupabase(reason: "session_end" | "pause" | "error" | "manual") {
+  async function flushDebugLogToSupabase(reason: "session_end" | "pause" | "error" | "manual" | "page_hidden") {
     if (!prescriptionId) return; // no session ID — can't associate the log
     try {
       const supabase = getSupabaseClient();
@@ -1296,6 +1296,20 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
       console.warn("[DEBUG FLUSH] Threw:", err);
     }
   }
+
+  // Save the log when the tab is hidden or closed mid-session too, so a test
+  // run that is never ended with End still reaches session_debug_logs.
+  const flushRef = useRef(flushDebugLogToSupabase);
+  flushRef.current = flushDebugLogToSupabase;
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden" && sessionQueue.sessionStarted && globalDebugLog.length > 0) {
+        void flushRef.current("page_hidden");
+      }
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [sessionQueue.sessionStarted]);
 
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
