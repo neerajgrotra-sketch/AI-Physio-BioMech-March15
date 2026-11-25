@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { ExerciseTemplate, CoachingStrings } from "@/lib/supabase/types";
 import { BRAND, BrandLogo } from "@/components/brand/brand";
+import { versionLabel, APP_BUILT_AT } from "@/lib/app/version";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1563,6 +1564,10 @@ export default function AdminPage() {
 
         {/* Logo */}
         <BrandLogo size={30} href="/admin" />
+        <span title={APP_BUILT_AT ? `Built ${new Date(APP_BUILT_AT).toLocaleString()}` : undefined}
+          style={{ fontSize: 11, color: C.textMuted, fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" as const, flexShrink: 0 }}>
+          {versionLabel()}
+        </span>
 
         {/* Desktop tabs — hidden on mobile via media query workaround: use flex with overflow hidden */}
         <div className="rb-desk-tabs" style={{ display: "flex", flex: 1, overflow: "hidden", gap: 2 }}>

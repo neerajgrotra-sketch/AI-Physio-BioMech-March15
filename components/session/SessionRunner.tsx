@@ -13,6 +13,7 @@ import React, {
 } from "react";
 
 import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
+import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -1273,7 +1274,10 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     try {
       const supabase = getSupabaseClient();
       // globalDebugLog is newest-first — reverse to get chronological order for Supabase
-      const allEntries = [...globalDebugLog].reverse();
+      const allEntries = [
+        { level: "info", category: "APP", message: `app ${versionLabel()}`, app_version: APP_VERSION, app_commit: APP_COMMIT, app_branch: APP_BRANCH, timestamp: new Date().toISOString() },
+        ...[...globalDebugLog].reverse(),
+      ];
       const framingOnly = allEntries.filter(e => e.category === "FRAMING" || e.level === "FRAMING_VOICE" || e.level === "FRAMING_SNAP");
       const exerciseCount = sessionQueue.getActiveQueue().length;
 
@@ -1315,7 +1319,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     if (combinedQueue.length === 0) return;
     sessionStartedAtMsRef.current = Date.now();
     globalDebugLog = []; // clear buffer from any previous session
-    writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
+    writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`, `app ${versionLabel()}`);
     exerciseLandmarkConfidenceRef.current = {};
     exercisePeakMetricsRef.current = {};
     exerciseHoldDurationsRef.current = {};
@@ -1979,6 +1983,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                 {prescriptionId.slice(0, 8)}
               </div>
             )}
+            {/* Which build is running */}
+            <div style={{ fontSize: 10, fontFamily: "monospace", color: "#7a88a8", padding: "2px 0" }}>{versionLabel()}</div>
           </div>
           {/* Stats badges */}
           {combinedQueue.length > 0 && (
