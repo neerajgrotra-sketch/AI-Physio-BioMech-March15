@@ -2,6 +2,20 @@
 
 Parked ideas and decisions waiting on something. Newest first.
 
+## Expected ROM and Encourage-to ROM (problem area, owner's note 2026-11-25)
+
+Set per exercise when a protocol is assigned to a patient (admin, Patients → Assign Protocol; saved as
+`session_block_exercises.rom_target_degrees` and `rom_encourage_degrees`).
+
+- **Expected ROM ("hold fires here")** becomes the rep's pass mark (`romTargetDegrees` → `targetThreshold`). The
+  slider defaults to the template's minimum (110° for arm-forward right) and runs from 0° to the norm (160°).
+- **Encourage-to ROM** is meant to be the "push a bit further" goal for the coaching (`encourageThreshold`, read in
+  `SessionRunner`). When "Not set", its slider thumb still sits part-way along the track, which looks like a value.
+- Seen on the assign screen: a horizontal scrollbar under the exercise card (the row is wider than the panel).
+- To work through with the owner: what each number should mean clinically, sensible defaults and limits (encourage
+  above expected; expected not below what the camera can tell apart), how they show on the patient's screen, and
+  how the front-view measurement's accuracy near overhead (±6-10°) affects targets above about 150°.
+
 ## 3D depth camera for front-facing measurement
 
 - **Why:** the product mockups have the patient facing the screen (kiosk, desk monitor). A forward arm raise and a
