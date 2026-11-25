@@ -20,6 +20,7 @@ export interface SessionPageClientProps {
   patientProfile?: PatientProfile;
   patientName?: string;
   patientId?: string;
+  previousSession?: { mobilityScore: number; sessionTitle: string; claudeSummary: string };
   error?: string;
 }
 
@@ -88,6 +89,7 @@ export default function SessionPageClient({
   patientProfile,
   patientName,
   patientId,
+  previousSession,
   error,
 }: SessionPageClientProps) {
   // No prescription param — render SessionRunner in default library mode
@@ -125,6 +127,7 @@ export default function SessionPageClient({
         patientName={patientName}
         prescriptionId={prescriptionId}
         patientId={patientId}
+        previousSession={previousSession}
       />
     </Suspense>
   );

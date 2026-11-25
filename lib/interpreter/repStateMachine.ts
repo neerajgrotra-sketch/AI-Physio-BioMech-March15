@@ -30,6 +30,12 @@ export function createInitialRepState(): RuntimeRepState {
   };
 }
 
+// How long the metric may sit below the hold floor before the hold ends.
+export const HOLD_DIP_GRACE_MS = 300;
+// A lift that peaks at least this far past the start threshold and comes
+// back without reaching the target counts as a failed (too low) rep.
+export const SHORT_ATTEMPT_DEG = 15;
+
 export function updateRepState(
   currentState: RuntimeRepState,
   activeMetricValue: number | null,
@@ -39,7 +45,19 @@ export function updateRepState(
   isolationOk: boolean,
   bilateralParticipationOk: boolean
 ): RuntimeRepState {
-  const value = activeMetricValue ?? 0;
+  // No reading this frame (the joint was not seen, or tracking dropped out):
+  // keep the rep exactly where it is. It used to count as 0°, which dropped
+  // a hold into "lowering" and failed the rep on a single lost frame.
+  if (activeMetricValue === null) {
+    return {
+      ...currentState,
+      justCompletedRep: false,
+      justFailedRep: false,
+      justCompletedHold: false,
+      lastRepEvaluation: buildRepEvaluation("none", null)
+    };
+  }
+  const value = activeMetricValue;
 
   let phase: MovementPhase = currentState.phase;
   let repCount = currentState.repCount;
@@ -58,6 +76,8 @@ export function updateRepState(
   let everHadBilateralParticipationGap = currentState.everHadBilateralParticipationGap;
 
   let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
+  let dipStartedAtMs = currentState.dipStartedAtMs ?? null;
+  let attemptPeak = currentState.attemptPeak ?? null;
 
   if (currentState.phase === "complete") {
     return {
@@ -69,11 +89,13 @@ export function updateRepState(
     };
   }
 
+  // Only accumulate quality violations during the active upward phases.
+  // Lowering is explicitly excluded — natural arm swing during descent is
+  // not a clinically meaningful isolation failure and should not fail the rep.
   const activePhase =
     currentState.phase === "lifting" ||
     currentState.phase === "top" ||
-    currentState.phase === "holding" ||
-    currentState.phase === "lowering";
+    currentState.phase === "holding";
 
   if (activePhase) {
     if (!isolationOk) {
@@ -103,6 +125,7 @@ export function updateRepState(
     }
 
     case "lifting": {
+      attemptPeak = attemptPeak === null ? value : Math.max(attemptPeak, value);
       if (value >= prescription.targetThreshold) {
         phase = "top";
         enteredTopAtMs = nowMs;
@@ -112,6 +135,17 @@ export function updateRepState(
           holdSatisfied = true;
         }
       } else if (value < prescription.startThreshold) {
+        // Came back down without reaching the target. A real attempt (it
+        // got SHORT_ATTEMPT_DEG past the start) is a failed rep on height;
+        // a twitch over the start line is ignored. These used to vanish,
+        // so short attempts never reached the session results.
+        if (attemptPeak !== null && attemptPeak >= prescription.startThreshold + SHORT_ATTEMPT_DEG) {
+          justFailedRep = true;
+          lastRepEvaluation =
+            prescription.side === "both" && everHadBilateralParticipationGap
+              ? buildRepEvaluation("failed", "failed_bilateral_participation")
+              : buildRepEvaluation("failed", "failed_height");
+        }
         phase = "ready";
         enteredTopAtMs = null;
         holdSatisfied = false;
@@ -141,9 +175,16 @@ export function updateRepState(
       const tolerance = prescription.target.tolerance ?? 0;
 
       if (value < prescription.targetThreshold - tolerance) {
-        phase = "lowering";
-        enteredLoweringAtMs = nowMs;
+        // A brief wobble below the hold floor is forgiven; only a dip that
+        // lasts HOLD_DIP_GRACE_MS ends the hold.
+        if (dipStartedAtMs === null) dipStartedAtMs = nowMs;
+        if (nowMs - dipStartedAtMs >= HOLD_DIP_GRACE_MS) {
+          phase = "lowering";
+          enteredLoweringAtMs = nowMs;
+          dipStartedAtMs = null;
+        }
       } else if (enteredTopAtMs !== null) {
+        dipStartedAtMs = null;
         const heldForMs = nowMs - enteredTopAtMs;
 
         if (!holdSatisfied && heldForMs >= prescription.hold.durationMs) {
@@ -246,6 +287,9 @@ export function updateRepState(
 
     everViolatedIsolation,
     everHadBilateralParticipationGap,
+
+    dipStartedAtMs: phase === "holding" ? dipStartedAtMs : null,
+    attemptPeak: phase === "lifting" ? attemptPeak : null,
 
     lastRepEvaluation
   };

@@ -29,10 +29,11 @@ import * as poseDetection from "@tensorflow-models/pose-detection";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
-import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
+import { extractMovementFeatures, emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
-import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
+import { interpretMovement, getEffectiveActiveMetricValue } from "@/lib/interpreter/movementInterpreter";
+import { calibrationKindFor, calibrateThresholds, applyThresholds, FeatureSpikeFilter } from "@/lib/engine/calibration";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
@@ -44,29 +45,8 @@ import type { PatientProfile, ExerciseSessionContext } from "@/lib/patient/patie
 // EMPTY FEATURES FACTORY
 // ============================================================
 
-export function createEmptyFeatures(): MovementFeatures {
-  return {
-    posture: "unknown",
-    rightArmElevationDeg: null,
-    leftArmElevationDeg: null,
-    bilateralArmElevationDeg: null,
-    rightElbowAngleDeg: null,
-    leftElbowAngleDeg: null,
-    torsoLeanDeg: null,
-    shoulderTiltDeg: null,
-    rightWristAboveShoulder: false,
-    leftWristAboveShoulder: false,
-    rightWristToShoulderDy: null,
-    leftWristToShoulderDy: null,
-    hipCenterY: null,
-    hipHeightNormalized: null,
-    kneeAngleLeft: null,
-    kneeAngleRight: null,
-    hipVelocityY: null,
-    isStanding: false,
-    isSeated: false
-  };
-}
+// One definition, shared with the feature extractor.
+export const createEmptyFeatures = emptyMovementFeatures;
 
 // ============================================================
 // LIVE OBSERVATION TYPE
@@ -252,7 +232,33 @@ export type FramingEventCallbacks = {
     nowMs: number
   ) => void;
   cancelPendingEval: () => void;
+  // Returns the most recent prerequisite result — read via ref, zero cost.
+  getPrerequisiteResult: () => { allMet: boolean; failures: Array<{ id: string; patientMessage: string; clinicalNote: string; retryMessage?: string }> };
 };
+
+// ============================================================
+// PREREQUISITE RETRY MESSAGE BUILDER
+// ============================================================
+// Shorter, more specific follow-up for each failure type.
+// Fired once after PREREQ_RETRY_DELAY_MS of silence.
+
+function buildPrereqRetryMessage(failureId: string): string {
+  switch (failureId) {
+    case "coverage_full_body":        return "I still can't see your feet — try stepping a little further back.";
+    case "coverage_torso_hips":       return "I still need to see your knees — move the camera down or step back.";
+    case "coverage_upper_body":       return "I still can't see your shoulders — step back from the camera.";
+    case "posture_must_be_seated":    return "Please sit down in your chair before we start.";
+    case "posture_must_be_standing":  return "Please stand up straight before we begin.";
+    case "posture_indeterminate":     return "Sit fully back in the chair so I can confirm your position.";
+    case "side_landmarks_right":      return "Make sure your full right arm is visible — shoulder to wrist.";
+    case "side_landmarks_left":       return "Make sure your full left arm is visible — shoulder to wrist.";
+    case "side_landmarks_bilateral":  return "Step back so both arms are fully in frame.";
+    case "side_landmarks_bilateral_right": return "Shift slightly left so your right arm is fully visible.";
+    case "side_landmarks_bilateral_left":  return "Shift slightly right so your left arm is fully visible.";
+    case "bilateral_asymmetry":       return "Centre yourself so both arms are equally in view.";
+    default:                          return "Adjust your position so I can see you clearly.";
+  }
+}
 
 // ============================================================
 // HOOK
@@ -273,12 +279,24 @@ export function useInferenceLoop() {
   // Track hold entry time for holdElapsedMs calculation
   const holdEnteredAtMsRef = useRef<number | null>(null);
   // Spike filter: tracks previous frame metric to reject impossible jumps (>50° per frame)
-  const prevMetricValueRef = useRef<number | null>(null);
+  const spikeFilterRef = useRef(new FeatureSpikeFilter());
   // Peak metric reached during current rep (reset on READY→LIFTING, updated each LIFTING/HOLDING frame)
   // Passed to onRepCompleted so session results can store the actual achieved ROM
   const peakMetricThisRepRef = useRef<number | null>(null);
   // Hold duration for current rep (ms) — captured when HOLDING→LOWERING transition fires
   const lastHoldDurationMsRef = useRef<number | null>(null);
+  // Frame counter for throttled debug logging
+  const debugFrameCountRef = useRef<number>(0);
+
+  // ── Prerequisite voice state machine ──────────────────────────────────────
+  // States: "unsaid" → "spoken_initial" → "waiting" → "spoken_retry" → "exhausted"
+  // Speaks the initial instruction once, waits 12s silently, speaks a shorter
+  // retry once, then goes exhausted (visual panel only — no more speech).
+  // Resets when the failure type changes or prerequisites are met.
+  const prereqVoiceStateRef   = useRef<"unsaid" | "spoken_initial" | "waiting" | "spoken_retry" | "exhausted">("unsaid");
+  const prereqVoiceSpokenAtMs = useRef<number | null>(null);
+  const prereqLastFailureId   = useRef<string | null>(null);
+  const PREREQ_RETRY_DELAY_MS = 8000;
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -289,7 +307,7 @@ export function useInferenceLoop() {
   const calibrationCompleteRef = useRef<boolean>(false);
   const calibrationBaselineRef = useRef<number>(0);
   const calibrationStartMsRef = useRef<number | null>(null);
-  const calibrationWindowMs = 2000; // sample for 2 seconds
+  const calibrationWindowMs = 3000; // sample for 3 seconds — more resting frames
   // State mirror of calibrationBaselineRef — exported for ROM score ring
   // (ref is used internally for zero-cost reads in the rAF loop)
   const [calibrationBaseline, setCalibrationBaseline] = useState<number>(0);
@@ -324,9 +342,13 @@ export function useInferenceLoop() {
     featureHistoryRef.current.clear();
     prevPhaseRef.current = "ready";
     holdEnteredAtMsRef.current = null;
-    prevMetricValueRef.current = null; // reset spike filter on each exercise
+    spikeFilterRef.current.reset(); // reset spike filter on each exercise
     peakMetricThisRepRef.current = null;
     lastHoldDurationMsRef.current = null;
+    debugFrameCountRef.current = 0;
+    prereqVoiceStateRef.current   = "unsaid";
+    prereqVoiceSpokenAtMs.current = null;
+    prereqLastFailureId.current   = null;
 
     // Reset calibration for new exercise
     calibrationSamplesRef.current = [];
@@ -453,163 +475,46 @@ export function useInferenceLoop() {
 
             setFeatures(smoothedFeatures);
 
-            // ── Dynamic Rest Baseline Calibration ─────────────────────────
-            // During the first 2 seconds while the patient is at rest (before
-            // any movement is detected), sample the active metric to compute
-            // the true resting baseline. This corrects TensorFlow's ~20° offset
-            // which varies with camera distance, posture, and patient size.
-            // All thresholds are then offset from this real measured baseline.
+            // ── Resting-baseline calibration (lib/engine/calibration.ts) ──
+            // For arm exercises, sample the metric for the first few seconds
+            // after the person is seen and set start / target / finish from
+            // the resting reading. Knees and sit-to-stand use fixed thresholds.
+            const activeMetric = activePrescription.target.metric;
             if (normalized.personDetected && !calibrationCompleteRef.current) {
-              // Start calibration timer on first detected person
-              if (calibrationStartMsRef.current === null) {
-                calibrationStartMsRef.current = nowMs;
-              }
-
-              // Compute raw metric value for this frame
-              const rawMetricForCalib = (() => {
-                const id = activePrescription.id;
-                const f = smoothedFeatures;
-                if (id.includes("flexion")) {
-                  if (id.includes("right")) return f.rightArmElevationDeg;
-                  if (id.includes("left")) return f.leftArmElevationDeg;
-                  return f.bilateralArmElevationDeg;
+              if (calibrationKindFor(activeMetric) === "none") {
+                calibrationCompleteRef.current = true;
+              } else {
+                if (calibrationStartMsRef.current === null) {
+                  calibrationStartMsRef.current = nowMs;
                 }
-                if (id.includes("abduction")) {
-                  if (id.includes("right")) return f.rightArmElevationDeg;
-                  if (id.includes("left")) return f.leftArmElevationDeg;
-                  return f.bilateralArmElevationDeg;
-                }
-                return null;
-              })();
+                const sample = getEffectiveActiveMetricValue(smoothedFeatures, activePrescription);
+                if (sample !== null) calibrationSamplesRef.current.push(sample);
 
-              if (rawMetricForCalib !== null && rawMetricForCalib > 0) {
-                calibrationSamplesRef.current.push(rawMetricForCalib);
-              }
-
-              // After calibration window, compute baseline and update thresholds
-              if (nowMs - calibrationStartMsRef.current >= calibrationWindowMs) {
-                const samples = calibrationSamplesRef.current;
-                if (samples.length >= 5) {
-                  // Use median to avoid outliers
-                  const sorted = [...samples].sort((a, b) => a - b);
-                  const baseline = sorted[Math.floor(sorted.length / 2)];
-                  calibrationBaselineRef.current = baseline;
+                if (nowMs - calibrationStartMsRef.current >= calibrationWindowMs) {
                   calibrationCompleteRef.current = true;
-                  setCalibrationBaseline(baseline); // mirrors ref for external consumers
-
-                  // Recompute thresholds offset from real resting baseline.
-                  // romStart (e.g. 0°) is the anatomical rest — baseline is what
-                  // TensorFlow actually reads at that anatomical position.
-                  // We shift all thresholds by (baseline - romStart).
-                  const romStart = (activePrescription as any).romStartDegrees ?? 0;
-                  const offset = Math.max(0, baseline - romStart);
-                  const romMin = (activePrescription as any).romAcceptableMin;
-
-                  // Fix B: physio override (romTargetDegrees) takes priority over
-                  // population-level romAcceptableMin. buildPrescription already set
-                  // targetThreshold = romTargetDegrees ?? romMin, but calibration was
-                  // overwriting it back to romMin. Use the same priority here.
-                  const physioTarget = (activePrescription as any).romTargetDegrees ?? null;
-                  const effectiveTarget = physioTarget ?? romMin;
-
-                  if (effectiveTarget != null) {
-                    // startThreshold: must be comfortably above baseline noise.
-                    // TF resting jitter is ±3–5°, so +15° gives clear separation.
-                    const start = baseline + 15;
-
-                    // targetThreshold: used to TRIGGER hold entry (TOP phase).
-                    // Uses physio override if set, otherwise population min.
-                    // This is what the patient must reach for the hold to start.
-                    const target = effectiveTarget + offset;
-
-                    // finishThreshold: used during LOWERING to detect arms returned to rest.
-                    // Must be above resting noise floor (baseline ± 3-5°).
-                    const finish = Math.max(0, baseline + 10);
-
-                    // CRITICAL: Also set target.tolerance on the prescription so HOLDING
-                    // phase allows metric to drop from physio target back toward romMin
-                    // without immediately failing. Without this, a physio target of 135°+
-                    // calibrated offset makes hold impossible to sustain.
-                    // holdSustainFloor = romAcceptableMin + offset (population-level floor)
-                    // tolerance = target - holdSustainFloor (gap between trigger and floor)
-                    const holdSustainFloor = (romMin ?? 110) + offset;
-                    const holdTolerance = Math.max(10, target - holdSustainFloor);
-
-                    (activePrescription as any).startThreshold = start;
-                    (activePrescription as any).targetThreshold = target;
-                    (activePrescription as any).finishThreshold = finish;
-                    activePrescription.startThreshold = start;
-                    activePrescription.targetThreshold = target;
-                    activePrescription.finishThreshold = finish;
-                    // Update tolerance so hold sustains down to romAcceptableMin + offset
-                    if (activePrescription.target) {
-                      activePrescription.target.tolerance = holdTolerance;
-                    }
-
-                    // ── CALIBRATION DEBUG LOG ──────────────────────────────
-                    // This fires ONCE per exercise after calibration completes.
-                    // If you see wrong threshold values here, the calibration
-                    // window captured bad samples (patient was moving).
+                  const t = calibrateThresholds(calibrationSamplesRef.current, {
+                    romAcceptableMin: (activePrescription as any).romAcceptableMin ?? null,
+                    romTargetDegrees: (activePrescription as any).romTargetDegrees ?? null,
+                  });
+                  if (t) {
+                    applyThresholds(activePrescription, t);
+                    calibrationBaselineRef.current = t.baseline;
+                    setCalibrationBaseline(t.baseline);
                     console.log(
                       `[CALIBRATION COMPLETE] ex=${activePrescription.id}` +
-                      ` | baseline=${baseline.toFixed(1)}°` +
-                      ` | offset=${offset.toFixed(1)}°` +
-                      ` | samples=${samples.length}` +
-                      ` | start=${start.toFixed(1)}°` +
-                      ` | target=${target.toFixed(1)}°` +
-                      ` | finish=${finish.toFixed(1)}°` +
-                      ` | holdTolerance=${holdTolerance.toFixed(1)}°` +
-                      ` | holdFloor=${holdSustainFloor.toFixed(1)}°` +
-                      ` | physioTarget=${physioTarget ?? "population"}` +
-                      ` | verify: prescription.finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°`
+                      ` | baseline=${t.baseline.toFixed(1)}° | samples=${calibrationSamplesRef.current.length}` +
+                      ` | start=${t.start.toFixed(1)}° | target=${t.target.toFixed(1)}°` +
+                      ` | finish=${t.finish.toFixed(1)}° | tolerance=${t.tolerance.toFixed(1)}°`
                     );
                   }
-                } else {
-                  // Not enough samples — mark complete to avoid blocking
-                  calibrationCompleteRef.current = true;
                 }
               }
             }
 
-            // ── Spike filter ───────────────────────────────────────────────
-            // TensorFlow occasionally produces single-frame landmark jumps that
-            // cause the metric to spike 50°+ in one frame (e.g. 15° → 103°).
-            // These spikes cause premature hold triggers. The interpreter reads
-            // metric from smoothedFeatures directly, so we clamp the relevant
-            // field back to the previous known-good value on spike frames.
-            const rawMetricThisFrame = (() => {
-              const id = activePrescription.id;
-              const f = smoothedFeatures;
-              if (id.includes("flexion") || id.includes("abduction")) {
-                if (id.includes("right")) return f.rightArmElevationDeg;
-                if (id.includes("left")) return f.leftArmElevationDeg;
-                return f.bilateralArmElevationDeg;
-              }
-              return null;
-            })();
-
-            const SPIKE_THRESHOLD_DEG = 50;
-            if (
-              rawMetricThisFrame !== null &&
-              prevMetricValueRef.current !== null &&
-              Math.abs(rawMetricThisFrame - prevMetricValueRef.current) > SPIKE_THRESHOLD_DEG
-            ) {
-              // Clamp the spiked field back to previous value so the interpreter
-              // sees a stable reading — do not update prevMetricValueRef this frame
-              const id = activePrescription.id;
-              const prev = prevMetricValueRef.current;
-              if (id.includes("flexion") || id.includes("abduction")) {
-                if (id.includes("right")) smoothedFeatures.rightArmElevationDeg = prev;
-                else if (id.includes("left")) smoothedFeatures.leftArmElevationDeg = prev;
-                else {
-                  smoothedFeatures.bilateralArmElevationDeg = prev;
-                  smoothedFeatures.rightArmElevationDeg = prev;
-                  smoothedFeatures.leftArmElevationDeg = prev;
-                }
-              }
-            } else if (rawMetricThisFrame !== null) {
-              prevMetricValueRef.current = rawMetricThisFrame;
-            }
+            // ── Spike filter (lib/engine/calibration.ts) ────────────────
+            // Drops single-frame pose glitches on the fields this exercise
+            // reads; a change that lasts 3 frames is accepted.
+            spikeFilterRef.current.apply(smoothedFeatures, activeMetric);
 
             // Run movement interpreter
             const output = interpretMovement(
@@ -623,6 +528,24 @@ export function useInferenceLoop() {
                 activeMetricValue: null
               }
             );
+
+            // Position gate (before the first rep): until the patient is
+            // in position and has held still (lib/positioning), the rep
+            // state machine does not move. The gate used to run AFTER this
+            // update, so it never actually held anything back.
+            const gateClosed =
+              repStateRef.current.phase === "ready" &&
+              repStateRef.current.repCount === 0 &&
+              !framingCallbacks.getPrerequisiteResult().allMet;
+            if (gateClosed) {
+              output.repState = {
+                ...repStateRef.current,
+                justCompletedRep: false,
+                justFailedRep: false,
+                justCompletedHold: false,
+                lastRepEvaluation: { outcome: "none", reason: null },
+              };
+            }
 
             repStateRef.current = output.repState;
 
@@ -724,26 +647,60 @@ export function useInferenceLoop() {
             const armElevation = (() => {
               const id = activePrescription.id;
               const f = smoothedFeatures;
-              // Shoulder flexion — forward raise
+              // Shoulder flexion — forward raise (unchanged)
               if (id === "right-arm-raise" || id === "shoulder_flexion_right")
                 return f.rightArmElevationDeg;
               if (id === "left-arm-raise" || id === "shoulder_flexion_left")
                 return f.leftArmElevationDeg;
               if (id === "both-arm-raise" || id === "shoulder_flexion_bilateral")
                 return f.bilateralArmElevationDeg;
-              // Shoulder abduction — sideways raise (uses same elevation metric)
-              if (id === "shoulder_abduction_right") return f.rightArmElevationDeg;
-              if (id === "shoulder_abduction_left") return f.leftArmElevationDeg;
-              if (id === "shoulder_abduction_bilateral") return f.bilateralArmElevationDeg;
-              // Knee extension — use elbow angle as proxy for knee angle
+              // Shoulder abduction — lateral raise (new metric)
+              if (id === "shoulder_abduction_right") return f.rightShoulderAbductionDeg;
+              if (id === "shoulder_abduction_left") return f.leftShoulderAbductionDeg;
+              if (id === "shoulder_abduction_bilateral") return f.bilateralShoulderAbductionDeg;
+              // Knee extension
               if (id === "knee_extension_right") return f.rightElbowAngleDeg;
               if (id === "knee_extension_left") return f.leftElbowAngleDeg;
               if (id === "knee_extension_bilateral") return f.bilateralArmElevationDeg;
-              // Sit to stand — hip height
+              // Sit to stand
               if (id === "sit-to-stand" || id === "sit_to_stand")
                 return f.hipHeightNormalized != null ? f.hipHeightNormalized * 100 : null;
               return null;
             })();
+
+            // ------------------------------------------------
+            // ABDUCTION MEASUREMENT DEBUG (fires every 30 frames)
+            // Logs raw landmark positions and derived metrics to
+            // diagnose 2D projection accuracy for lateral arm raise.
+            // Remove once abduction metric is validated.
+            // ------------------------------------------------
+            if (activePrescription.id.includes("abduction") && normalized.personDetected) {
+              debugFrameCountRef.current += 1;
+              if (debugFrameCountRef.current % 30 === 0) {
+                const lms = normalized.landmarks as Record<string, {x:number;y:number;score?:number}|undefined>;
+                const ls = lms["left_shoulder"];
+                const rs = lms["right_shoulder"];
+                const lw = lms["left_wrist"];
+                const rw = lms["right_wrist"];
+
+                const rWristRise = rs && rw ? Math.round((rs.y - rw.y) * 1000) / 10 : null;
+                const lWristRise = ls && lw ? Math.round((ls.y - lw.y) * 1000) / 10 : null;
+                const rWristSpread = rs && rw ? Math.round(Math.abs(rw.x - rs.x) * 1000) / 10 : null;
+                const lWristSpread = ls && lw ? Math.round(Math.abs(lw.x - ls.x) * 1000) / 10 : null;
+
+                console.log(
+                  `[ABDUCTION DEBUG] frame=${debugFrameCountRef.current} phase=${currentPhase}` +
+                  ` | NEW: abdDeg(R)=${smoothedFeatures.rightShoulderAbductionDeg?.toFixed(1) ?? "null"}°` +
+                  ` abdDeg(L)=${smoothedFeatures.leftShoulderAbductionDeg?.toFixed(1) ?? "null"}°` +
+                  ` bilateral=${smoothedFeatures.bilateralShoulderAbductionDeg?.toFixed(1) ?? "null"}°` +
+                  ` | OLD: elevDeg(R)=${smoothedFeatures.rightArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` elevDeg(L)=${smoothedFeatures.leftArmElevationDeg?.toFixed(1) ?? "null"}°` +
+                  ` | wristRise(R)=${rWristRise ?? "null"}% wristRise(L)=${lWristRise ?? "null"}%` +
+                  ` | wristSpread(R)=${rWristSpread ?? "null"}% wristSpread(L)=${lWristSpread ?? "null"}%` +
+                  ` | targetThresh=${activePrescription.targetThreshold.toFixed(1)}° startThresh=${activePrescription.startThreshold.toFixed(1)}°`
+                );
+              }
+            }
 
             // ------------------------------------------------
             // FEED COACHING BRAIN (every frame)
@@ -763,10 +720,6 @@ export function useInferenceLoop() {
             // ------------------------------------------------
             // FEED FRAMING MONITOR (ready phase only)
             // ------------------------------------------------
-            // Critical fix: framing evaluator must NEVER fire during active
-            // reps (lifting/holding/lowering). It calls Claude API and disrupts
-            // the session mid-rep. Gate to ready phase only — one-time check
-            // per exercise is sufficient and was already the clinical intent.
             if (currentPhase === "ready") {
               framingCallbacks.evaluateFraming(
                 normalized,
@@ -774,6 +727,86 @@ export function useInferenceLoop() {
                 activePrescription,
                 nowMs
               );
+            }
+
+            // ------------------------------------------------
+            // PREREQUISITE GATE (before first rep only)
+            // Hard gate: blocks ready→lifting until prerequisites
+            // are met. Only applies when repCount === 0 — once
+            // a session is underway, the patient has already
+            // demonstrated adequate framing and the gate relaxes.
+            // Between reps (repCount > 0) framing issues are
+            // advisory only — shown visually, never blocking.
+            // ------------------------------------------------
+            if (currentPhase === "ready" && output.repState.repCount === 0) {
+              const prereq = framingCallbacks.getPrerequisiteResult();
+              if (!prereq.allMet && prereq.failures.length > 0) {
+                const failure = prereq.failures[0];
+
+                // Reset state machine if failure type changed
+                if (prereqLastFailureId.current !== failure.id) {
+                  prereqVoiceStateRef.current   = "unsaid";
+                  prereqVoiceSpokenAtMs.current = null;
+                  prereqLastFailureId.current   = failure.id;
+                }
+
+                const speakOnce = (text: string) => {
+                  if (typeof window === "undefined" || !window.speechSynthesis) return;
+                  if (window.speechSynthesis.speaking) return; // don't cut over coaching intro
+                  window.setTimeout(() => {
+                    const utt = new SpeechSynthesisUtterance(text);
+                    utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+                    const voices = window.speechSynthesis.getVoices();
+                    const pref = voices.find(v => v.lang.startsWith("en") && (
+                      v.name.includes("Natural") || v.name.includes("Neural") ||
+                      v.name.includes("Premium") || v.name.includes("Samantha") ||
+                      v.name.includes("Karen")   || v.name.includes("Daniel")
+                    ));
+                    if (pref) utt.voice = pref;
+                    window.speechSynthesis.speak(utt);
+                  }, 150);
+                };
+
+                const vs = prereqVoiceStateRef.current;
+                const spokenAt = prereqVoiceSpokenAtMs.current;
+
+                if (vs === "unsaid") {
+                  speakOnce(failure.patientMessage);
+                  prereqVoiceStateRef.current   = "spoken_initial";
+                  prereqVoiceSpokenAtMs.current = nowMs;
+                  console.log(`[PREREQ GATE] initial | id=${failure.id} | ${failure.clinicalNote}`);
+                } else if (vs === "spoken_initial" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
+                  prereqVoiceStateRef.current = "waiting";
+                } else if (vs === "waiting") {
+                  const retry = failure.retryMessage ?? buildPrereqRetryMessage(failure.id);
+                  speakOnce(retry);
+                  prereqVoiceStateRef.current   = "spoken_retry";
+                  prereqVoiceSpokenAtMs.current = nowMs;
+                  console.log(`[PREREQ GATE] retry | id=${failure.id} | "${retry}"`);
+                } else if (vs === "spoken_retry" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
+                  // Keep guiding: repeat the short version every
+                  // PREREQ_RETRY_DELAY_MS for as long as the problem lasts.
+                  // (It used to go silent after two tries.)
+                  prereqVoiceStateRef.current = "waiting";
+                }
+
+                // Block interpretMovement this frame only
+                // Jump to readiness/observation panel below
+                const readiness = readinessEvaluator(normalized, smoothedFeatures, activePrescription);
+                setLiveObservation({
+                  visibilityLines: buildVisibilityLines(normalized, readiness.message, readiness.ready),
+                  movementLines: buildMovementLines(activePrescription, currentPhase, smoothedFeatures, 0, null, "prerequisites_not_met", null)
+                });
+                if (trackingActiveRef.current) rafRef.current = window.requestAnimationFrame(loop);
+                return;
+              }
+
+              // Prerequisites just cleared — reset for next exercise
+              if (prereqLastFailureId.current !== null) {
+                prereqVoiceStateRef.current   = "unsaid";
+                prereqVoiceSpokenAtMs.current = null;
+                prereqLastFailureId.current   = null;
+              }
             }
 
             // ------------------------------------------------

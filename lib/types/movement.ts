@@ -5,6 +5,16 @@ export type MovementFeatures = {
   leftArmElevationDeg: number | null;
   bilateralArmElevationDeg: number | null;
 
+  // Shoulder abduction metrics — separate from flexion elevation.
+  // Computed from wrist position relative to shoulder, normalised by
+  // shoulder width. Reliable from a front-facing camera for lateral
+  // arm raises where armElevationDeg underestimates due to 2D projection.
+  // 0° = arm at rest (hanging down), ~90° = arm level with shoulder,
+  // ~150° = arm fully overhead.
+  rightShoulderAbductionDeg: number | null;
+  leftShoulderAbductionDeg: number | null;
+  bilateralShoulderAbductionDeg: number | null;
+
   rightElbowAngleDeg: number | null;
   leftElbowAngleDeg: number | null;
 

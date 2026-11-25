@@ -38,9 +38,9 @@ export type MetricSource =
   | "leftArmElevationDeg"
   | "bilateralArmElevationDeg"
   // Shoulder abduction (frontal plane)
-  | "rightArmAbductionDeg"
-  | "leftArmAbductionDeg"
-  | "bilateralArmAbductionDeg"
+  | "rightShoulderAbductionDeg"
+  | "leftShoulderAbductionDeg"
+  | "bilateralShoulderAbductionDeg"
   // Elbow
   | "rightElbowAngleDeg"
   | "leftElbowAngleDeg"
@@ -58,8 +58,10 @@ export type MetricSource =
   | "rightWristAboveShoulder"
   | "leftWristAboveShoulder"
   // Knee
+  // Knee: interior hip-knee-ankle angle, ~90° bent (seated) -> ~180° straight.
   | "rightKneeExtensionDeg"
-  | "leftKneeExtensionDeg";
+  | "leftKneeExtensionDeg"
+  | "bilateralKneeExtensionDeg";
 
 // ============================================================
 // FRAMING DECLARATION — Module 1

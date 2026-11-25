@@ -12,6 +12,7 @@ import React, {
   useCallback
 } from "react";
 
+import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -43,6 +44,9 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { getBodyFrame } from "@/lib/pose/bodyFrame";
 import { drawLive, drawHoldRing } from "@/lib/pose/ghostRenderer";
 import { poseFrameToLandmarkArray, mirrorLandmarks } from "@/lib/pose/poseFrameBridge";
+import { getGhostConfig } from "@/lib/pose/ghostConfig";
+import { computeGhostAnim } from "@/lib/pose/ghostAnimator";
+import { dispatchGhostDraw } from "@/lib/pose/ghostDrawers";
 
 import type { PatientProfile } from "@/lib/patient/patientTypes";
 import MovementTimelinePanel from "@/components/debug/MovementTimelinePanel";
@@ -60,7 +64,7 @@ import {
 // DEBUG LOG
 // ============================================================
 
-type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in";
+type LogLevel = "info" | "success" | "warning" | "error" | "api_out" | "api_in" | "FRAMING_VOICE" | "FRAMING_SNAP";
 
 type DebugLogEntry = {
   id: string;
@@ -82,7 +86,7 @@ function writeDebugLog(level: LogLevel, category: string, message: string, detai
     }),
     level, category, message, detail
   };
-  globalDebugLog = [entry, ...globalDebugLog].slice(0, 50);
+  globalDebugLog = [entry, ...globalDebugLog].slice(0, 500);
   if (globalSetDebugLog) globalSetDebugLog([...globalDebugLog]);
 }
 
@@ -228,7 +232,9 @@ const LOG_COLORS: Record<LogLevel, { bg: string; color: string; label: string }>
   warning: { bg: "rgba(255,200,80,0.08)",  color: "#ffcc80", label: "WARN" },
   error:   { bg: "rgba(255,100,100,0.08)", color: "#ff8f8f", label: "ERR" },
   api_out: { bg: "rgba(180,130,255,0.08)", color: "#c4a0ff", label: "OUT" },
-  api_in:  { bg: "rgba(100,220,200,0.08)", color: "#6ee7d4", label: "IN" }
+  api_in:        { bg: "rgba(100,220,200,0.08)", color: "#6ee7d4",  label: "IN"     },
+  FRAMING_VOICE: { bg: "rgba(210,153,34,0.10)",  color: "#ffcc80",  label: "FRAME" },
+  FRAMING_SNAP:  { bg: "rgba(108,99,255,0.10)",   color: "#a78bfa",  label: "FRAME" }
 };
 
 // ============================================================
@@ -306,6 +312,7 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onV
     durationMs: number;
     aiSummary: string;
     exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
+    partial?: boolean;
   };
   patientName?: string;
   sessionTitle?: string;
@@ -328,10 +335,17 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onV
 
         {/* Header */}
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>{summary.partial ? "⏹️" : "🎉"}</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#e6edf3", marginBottom: 6 }}>
-            Session Complete{patientName ? `, ${patientName.split(" ")[0]}!` : "!"}
+            {summary.partial
+              ? `Session Ended${patientName ? `, ${patientName.split(" ")[0]}` : ""}`
+              : `Session Complete${patientName ? `, ${patientName.split(" ")[0]}!` : "!"}`}
           </div>
+          {summary.partial && (
+            <div style={{ fontSize: 13, color: "#d29922", marginBottom: 4 }}>
+              Completed exercises have been saved.
+            </div>
+          )}
           {sessionTitle && (
             <div style={{ fontSize: 14, color: "#7d8590" }}>{sessionTitle}</div>
           )}
@@ -451,6 +465,8 @@ interface SessionRunnerProps {
   patientId?: string;
   /** Registered patient full name — shown in pre-session card and coaching panel */
   patientName?: string;
+  /** Previous session summary fetched server-side — used for greeting */
+  previousSession?: { mobilityScore: number; sessionTitle: string; claudeSummary: string };
 }
 
 // Debug entry types — defined outside component to avoid SWC/Next.js issues
@@ -465,10 +481,11 @@ type RepCycleEntry = {
   encourageThreshold: number | null; repCount: number; detail: string;
 };
 
-export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName, previousSession }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null); // stored on camera ready for pause/resume
   const sessionStartedAtMsRef = useRef<number | null>(null);
   // Ghost silhouette refs
   const ghostCanvasRef  = useRef<HTMLCanvasElement | null>(null);
@@ -502,15 +519,15 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostSmoothedTorso   = useRef<number>(0);
   const ghostSmoothedSW      = useRef<number>(0);
   const ghostFrameInitRef    = useRef<boolean>(false);
-  const ghostRepCountRef  = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
-  const ghostPrevPhaseRef = useRef<string>("");  // detect phase transitions for debug log
-  const ghostReadyStartRef = useRef<number>(0); // when ready phase started, for animation after wait
-  const ghostPhaseRef  = useRef<"demo"|"attempt"|"holding"|"rep_complete">("demo");
-  const ghostStartRef  = useRef<number>(performance.now());
-  const ghostHoldRef   = useRef<number|null>(null);
-  const ghostLowRef    = useRef<number>(0);
-  const ghostRepRef    = useRef<boolean>(false);
-  const ghostHistRef   = useRef<number[]>([]);
+  const ghostRepCountRef   = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
+  const ghostPrevPhaseRef  = useRef<string>("");  // detect phase transitions for debug log
+  const ghostReadyStartRef = useRef<number>(0);  // when ready phase started, for animation after wait
+  // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
+  const ghostTransitionRef = useRef<{ active: boolean; startMs: number; fromGhostT: number }>({
+    active: false, startMs: 0, fromGhostT: 0,
+  });
+  // ghostPhaseRef, ghostStartRef, ghostHoldRef, ghostLowRef, ghostRepRef, ghostHistRef
+  // removed — replaced by computeGhostAnim() in ghostAnimator.ts
   const [ghostScore, setGhostScore]         = useState(0);
   const [ghostHoldMs, setGhostHoldMs]       = useState(0);
   const [ghostPhase, setGhostPhase]         = useState<"demo"|"attempt"|"holding"|"rep_complete">("demo");
@@ -541,12 +558,30 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const repCycleLogRef = useRef<RepCycleEntry[]>([]);
   const [aiEngineStatus, setAiEngineStatus] = useState<"untested" | "ok" | "error" | "checking">("untested");
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [expandedExerciseRow, setExpandedExerciseRow] = useState<number | null>(null);
   const [patientProfile, setPatientProfile] = useState<PatientProfile>(
   initialPatientProfile ?? createDefaultPatientProfile()
 );
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  // Soft pause state — inference stops, camera stays on, timer freezes
+  const [isPaused, setIsPaused] = useState(false);
+
+  // ── SESSION PHASE STATE MACHINE ──────────────────────────────────────────
+  // Controls the pre-session sequence:
+  //   idle       → patient has not clicked Begin
+  //   greeting   → greeting is speaking (camera off)
+  //   framing    → camera on, waiting for prerequisites to pass
+  //   confirmed  → prerequisites just passed, "Perfect" spoken, 1s pause
+  //   running    → exercise is underway
+  type SessionPhase = "idle" | "greeting" | "framing" | "confirmed" | "running";
+  const [sessionPhase, setSessionPhase] = useState<SessionPhase>("idle");
+  const sessionPhaseRef = useRef<SessionPhase>("idle");
+  const greetingSpokenRef = useRef(false);
+  const framingConfirmedRef = useRef(false);
+  const prereqWasFailingRef = useRef(false); // tracks transition from fail→pass for auto-advance
   // Rest screen state — shown between protocol blocks
   const [restScreen, setRestScreen] = useState<{ restMs: number; onDone: () => void } | null>(null);
   // Post-session summary state — shown when all exercises complete
@@ -555,11 +590,19 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
     aiSummary: string;
     durationMs: number;
+    partial?: boolean;
   } | null>(null);
 
   useEffect(() => {
     globalSetDebugLog = setDebugLog;
     return () => { globalSetDebugLog = null; };
+  }, []);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   const sessionQueue = useSessionQueue();
@@ -575,7 +618,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   ghostPhaseInfRef.current    = inferenceLoop.phase;
   ghostHoldRemRef.current     = inferenceLoop.holdRemainingMs;
   ghostRepCountRef.current    = inferenceLoop.repCount;
-  const framingIntelligence = useFramingIntelligence(patientProfile);
+  const framingIntelligence = useFramingIntelligence(patientProfile, writeDebugLog as (level: string, category: string, message: string, detail?: string) => void);
   const coachingBrain = useCoachingBrain();
   const patientContext = usePatientContext(patientProfile);
 
@@ -584,8 +627,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     patientContext.updatePatientProfile(patientProfile);
   }, [patientProfile]);
 
-  // Session timer — runs while engine is running
-  const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running");
+  // Session timer — runs while engine is running and not paused
+  const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running" && !isPaused);
 
   useEffect(() => {
     if (selectedSessionIds.length === 0 && sessions[0]) {
@@ -677,7 +720,19 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // Key = sequence index in queue, value = array of per-rep values
   const exercisePeakMetricsRef = useRef<Record<number, number[]>>({});
   const exerciseHoldDurationsRef = useRef<Record<number, number[]>>({});
-
+  // Per-exercise landmark confidence — snapshotted continuously in feedFrame, locked at exercise complete
+  const exerciseLandmarkConfidenceRef = useRef<Record<number, number | null>>({});
+  // Rolling snapshot of current confidence — updated every feedFrame tick so we never
+  // read a stale/reset value at exercise completion time
+  const liveConfidenceSnapshotRef = useRef<number | null>(null);
+  // Throttle the FRAMING_SNAP debug log to once every 2s
+  const lastFramingSnapMsRef = useRef<number>(0);
+  // Per-rep timeline — one entry per rep (success or failure) for movement_timeline jsonb
+  type RepTimelineEntry = {
+    rep: number; outcome: "success" | "failed"; failureReason: string | null;
+    peakRomDeg: number | null; holdMs: number | null; timestampMs: number;
+  };
+  const exerciseRepTimelineRef = useRef<Record<number, RepTimelineEntry[]>>({});
   const readinessEvaluator = useCallback((frame: any, features: any, prescription: any) => {
     const r = evaluateReadiness({ frame, features, prescription, averageBrightness: null });
     return { ready: r.ready, message: r.message };
@@ -724,6 +779,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         if (!exerciseHoldDurationsRef.current[queueIdx]) exerciseHoldDurationsRef.current[queueIdx] = [];
         exerciseHoldDurationsRef.current[queueIdx].push(holdDurationMs);
       }
+      // Accumulate per-rep timeline entry
+      if (!exerciseRepTimelineRef.current[queueIdx]) exerciseRepTimelineRef.current[queueIdx] = [];
+      exerciseRepTimelineRef.current[queueIdx].push({
+        rep: (exerciseCtx?.repCount ?? 0) + 1,
+        outcome: "success",
+        failureReason: null,
+        peakRomDeg: peakMetric !== null ? Math.round(peakMetric * 10) / 10 : null,
+        holdMs: holdDurationMs,
+        timestampMs: nowMs,
+      });
 
       // coachingBrain.onRepCompleted expects 0-indexed repCount (pre-increment).
       // Pass exerciseCtx captured BEFORE recordRepOutcome increments it.
@@ -741,6 +806,17 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       recordRepFailed(failureReason, exerciseCtx.repCount, nowMs);
       patientContext.recordRepOutcome("failed", failureReason, null);
       coachingBrain.onRepFailed({ prescription, patientProfile, exerciseContext: exerciseCtx, failureReason, nowMs });
+      // Accumulate per-rep timeline entry for failed rep
+      const failedQueueIdx = sessionQueue.getActiveQueueIndex?.() ?? 0;
+      if (!exerciseRepTimelineRef.current[failedQueueIdx]) exerciseRepTimelineRef.current[failedQueueIdx] = [];
+      exerciseRepTimelineRef.current[failedQueueIdx].push({
+        rep: exerciseCtx.repCount + 1,
+        outcome: "failed",
+        failureReason,
+        peakRomDeg: inferenceLoop.activeMetricValue !== null ? Math.round(inferenceLoop.activeMetricValue * 10) / 10 : null,
+        holdMs: null,
+        timestampMs: nowMs,
+      });
     },
     onHoldStarted: (holdRequiredMs: number, nowMs: number) => {
       const prescription = sessionQueue.getActivePrescription();
@@ -798,6 +874,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       const prescription = sessionQueue.getActivePrescription();
       const exerciseCtx = patientContext.getCurrentExerciseContext();
       if (!prescription || !exerciseCtx) return;
+      // Snapshot running confidence average — sampled in ghost rAF tick every frame
+      const confNow = framingIntelligence.getLandmarkConfidencePct();
+      if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
       recordSnapshot({
         nowMs: params.nowMs,
         phase: params.phase,
@@ -823,14 +902,76 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     onRepCompleted: (nowMs: number, peakMetric: number | null, holdDurationMs: number | null) => coachingCallbacksRef.current.onRepCompleted(nowMs, peakMetric, holdDurationMs),
     onRepFailed: (reason: string, nowMs: number) => coachingCallbacksRef.current.onRepFailed(reason, nowMs),
     onHoldStarted: (ms: number, nowMs: number) => coachingCallbacksRef.current.onHoldStarted(ms, nowMs),
-    onExerciseStarted: (nowMs: number) => coachingCallbacksRef.current.onExerciseStarted(nowMs),
+    onExerciseStarted: (nowMs: number) => {
+      // Suppress coaching intro during framing phase — greeting already covered
+      // the protocol. The framing confirmation auto-advance fires this again
+      // once prerequisites are met.
+      if (sessionPhaseRef.current === "framing" || sessionPhaseRef.current === "greeting") {
+        writeDebugLog("info", "COACHING", "onExerciseStarted suppressed — in framing/greeting phase");
+        return;
+      }
+      coachingCallbacksRef.current.onExerciseStarted(nowMs);
+    },
     feedFrame: (params: any) => coachingCallbacksRef.current.feedFrame(params),
   }).current;
 
   const framingCallbacks = useMemo(() => ({
     evaluateFraming: framingIntelligence.evaluateFraming,
     cancelPendingEval: framingIntelligence.cancelPendingEval,
-  }), [framingIntelligence.evaluateFraming, framingIntelligence.cancelPendingEval]);
+    getPrerequisiteResult: () => framingIntelligence.prerequisiteResultRef.current,
+  }), [framingIntelligence.evaluateFraming, framingIntelligence.cancelPendingEval, framingIntelligence.prerequisiteResultRef]);
+
+  // ── FRAMING CONFIRMATION AUTO-ADVANCE ────────────────────────────────────
+  // Watches prerequisiteResult during the framing phase.
+  // When prerequisites transition from failing → passing, speaks confirmation
+  // then advances to the running phase after a 1.5s pause.
+  const framingPhaseStartMsRef = useRef<number>(0);
+  useEffect(() => {
+    const prereq = framingIntelligence.prerequisiteResult;
+    if (sessionPhaseRef.current !== "framing") return;
+    if (framingConfirmedRef.current) return;
+
+    if (!prereq.allMet) {
+      prereqWasFailingRef.current = true;
+      return;
+    }
+
+    // Prerequisites are met — but only auto-advance if:
+    // (a) they were previously failing (genuine correction happened), OR
+    // (b) at least 2s have passed in framing phase (enough time for patient to hear instruction)
+    const elapsed = Date.now() - framingPhaseStartMsRef.current;
+    const genuineCorrection = prereqWasFailingRef.current;
+    if (!genuineCorrection && elapsed < 2000) return;
+
+    // Prerequisites satisfied — confirm and advance
+    framingConfirmedRef.current = true;
+    sessionPhaseRef.current = "confirmed";
+    setSessionPhase("confirmed");
+    writeDebugLog("info", "SESSION", "Framing confirmed — prerequisites met, starting session");
+
+    // Speak confirmation
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance("Perfect — I can see you clearly. Let's begin.");
+      utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const pref = voices.find(v => v.lang.startsWith("en") && (
+        v.name.includes("Natural") || v.name.includes("Neural") ||
+        v.name.includes("Premium") || v.name.includes("Samantha") ||
+        v.name.includes("Karen")   || v.name.includes("Daniel")
+      ));
+      if (pref) utt.voice = pref;
+      window.speechSynthesis.speak(utt);
+    }
+
+    // Advance to running after 1.5s
+    window.setTimeout(() => {
+      sessionPhaseRef.current = "running";
+      setSessionPhase("running");
+      writeDebugLog("info", "SESSION", "Session running — firing exercise_started");
+      stableCoachingCallbacks.onExerciseStarted(Date.now());
+    }, 1500);
+  }, [framingIntelligence.prerequisiteResult, stableCoachingCallbacks]);
 
   // ============================================================
   // EXERCISE COMPLETE
@@ -840,6 +981,13 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     const prescription = sessionQueue.getActivePrescription();
     const exerciseCtx = patientContext.getCurrentExerciseContext();
     writeDebugLog("success", "SESSION", `Exercise complete: ${prescription?.name ?? "?"}`);
+    // Lock in the last-known confidence value from feedFrame snapshots.
+    // getLandmarkConfidencePct() may already be stale/reset by the time this fires,
+    // so we read from liveConfidenceSnapshotRef which was updated every frame.
+    const completedIdx = sessionQueue.queueIndex;
+    exerciseLandmarkConfidenceRef.current[completedIdx] = liveConfidenceSnapshotRef.current;
+    liveConfidenceSnapshotRef.current = null; // reset for next exercise
+    writeDebugLog("info", "RESULTS", `landmark_confidence[${completedIdx}]=${exerciseLandmarkConfidenceRef.current[completedIdx] ?? "null"}`);
     if (prescription && exerciseCtx) {
       coachingBrain.onExerciseCompleting({ prescription, patientProfile, exerciseContext: exerciseCtx, nowMs: Date.now() });
     }
@@ -856,22 +1004,27 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
         const startNextExercise = () => {
           framingIntelligence.reset("Position yourself for the next exercise.");
-          // Reset ghost to demo phase for new exercise
-          ghostPhaseRef.current="demo"; ghostStartRef.current=performance.now();
-          ghostHoldRef.current=null; ghostLowRef.current=0; ghostRepRef.current=false; ghostHistRef.current=[];
+          // ── TRANSITION: capture current ghostT before reset ────────────────
+          // The tick loop will lerp ghostT from this value down to 0 over
+          // TRANSITION_MS (300ms) before the new exercise teaching anim starts.
+          // This prevents the arm snapping from one exercise position to another.
+          const currentGhostT = ghostPhaseInfRef.current === "holding" ? 1
+            : ghostPhaseInfRef.current === "lifting" ? 1
+            : ghostPhaseInfRef.current === "lowering" ? 0.5
+            : 0;
+          ghostTransitionRef.current = { active: true, startMs: performance.now(), fromGhostT: currentGhostT };
+          // Reset ghost smoothing so new exercise anchors to fresh shoulder position
+          ghostFrameInitRef.current = false;
+          ghostRepCountRef.current = 0;
+          ghostPrevPhaseRef.current = "";
+          ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
           framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
-          const waitForSpeech = () => {
-            if (window.speechSynthesis?.speaking) {
-              window.setTimeout(waitForSpeech, 300);
-            } else {
-              window.setTimeout(() => {
-                stableCoachingCallbacks.onExerciseStarted(Date.now());
-              }, 600);
-            }
-          };
-          window.setTimeout(waitForSpeech, 300);
+          // forcePreExerciseCheck already opened the window above.
+          // Voice cue inside runFramingCheck uses speakAfterCurrentSpeech
+          // so it waits for coaching intro without blocking the window.
+          stableCoachingCallbacks.onExerciseStarted(Date.now());
         };
 
         // If there's a rest period before this next block, show rest screen first
@@ -887,6 +1040,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       () => {
         writeDebugLog("success", "SESSION", "All exercises complete");
         writeSessionResults();
+        flushDebugLogToSupabase("session_end");
       }
     );
   }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence, restBoundaries]);
@@ -899,7 +1053,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // then updates session_prescriptions.status → completed.
   // ============================================================
 
-  async function writeSessionResults() {
+  async function writeSessionResults(partial = false) {
     const summary = patientContext.buildSessionSummaryInput();
     if (!summary) {
       writeDebugLog("warning", "RESULTS", "buildSessionSummaryInput returned null — skipping write");
@@ -921,28 +1075,71 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       : 0;
     const mobilityScore = Math.round(Math.min(100, repCompletionRate * 100));
 
-    writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}`);
+    writeDebugLog("info", "RESULTS", `Writing session results — ${allEx.length} exercises, score: ${mobilityScore}${partial ? " [PARTIAL]" : ""}`);
 
-    // Generate AI summary for the patient
-    let aiSummary = "Great work completing your session!";
+    // Build per-exercise clinical data block for the AI prompt
+    const exerciseClinicalData = allEx.map((ex, i) => {
+      const queueItem = sessionQueue.getActiveQueue()[i];
+      const p = queueItem?.prescription as any;
+      const romTarget = p?.romTargetDegrees ?? p?.romAcceptableMin ?? null;
+      const encourageTarget = p?.encourageThreshold ?? null;
+      const holdTargetMs = queueItem?.prescription?.hold?.durationMs ?? null;
+      const repTimeline = exerciseRepTimelineRef.current[i] ?? [];
+      const peaks = repTimeline.filter(r => r.outcome === "success" && r.peakRomDeg !== null).map(r => r.peakRomDeg as number);
+      const firstHalfPeaks = peaks.slice(0, Math.ceil(peaks.length / 2));
+      const secondHalfPeaks = peaks.slice(Math.ceil(peaks.length / 2));
+      const avgFirst = firstHalfPeaks.length > 0 ? Math.round(firstHalfPeaks.reduce((a, b) => a + b, 0) / firstHalfPeaks.length) : null;
+      const avgSecond = secondHalfPeaks.length > 0 ? Math.round(secondHalfPeaks.reduce((a, b) => a + b, 0) / secondHalfPeaks.length) : null;
+      const romTrend = avgFirst !== null && avgSecond !== null ? (avgSecond - avgFirst) : null;
+      const holds = repTimeline.filter(r => r.outcome === "success" && r.holdMs !== null).map(r => r.holdMs as number);
+      const avgHoldS = holds.length > 0 ? (holds.reduce((a, b) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+      const holdCompliance = holdTargetMs && holds.length > 0
+        ? Math.round(holds.filter(h => h >= holdTargetMs * 0.9).length / holds.length * 100)
+        : null;
+      const conf = exerciseLandmarkConfidenceRef.current[i] ?? null;
+      const perRepStr = repTimeline.map(r =>
+        `    Rep ${r.rep}: ${r.outcome === "success" ? "✓" : "✗"} peak=${r.peakRomDeg !== null ? r.peakRomDeg.toFixed(1) + "°" : "n/a"} hold=${r.holdMs !== null ? (r.holdMs / 1000).toFixed(1) + "s" : "n/a"}${r.failureReason ? " FAIL:" + r.failureReason.replace(/_/g, " ") : ""}`
+      ).join("\n");
+      return `Exercise ${i + 1}: ${ex.exerciseName}
+  Reps: ${ex.successfulReps}/${ex.repTarget} successful (${ex.failedReps} failed)
+  ROM target: ${romTarget !== null ? romTarget + "°" : "population norm"} | Encourage-to: ${encourageTarget !== null ? encourageTarget + "°" : "not set"}
+  Avg peak ROM: ${exercisePeakMetricsRef.current[i]?.length ? Math.round(exercisePeakMetricsRef.current[i].reduce((a, b) => a + b, 0) / exercisePeakMetricsRef.current[i].length) + "°" : "n/a"}
+  ROM trend (early vs late reps): ${romTrend !== null ? (romTrend > 0 ? "+" : "") + romTrend + "° (early avg " + avgFirst + "° → late avg " + avgSecond + "°)" : "insufficient data"}
+  Hold target: ${holdTargetMs !== null ? (holdTargetMs / 1000).toFixed(1) + "s" : "none"} | Avg hold: ${avgHoldS !== null ? avgHoldS + "s" : "n/a"} | Hold compliance (≥90%): ${holdCompliance !== null ? holdCompliance + "%" : "n/a"}
+  Failures — height: ${ex.failureReasons.height} hold: ${ex.failureReasons.hold} balance: ${ex.failureReasons.balance} isolation: ${ex.failureReasons.isolation}
+  Landmark confidence: ${conf !== null ? conf + "%" : "not captured"}
+  Per-rep detail:
+${perRepStr}`;
+    }).join("\n\n");
+
+    // Generate clinical AI summary
+    let aiSummary = "Session data recorded.";
     try {
-      const exerciseSummaryText = allEx.map(ex =>
-        `${ex.exerciseName}: ${ex.successfulReps}/${ex.repTarget} reps completed`
-      ).join(", ");
-      const summaryPrompt = `You are a warm, encouraging physiotherapy coach. The patient just completed their session. Write a 2-3 sentence summary for the patient (not the physio) that is warm, specific, and motivating. Mention their mobility score and any highlights. Keep it conversational and human — no bullet points, no medical jargon.
+      const summaryPrompt = `You are a clinical physiotherapy analyst writing a session report for a physiotherapist and physician. Be analytical, specific, and clinically precise. Do not use generic praise.
 
-Session data:
-- Mobility score: ${mobilityScore}/100
-- Duration: ${Math.round(durationMs / 60000)} minutes
-- Exercises: ${exerciseSummaryText}
-- Patient type: ${patientProfile.type.replace(/_/g, " ")}
+PATIENT: ${patientProfile.type.replace(/_/g, " ")} | Session duration: ${Math.round(durationMs / 60000)} min | Mobility score: ${mobilityScore}/100${partial ? " (session ended early)" : ""}
 
-Reply with only the summary text, no JSON, no formatting.`;
+SESSION DATA:
+${exerciseClinicalData}
+
+Write a clinical summary covering:
+1. Overall session performance and mobility score interpretation
+2. Per-exercise ROM achievement vs target — did the patient meet, exceed, or fall short?
+3. Hold compliance — were prescribed hold durations maintained?
+4. Failure patterns — what types of failures occurred and what do they suggest clinically?
+5. ROM trend within exercises — any sign of fatigue or warm-up effect across reps?
+6. Any compensation or isolation failures that warrant attention
+7. Recommended focus for the next session
+
+Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing language. Write as if handing this to the treating physiotherapist.`;
 
       const res = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: summaryPrompt, system: "You are a warm physiotherapy coach. Reply with only the summary text requested — no JSON, no formatting, no preamble." }),
+        body: JSON.stringify({
+          prompt: summaryPrompt,
+          system: "You are a clinical physiotherapy analyst. Write concise, data-driven clinical session reports for physiotherapists. No praise, no patient-facing language, no bullet points. Pure clinical analysis."
+        }),
       });
       if (res.ok) {
         const d = await res.json();
@@ -955,6 +1152,7 @@ Reply with only the summary text, no JSON, no formatting.`;
       mobilityScore,
       durationMs,
       aiSummary,
+      partial,
       exerciseResults: allEx.map(ex => ({
         name: ex.exerciseName,
         successful: ex.successfulReps,
@@ -1029,7 +1227,10 @@ Reply with only the summary text, no JSON, no formatting.`;
           failed_height_count: ex.failureReasons.height,
           failed_balance_count: ex.failureReasons.balance,
           failed_isolation_count: ex.failureReasons.isolation,
-          movement_timeline: null,
+          movement_timeline: exerciseRepTimelineRef.current[i]?.length
+            ? exerciseRepTimelineRef.current[i]
+            : null,
+          landmark_confidence_pct: exerciseLandmarkConfidenceRef.current[i] ?? null,
         };
       });
 
@@ -1043,12 +1244,12 @@ Reply with only the summary text, no JSON, no formatting.`;
       if (prescriptionId) {
         const { error: statusErr } = await supabase
           .from("sessions")
-          .update({ status: "completed" })
+          .update({ status: partial ? "partially_completed" : "completed" })
           .eq("id", prescriptionId);
         if (statusErr) {
           writeDebugLog("error", "RESULTS", "Failed to update session status", statusErr.message);
         } else {
-          writeDebugLog("success", "RESULTS", "Session status → completed");
+          writeDebugLog("success", "RESULTS", `Session status → ${partial ? "partially_completed" : "completed"}`);
         }
       }
 
@@ -1058,23 +1259,156 @@ Reply with only the summary text, no JSON, no formatting.`;
   }
 
   // ============================================================
-  // SESSION LIFECYCLE
+  // FLUSH DEBUG LOG TO SUPABASE
   // ============================================================
+  // Writes the full in-memory debug log as a single JSON blob.
+  // Called at session end, on pause, and on error.
+  // Claude can query session_debug_logs directly via Supabase MCP
+  // to diagnose framing and engine issues without any copy-paste.
+  // ============================================================
+
+  async function flushDebugLogToSupabase(reason: "session_end" | "pause" | "error" | "manual") {
+    if (!prescriptionId) return; // no session ID — can't associate the log
+    try {
+      const supabase = getSupabaseClient();
+      // globalDebugLog is newest-first — reverse to get chronological order for Supabase
+      const allEntries = [...globalDebugLog].reverse();
+      const framingOnly = allEntries.filter(e => e.category === "FRAMING" || e.level === "FRAMING_VOICE" || e.level === "FRAMING_SNAP");
+      const exerciseCount = sessionQueue.getActiveQueue().length;
+
+      const { error } = await supabase.from("session_debug_logs").insert({
+        session_id:      prescriptionId,
+        patient_id:      patientId ?? null,
+        flush_reason:    reason,
+        log_entries:     allEntries,
+        framing_entries: framingOnly,
+        exercise_count:  exerciseCount,
+        total_entries:   allEntries.length,
+      });
+
+      if (error) {
+        console.warn("[DEBUG FLUSH] Failed to write debug log:", error.message);
+      } else {
+        console.log(`[DEBUG FLUSH] Wrote ${allEntries.length} entries (${framingOnly.length} framing) — reason=${reason} session=${prescriptionId}`);
+      }
+    } catch (err) {
+      console.warn("[DEBUG FLUSH] Threw:", err);
+    }
+  }
 
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
     sessionStartedAtMsRef.current = Date.now();
+    globalDebugLog = []; // clear buffer from any previous session
     writeDebugLog("info", "SESSION", `Beginning — ${combinedQueue.length} exercise(s), patient: ${patientProfile.type}`);
-    // Auto-check AI engine on session start
+    exerciseLandmarkConfidenceRef.current = {};
+    exercisePeakMetricsRef.current = {};
+    exerciseHoldDurationsRef.current = {};
+    exerciseRepTimelineRef.current = {};
+    liveConfidenceSnapshotRef.current = null;
     checkAiEngine(true);
 
     const started = sessionQueue.beginSession(combinedQueue);
     if (!started) { writeDebugLog("error", "SESSION", "beginSession returned false"); return; }
     setSelectorCollapsed(true);
     patientContext.beginSession();
-    writeDebugLog("info", "SESSION", `beginExercise: ${combinedQueue[0].prescription.name}`);
     patientContext.beginExercise(combinedQueue[0].prescription, 0, combinedQueue.length);
-    framingIntelligence.reset("Position yourself in view.");
+
+    // ── PHASE: greeting ──────────────────────────────────────────────────
+    // Generate and speak a personalised greeting before camera starts.
+    sessionPhaseRef.current = "greeting";
+    setSessionPhase("greeting");
+    greetingSpokenRef.current = false;
+
+    // Build greeting text
+    const firstName = patientName ? patientName.split(" ")[0] : "there";
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+    const exerciseNames = combinedQueue.map(q => q.prescription.name).join(", ");
+    const firstExerciseName = combinedQueue[0].prescription.name;
+
+    // Previous session context
+    let prevContext = "This is your first session — welcome.";
+    if (previousSession) {
+      const score = previousSession.mobilityScore;
+      prevContext = `Last session was "${previousSession.sessionTitle}" with a mobility score of ${score} out of 100.`;
+    }
+
+    // Framing instruction for first exercise
+    const firstPrescription = combinedQueue[0].prescription;
+    const coverage = (firstPrescription as any)?.framing?.requiredCoverage ?? "upper_body";
+    const framingHint = coverage === "full_body"
+      ? `For ${firstExerciseName}, I'll need to see your full body — head to feet.`
+      : coverage === "torso_and_hips"
+      ? `For ${firstExerciseName}, I'll need to see from your head to your knees.`
+      : `For ${firstExerciseName}, I'll need to see your upper body clearly.`;
+
+    // Generate greeting via Claude
+    let greetingText: string;
+    try {
+      const resp = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: `You are a warm, professional physiotherapy AI assistant. Generate a spoken session greeting of 2–3 sentences maximum. Be warm but efficient — patients are standing ready to exercise. Do not use markdown. Speak naturally as if talking to someone face-to-face.`,
+          messages: [{
+            role: "user",
+            content: `Generate a greeting for:
+- Patient: ${firstName}
+- Time of day: ${timeOfDay}
+- Today's exercises: ${exerciseNames}
+- Previous session: ${prevContext}
+- End with this framing instruction: "${framingHint}"
+
+Keep it to 2–3 natural spoken sentences. No lists.`
+          }]
+        })
+      });
+      const data = await resp.json();
+      greetingText = data.content?.[0]?.text ?? `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${framingHint}`;
+    } catch {
+      greetingText = `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${prevContext} ${framingHint}`;
+    }
+
+    writeDebugLog("info", "GREETING", "Speaking greeting", greetingText.slice(0, 100));
+
+    // Speak the greeting, then start camera for framing phase
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(greetingText);
+      utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const pref = voices.find(v => v.lang.startsWith("en") && (
+        v.name.includes("Natural") || v.name.includes("Neural") ||
+        v.name.includes("Premium") || v.name.includes("Samantha") ||
+        v.name.includes("Karen")   || v.name.includes("Daniel")
+      ));
+      if (pref) utt.voice = pref;
+      utt.onend = () => {
+        greetingSpokenRef.current = true;
+        startFramingPhase();
+      };
+      // Fallback — if onend never fires (browser bug), start framing after 12s
+      window.setTimeout(() => {
+        if (!greetingSpokenRef.current) startFramingPhase();
+      }, 12000);
+      window.speechSynthesis.speak(utt);
+    } else {
+      // No speech synthesis — skip greeting
+      startFramingPhase();
+    }
+  }
+
+  async function startFramingPhase() {
+    if (framingConfirmedRef.current) return; // already advanced
+    greetingSpokenRef.current = true;
+    sessionPhaseRef.current = "framing";
+    setSessionPhase("framing");
+    prereqWasFailingRef.current = false;
+    framingPhaseStartMsRef.current = Date.now();
+    writeDebugLog("info", "SESSION", "Framing phase started — camera on");
+
+    framingIntelligence.reset("Checking your position…");
     try {
       await cameraRef.current?.startCamera();
     } catch (error) {
@@ -1084,24 +1418,22 @@ Reply with only the summary text, no JSON, no formatting.`;
   }
 
   function handleCameraReady(video: HTMLVideoElement) {
+    videoElementRef.current = video;
     const prescription = sessionQueue.getActivePrescription();
-    writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"}`);
+    writeDebugLog("info", "CAMERA", "Camera ready", `prescription=${prescription?.id ?? "null"} phase=${sessionPhaseRef.current}`);
     if (!prescription) { writeDebugLog("error", "CAMERA", "No active prescription"); return; }
+
+    // In framing phase — start inference loop but suppress exercise_started coaching
+    // (greeting already explained the protocol). forcePreExerciseCheck handles voice.
     framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), prescription, Date.now());
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     // Start ghost render loop
-    ghostPhaseRef.current = "demo";
-    ghostStartRef.current = performance.now();
-    ghostHoldRef.current = null;
-    ghostLowRef.current = 0;
-    ghostRepRef.current = false;
-    ghostHistRef.current = [];
-    // Do NOT clear ghostLastFrameRef here — cached frame keeps ghost visible at rest
-    // Reset frame smoothing so new exercise anchors cleanly
+    // Reset frame smoothing so first exercise anchors cleanly to fresh pose
     ghostFrameInitRef.current = false;
     ghostRepCountRef.current = 0;
     ghostPrevPhaseRef.current = "";
     ghostReadyStartRef.current = performance.now();
+    ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
     ghostSetLogRef.current?.([]);
     startGhostLoop();
@@ -1140,55 +1472,132 @@ Reply with only the summary text, no JSON, no formatting.`;
 
   function startGhostLoop() {
     cancelAnimationFrame(ghostAnimRef.current);
-    const DEMO_CYCLE_S = 7;
-    const INTENT_DELTA = 0.10; const INTENT_MIN = 0.20; const INTENT_WIN = 20;
-    const MATCH_THRESHOLD = 0.85; const FAIL_THRESHOLD = 0.55; const LOW_TIMEOUT = 8;
+
+    // ── TRANSITION_MS: time to fade ghost to rest between exercises ──────────
+    const TRANSITION_MS = 300;
+
     let lastT = performance.now();
 
-    function easeInOut(t: number) { return t<0.5?4*t*t*t:1-(-2*t+2)**3/2; }
-    function cycleT(e: number) {
-      const t=(e%DEMO_CYCLE_S)/DEMO_CYCLE_S;
-      if(t<0.14)return 0; if(t<0.43)return easeInOut((t-0.14)/0.29);
-      if(t<0.64)return 1; if(t<0.93)return 1-easeInOut((t-0.64)/0.29); return 0;
-    }
-
     function tick() {
-      const canvas = ghostCanvasRef.current; if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
-      const ctx = canvas.getContext("2d"); if (!ctx) return;
-      // Use fixed 640x480 buffer — canvas is styled to 100% via CSS
-      // Landmarks are normalised 0-1 so they scale correctly with any W/H
+      const canvas = ghostCanvasRef.current;
+      if (!canvas) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Fixed 640×480 buffer — CSS scales it to 100%
       const W = 640; const H = 480;
-      if (canvas.width !== W || canvas.height !== H) {
-        canvas.width = W; canvas.height = H;
-      }
+      if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+
       const now = performance.now();
-      const deltaS = Math.min((now - lastT) / 1000, 0.1); lastT = now;
+      lastT = now;
       ctx.clearRect(0, 0, W, H);
 
+      // ── 1. Get live frame ─────────────────────────────────────────────────
       const frame = ghostFrameRef.current;
-      if (!frame || !frame.personDetected) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
+      if (!frame || !frame.personDetected) {
+        ghostAnimRef.current = requestAnimationFrame(tick);
+        return;
+      }
 
+      // ── 2. Sample landmark confidence every frame ─────────────────────────
+      const prescriptionForConf = ghostPrescriptionRef.current;
+      if (prescriptionForConf) {
+        framingIntelligence.sampleLandmarkConfidence(frame, prescriptionForConf);
+        const confNow = framingIntelligence.getLandmarkConfidencePct();
+        if (confNow !== null) liveConfidenceSnapshotRef.current = confNow;
+      }
+
+      // ── 3. Framing debug snapshot (every 2s) ──────────────────────────────
+      const snapNow = Date.now();
+      if (snapNow - lastFramingSnapMsRef.current >= 2000) {
+        lastFramingSnapMsRef.current = snapNow;
+        const fp     = framingIntelligence.framingPanelState;
+        const prereq = framingIntelligence.prerequisiteResultRef.current;
+        const conf   = liveConfidenceSnapshotRef.current;
+        const phase  = ghostPhaseInfRef.current;
+        const prescription = ghostPrescriptionRef.current;
+        const liveObs = inferenceLoop.liveObservation;
+        const lmLines: string[] = [];
+        const lmData = (frame as any)?.landmarks ?? {};
+        const allLm = ["nose","left_shoulder","right_shoulder","left_elbow","right_elbow",
+                       "left_wrist","right_wrist","left_hip","right_hip",
+                       "left_knee","right_knee","left_ankle","right_ankle"];
+        for (const name of allLm) {
+          const pt = lmData[name];
+          if (!pt) { lmLines.push(`  ${name}: NOT DETECTED`); continue; }
+          const score = typeof pt.score === "number" ? pt.score : 1;
+          lmLines.push(`  ${score >= 0.15 ? "✓" : "✗"} ${name}: ${(score * 100).toFixed(0)}%`);
+        }
+        const prereqLines = prereq.allMet
+          ? ["  ✓ All prerequisites met"]
+          : prereq.failures.map((f: any) => `  ✗ [${f.id}] "${f.patientMessage}"\n     clinical: ${f.clinicalNote}`);
+        const coverageEstimate = (() => {
+          const lm = lmData;
+          const v = (n: string) => { const p = lm[n]; return p && typeof p.score === "number" ? p.score > 0.2 : !!p; };
+          const hasHead = v("nose"); const hasSh = v("left_shoulder") && v("right_shoulder");
+          const hasHips = v("left_hip") && v("right_hip");
+          const hasKnee = v("left_knee") || v("right_knee");
+          const hasAnk  = v("left_ankle") || v("right_ankle");
+          if (hasHead && hasSh && hasHips && hasKnee && hasAnk) return "full_body";
+          if (hasHead && hasSh && hasHips && hasKnee) return "torso_and_hips (no ankles)";
+          if (hasHead && hasSh && hasHips) return "torso_and_hips (no knees)";
+          if (hasHead && hasSh) return "upper_body";
+          return hasHead ? "head_only" : "none";
+        })();
+        const detail = [
+          `── EXERCISE ─────────────────────────────`,
+          `  id:       ${prescription?.id ?? "none"}`,
+          `  phase:    ${phase}`,
+          `  required_coverage: ${(prescription as any)?.framing?.requiredCoverage ?? "?"}`,
+          `  required_posture:  ${prescription?.framing?.requiredStartPosture ?? "?"}`,
+          `  bilateral: ${prescription?.framing?.bilateralSymmetryRequired ?? false}`,
+          ``,
+          `── CAMERA SEES ──────────────────────────`,
+          `  coverage_estimate: ${coverageEstimate}`,
+          `  confidence_pct:    ${conf !== null ? conf + "%" : "not sampled yet"}`,
+          `  person_detected:   ${frame?.personDetected ?? false}`,
+          `  posture:           ${liveObs.movementLines[0] ?? "unknown"}`,
+          ``,
+          `── LANDMARK CONFIDENCE ──────────────────`,
+          ...lmLines,
+          ``,
+          `── PREREQUISITES ────────────────────────`,
+          ...prereqLines,
+          ``,
+          `── FRAMING PANEL ────────────────────────`,
+          `  severity:  ${fp.severity}`,
+          `  tone:      ${fp.tone}`,
+          `  message:   "${fp.message}"`,
+          `  evaluating: ${fp.evaluating}`,
+        ].join("\n");
+        const headline = !frame?.personDetected
+          ? "❌ No person detected"
+          : !prereq.allMet
+          ? `🔴 PREREQ BLOCKED [${prereq.failures[0]?.id ?? "?"}] — ${prereq.failures[0]?.patientMessage ?? ""}`
+          : fp.severity === "ok"
+          ? `✅ Framing OK — conf=${conf ?? "?"}% phase=${phase}`
+          : `⚠ Framing ${fp.severity} — "${fp.message}" conf=${conf ?? "?"}%`;
+        writeDebugLog("FRAMING_SNAP", "FRAMING", headline, detail);
+      }
+
+      // ── 4. Landmarks ──────────────────────────────────────────────────────
       const rawLms = poseFrameToLandmarkArray(frame);
       const lms    = mirrorLandmarks(rawLms);
       const slug   = ghostSlugRef.current;
       if (!slug) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
 
-      // Simple landmark-based ghost: anchor directly to detected shoulder positions.
-      // No body frame coordinate system — eliminates all drift and rotation bugs.
-      // We only show the relevant arm(s) for each exercise, nothing else.
+      // ── 5. Config — loaded once per slug, no branching in tick ───────────
+      const config = getGhostConfig(slug);
+
+      // ── 6. Smoothed body frame (anchor + sizing) ──────────────────────────
       const freshFrame = getBodyFrame(lms as any, W, H);
-      // SMOOTHED BODY FRAME: LERP the origin and axes to prevent ghost drift
-      // when shoulder landmarks shift as arms raise overhead.
-      // During active movement phases, freeze the frame (only update in ready phase).
-      const currentInfPhase = ghostPhaseInfRef.current;
-      const canUpdateFrame = freshFrame !== null && (
-        currentInfPhase === "ready" || currentInfPhase === "idle" || currentInfPhase === "unknown"
-      );
-      if (freshFrame && canUpdateFrame) {
-        // LERP speed: fast during ready (0.15), frozen during active phases
+      const infPhase   = ghostPhaseInfRef.current;
+      const canUpdate  = freshFrame !== null &&
+        (infPhase === "ready" || infPhase === "idle" || infPhase === "unknown");
+
+      if (freshFrame && canUpdate) {
         const L = 0.15;
         if (!ghostFrameInitRef.current) {
-          // First frame — snap immediately, no lerp
           ghostSmoothedOriginX.current = freshFrame.origin.x;
           ghostSmoothedOriginY.current = freshFrame.origin.y;
           ghostSmoothedADX.current = freshFrame.axisDown.x;
@@ -1196,24 +1605,21 @@ Reply with only the summary text, no JSON, no formatting.`;
           ghostSmoothedARX.current = freshFrame.axisRight.x;
           ghostSmoothedARY.current = freshFrame.axisRight.y;
           ghostSmoothedTorso.current = freshFrame.torsoLen;
-          ghostSmoothedSW.current = freshFrame.shoulderWidth;
-          ghostFrameInitRef.current = true;
+          ghostSmoothedSW.current    = freshFrame.shoulderWidth;
+          ghostFrameInitRef.current  = true;
         } else {
           ghostSmoothedOriginX.current += (freshFrame.origin.x - ghostSmoothedOriginX.current) * L;
           ghostSmoothedOriginY.current += (freshFrame.origin.y - ghostSmoothedOriginY.current) * L;
-          // LERP axes then RE-NORMALIZE — lerped vectors lose unit length and orthogonality
-          const adX = ghostSmoothedADX.current + (freshFrame.axisDown.x - ghostSmoothedADX.current) * L;
-          const adY = ghostSmoothedADY.current + (freshFrame.axisDown.y - ghostSmoothedADY.current) * L;
+          const adX = ghostSmoothedADX.current + (freshFrame.axisDown.x  - ghostSmoothedADX.current) * L;
+          const adY = ghostSmoothedADY.current + (freshFrame.axisDown.y  - ghostSmoothedADY.current) * L;
           const adM = Math.sqrt(adX*adX + adY*adY) || 1;
-          ghostSmoothedADX.current = adX / adM;
-          ghostSmoothedADY.current = adY / adM;
+          ghostSmoothedADX.current = adX / adM; ghostSmoothedADY.current = adY / adM;
           const arX = ghostSmoothedARX.current + (freshFrame.axisRight.x - ghostSmoothedARX.current) * L;
           const arY = ghostSmoothedARY.current + (freshFrame.axisRight.y - ghostSmoothedARY.current) * L;
           const arM = Math.sqrt(arX*arX + arY*arY) || 1;
-          ghostSmoothedARX.current = arX / arM;
-          ghostSmoothedARY.current = arY / arM;
-          ghostSmoothedTorso.current += (freshFrame.torsoLen - ghostSmoothedTorso.current) * L;
-          ghostSmoothedSW.current += (freshFrame.shoulderWidth - ghostSmoothedSW.current) * L;
+          ghostSmoothedARX.current = arX / arM; ghostSmoothedARY.current = arY / arM;
+          ghostSmoothedTorso.current += (freshFrame.torsoLen      - ghostSmoothedTorso.current) * L;
+          ghostSmoothedSW.current    += (freshFrame.shoulderWidth  - ghostSmoothedSW.current)    * L;
         }
         ghostLastFrameRef.current = freshFrame;
       } else if (freshFrame && !ghostFrameInitRef.current) {
@@ -1225,355 +1631,127 @@ Reply with only the summary text, no JSON, no formatting.`;
         ghostSmoothedARX.current = freshFrame.axisRight.x;
         ghostSmoothedARY.current = freshFrame.axisRight.y;
         ghostSmoothedTorso.current = freshFrame.torsoLen;
-        ghostSmoothedSW.current = freshFrame.shoulderWidth;
-        ghostFrameInitRef.current = true;
-        ghostLastFrameRef.current = freshFrame;
+        ghostSmoothedSW.current    = freshFrame.shoulderWidth;
+        ghostFrameInitRef.current  = true;
+        ghostLastFrameRef.current  = freshFrame;
       }
-      // Build stable body frame from smoothed values
+
       if (!ghostFrameInitRef.current) { ghostAnimRef.current = requestAnimationFrame(tick); return; }
-      const lastF = ghostLastFrameRef.current!;
-      const bodyFrame: import("@/lib/pose/bodyFrame").BodyFrame = {
-        ...lastF,
-        origin:      { x: ghostSmoothedOriginX.current, y: ghostSmoothedOriginY.current },
-        axisDown:    { x: ghostSmoothedADX.current,     y: ghostSmoothedADY.current },
-        axisRight:   { x: ghostSmoothedARX.current,     y: ghostSmoothedARY.current },
-        torsoLen:    ghostSmoothedTorso.current,
-        shoulderWidth: ghostSmoothedSW.current,
-      };
 
-      // ── Ghost v18: Fixed-direction, shoulder-anchored ────────────────────────
-      // Architecture:
-      // 1. Shoulder pixel position = anchor (most stable landmark always)
-      // 2. Arm length = shoulderWidth * ratio, measured during ready phase
-      //    and FROZEN once active — never recalculated during movement
-      // 3. Direction vectors are fixed per exercise type — no elbow/wrist
-      //    landmarks used in ghost geometry at all
-      // 4. ghostT (0→1) drives animation smoothly via infPhase
-      //
-      // This eliminates all size instability and tilt/snap issues.
-      // The ghost is a clean leading indicator, not a follower.
-
-      // ── ROM score: elevation-based, patient-specific ─────────────────────
-      // Both values read from refs that hold live object references.
-      // ALL inferenceLoop state values are stale in the rAF closure — must use refs.
-      // ghostActiveMetricRef: current activeMetricValue, assigned at render time
-      // calibrationBaselineRef: mutated in-place by useInferenceLoop when calibration completes
-      // ghostPrescriptionRef: same prescription object calibration mutates in-place
+      // ── 7. ROM score ──────────────────────────────────────────────────────
       const activePxMetric = ghostActiveMetricRef.current;
-      const calibBaseline = inferenceLoop.calibrationBaselineRef.current;
-      const tgtThreshForScore = ghostPrescriptionRef.current?.targetThreshold ?? null;
+      const tgtThresh      = ghostPrescriptionRef.current?.targetThreshold ?? null;
+      // Arm exercises calibrate a resting baseline. Knees are not calibrated
+      // (baseline stays 0) but rest at ~90°, so their score starts from rest:
+      // the start threshold minus its 15° margin.
+      const calibBaseline  = inferenceLoop.calibrationBaselineRef.current ||
+        Math.max(0, (ghostPrescriptionRef.current?.startThreshold ?? 15) - 15);
       let score = 0;
-      if (activePxMetric !== null && tgtThreshForScore !== null && tgtThreshForScore > calibBaseline) {
-        score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThreshForScore - calibBaseline)));
+      if (activePxMetric !== null && tgtThresh !== null && tgtThresh > calibBaseline) {
+        score = Math.max(0, Math.min(1, (activePxMetric - calibBaseline) / (tgtThresh - calibBaseline)));
       }
       setGhostScore(score);
 
-      // ── SCORE DEBUG LOG (fires every ~2s) ──────────────────────────────
-      if (Math.floor(now / 2000) !== Math.floor((now - 16) / 2000)) {
-        console.log(
-          `[SCORE DEBUG] score=${Math.round(score * 100)}%` +
-          ` | metric=${activePxMetric?.toFixed(1) ?? "null"}°` +
-          ` | calibBaseline=${calibBaseline.toFixed(1)}°` +
-          ` | tgtThresh=${tgtThreshForScore?.toFixed(1) ?? "null"}°` +
-          ` | prescriptionNull=${ghostPrescriptionRef.current === null}`
-        );
-      }
-
-      // Shoulder anchors — most reliable landmarks at all arm positions
-      const lsLm = lms[11]; const rsLm = lms[12];
-      const lsVis = !!lsLm && (lsLm.visibility ?? 1) > 0.25;
-      const rsVis = !!rsLm && (rsLm.visibility ?? 1) > 0.25;
-
-      if (!lsVis && !rsVis) {
-        drawLive(ctx, lms, W, H, score);
-        ghostAnimRef.current = requestAnimationFrame(tick);
-        return;
-      }
-
-      // ── Arm length — computed from smoothed shoulder width, frozen when active ──
-      // shoulderWidth is already smoothed and frozen during active phases
-      // by the body frame system above. Use it directly.
-      // shoulderWidth from bodyFrame is already in canvas pixels — do NOT multiply by W
-      const swPx = ghostSmoothedSW.current;
-      const upperArmPx = swPx * 1.05; // tuned for correct visual proportion
-      const foreArmPx  = swPx * 0.90;
-
-      // ── Exercise flags ────────────────────────────────────────────────────
-      const isFlexion   = slug.includes("flexion");
-      const isAbduction = slug.includes("abduction");
-      const isKnee      = slug.includes("knee_extension");
-      const isSTS       = slug === "sit_to_stand";
-      const isRight     = slug.includes("_right") || slug.includes("bilateral");
-      const isLeft      = slug.includes("_left")  || slug.includes("bilateral");
-
-      // ── Phase → ghostT ────────────────────────────────────────────────────
-      const infPhase  = ghostPhaseInfRef.current;
-      const holdRem   = ghostHoldRemRef.current;
-      const holdTotal = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+      // ── 8. Animation state — pure function, no exercise knowledge ─────────
+      const holdRem    = ghostHoldRemRef.current;
+      const holdTotal  = ghostHoldMsRef.current > 0 ? ghostHoldMsRef.current : 5000;
+      const repsDone   = ghostRepCountRef.current;
       const readyElapsedS = (now - ghostReadyStartRef.current) / 1000;
-      const repsDone  = ghostRepCountRef.current;
 
-      let ghostT = 0; // 0 = rest, 1 = full target
-      let ghostOpacity = 0.72;
-      let isHolding = false;
+      let anim = computeGhostAnim({
+        infPhase, holdRemainingMs: holdRem, holdTotalMs: holdTotal,
+        repsDone, readyElapsedS, nowMs: now,
+      });
 
-      if (infPhase === "ready" || infPhase === "idle") {
-        if (repsDone === 0) {
-          // Teaching animation: oscillate 0→1→0 so patient sees the movement
-          ghostT = 0.5 + 0.5 * Math.sin(now / 3200);
-          ghostOpacity = 0.65;
-        } else if (readyElapsedS < 5) {
-          // Between reps: ghost dims at rest
-          ghostT = 0; ghostOpacity = 0.18 + 0.08 * Math.sin(now / 900);
+      // ── 9. Exercise transition — fade ghostT to 0 over TRANSITION_MS ─────
+      // Triggered by handleExerciseComplete setting ghostTransitionRef.active.
+      // Prevents the ghost snapping from one exercise position to another.
+      const trans = ghostTransitionRef.current;
+      if (trans.active) {
+        const elapsed = now - trans.startMs;
+        if (elapsed < TRANSITION_MS) {
+          // Override ghostT: lerp from previous ghostT down to 0
+          const progress = elapsed / TRANSITION_MS;
+          anim = { ...anim, ghostT: trans.fromGhostT * (1 - progress), opacity: anim.opacity * (1 - progress * 0.5) };
         } else {
-          // Encouragement ramp after 5s rest: ghost rises to invite next rep
-          ghostT = Math.min(1, (readyElapsedS - 5) / 6);
-          ghostOpacity = 0.72;
+          // Transition complete — clear flag
+          ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
         }
-      } else if (infPhase === "lifting") {
-        ghostT = 1; ghostOpacity = 0.72; // ghost at target: "get here"
-      } else if (infPhase === "top" || infPhase === "holding") {
-        ghostT = 1; ghostOpacity = 0.88; isHolding = true;
-      } else if (infPhase === "lowering") {
-        // Pulse between 40% and 75% to signal "come back down"
-        ghostT = 0.4 + 0.35 * Math.sin(now / 800); ghostOpacity = 0.72;
-      } else if (infPhase === "complete" || infPhase === "bottom") {
-        ghostT = 1; ghostOpacity = 1.0;
-      } else {
-        ghostT = 1; ghostOpacity = 0.6;
       }
 
-      // ── Phase badge ───────────────────────────────────────────────────────
-      if (infPhase === "holding" || infPhase === "top") {
-        setGhostPhase("holding");
-        setGhostHoldMs(holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0);
-      } else if (infPhase === "ready" && repsDone === 0) setGhostPhase("demo");
-      else if (infPhase === "complete") setGhostPhase("rep_complete");
-      else { setGhostPhase("attempt"); setGhostHoldMs(0); }
-
-      // ── Phase transition log ──────────────────────────────────────────────
+      // ── 10. Phase transition logging ──────────────────────────────────────
       if (infPhase !== ghostPrevPhaseRef.current) {
         if (infPhase === "ready") ghostReadyStartRef.current = now;
         const entry: GhostLogEntry = {
-          id: `${now}-${Math.random().toString(36).slice(2,5)}`,
+          id: `${now}-${Math.random().toString(36).slice(2, 5)}`,
           time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
           phase: infPhase, score: Math.round(score * 100), rep: repsDone,
-          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score*100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem)+"ms" : "n/a"}`,
+          detail: `${ghostPrevPhaseRef.current} → ${infPhase} | score=${Math.round(score * 100)}% rep=${repsDone} hold=${holdRem !== null ? Math.round(holdRem) + "ms" : "n/a"}`,
         };
         ghostPrevPhaseRef.current = infPhase;
         ghostLogRef.current = [entry, ...ghostLogRef.current].slice(0, 80);
         ghostSetLogRef.current?.([...ghostLogRef.current]);
       }
 
-      // ── Colour: blue → green as ghostT goes 0 → 1 ────────────────────────
-      const r = Math.floor(96  + (74  - 96)  * ghostT);
-      const g = Math.floor(165 + (222 - 165) * ghostT);
-      const b = Math.floor(250 + (128 - 250) * ghostT);
-      const col = `rgba(${r},${g},${b},${ghostOpacity})`;
+      // ── 11. UI badge sync ─────────────────────────────────────────────────
+      setGhostPhase(anim.badgePhase);
+      setGhostHoldMs(anim.holdElapsedMs);
 
-      // ── Core arm drawing: shoulder → elbow → wrist ────────────────────────
-      // All positions computed from shoulder anchor + fixed direction vectors.
-      // No other landmarks involved. Size from frozen shoulderWidth only.
-      const drawArm = (
-        shX: number, shY: number, // shoulder pixel position (anchor)
-        dX: number, dY: number,   // interpolated direction (normalised)
-      ) => {
-        const dm = Math.sqrt(dX*dX + dY*dY) || 1;
-        const nx = dX/dm; const ny = dY/dm;
-        const elX = shX + nx * upperArmPx;
-        const elY = shY + ny * upperArmPx;
-        const wrX = elX + nx * foreArmPx;
-        const wrY = elY + ny * foreArmPx;
+      // ── 12. DRAW — dispatch to the correct draw function for this exercise ─
+      // getGhostConfig() already ran above. dispatchGhostDraw() reads drawMode
+      // and calls the right function. Zero exercise branching here.
+      const { r, g, b } = anim.colorRGB;
+      const physioTargetDeg = (ghostPrescriptionRef.current as any)?.romTargetDegrees
+        ?? ghostPrescriptionRef.current?.targetThreshold
+        ?? null;
 
-        ctx.setLineDash([9, 5]);
-        ctx.lineWidth = 6;
-        ctx.lineCap = "round";
-        ctx.strokeStyle = col;
-        ctx.beginPath(); ctx.moveTo(shX, shY); ctx.lineTo(elX, elY); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(elX, elY); ctx.lineTo(wrX, wrY); ctx.stroke();
-        ctx.setLineDash([]);
+      dispatchGhostDraw({
+        ctx,
+        config,
+        lms: lms as any,
+        ghostT:          anim.ghostT,
+        opacity:         anim.opacity,
+        colorRGB:        { r, g, b },
+        W, H,
+        shoulderWidthPx: ghostSmoothedSW.current,
+        torsoLenPx:      ghostSmoothedTorso.current,
+        physioTargetDeg,
+      });
 
-        for (const [px, py, r2] of [[shX, shY, 9], [elX, elY, 8], [wrX, wrY, 7]] as [number,number,number][]) {
-          ctx.beginPath(); ctx.arc(px, py, r2, 0, Math.PI*2);
-          ctx.fillStyle = col; ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
-        }
-      };
-
-      // ── Fixed direction vectors per exercise type ─────────────────────────
-      // REST direction: arm hangs straight down along torso
-      // Canvas Y increases downward, so rest = (small_x, positive_y)
-      // TARGET direction: depends on exercise
-      // Flexion target:   arm sweeps forward and UP → (slight_x, -1)
-      // Abduction target: arm sweeps OUT sideways  → (±1, slight_y)
-      //
-      // ghostT interpolates REST → TARGET linearly.
-      // Vectors are normalised inside drawArm so magnitudes don't matter.
-
-      if (isFlexion || isAbduction) {
-        const restDX = 0.12; // slight outward lean at rest (natural arm hang)
-        const restDY = 1.0;  // straight down
-
-        const tgtDX = isFlexion ? 0.06 : 1.0;
-        const tgtDY = isFlexion ? -1.0 : 0.04;
-
-        const dX = restDX + (tgtDX - restDX) * ghostT;
-        const dY = restDY + (tgtDY - restDY) * ghostT;
-
-        if (isRight && rsVis) drawArm(rsLm.x * W, rsLm.y * H,  dX, dY);
-        if (isLeft  && lsVis) drawArm(lsLm.x * W, lsLm.y * H, -dX, dY);
-
-      } else if (isKnee) {
-        // ── Knee extension: hip anchor → leg extends forward ────────────────
-        // Use hip landmarks as anchor (seated exercise).
-        // Lower body landmarks: 23=L_hip 24=R_hip 25=L_knee 26=R_knee
-        const lhLm = lms[23]; const rhLm = lms[24];
-        const lkLm = lms[25]; const rkLm = lms[26];
-        const hipVis = (lm: typeof lhLm) => !!lm && (lm.visibility ?? 1) > 0.25;
-
-        // Knee segment length from hip→knee if visible, else estimate from sw
-        const kneeLenR = (hipVis(rhLm) && hipVis(rkLm))
-          ? Math.sqrt(Math.pow((rkLm!.x - rhLm!.x)*W, 2) + Math.pow((rkLm!.y - rhLm!.y)*H, 2))
-          : upperArmPx;
-        const kneeLenL = (hipVis(lhLm) && hipVis(lkLm))
-          ? Math.sqrt(Math.pow((lkLm!.x - lhLm!.x)*W, 2) + Math.pow((lkLm!.y - lhLm!.y)*H, 2))
-          : upperArmPx;
-        const shinLen = foreArmPx;
-
-        // Rest: lower leg hangs down from knee. Target: leg extends forward.
-        const kRestDX = 0.1; const kRestDY = 1.0;
-        const kTgtDX  = 0.85; const kTgtDY = 0.1;
-        const kdX = kRestDX + (kTgtDX - kRestDX) * ghostT;
-        const kdY = kRestDY + (kTgtDY - kRestDY) * ghostT;
-        const kdm = Math.sqrt(kdX*kdX + kdY*kdY) || 1;
-        const knx = kdX/kdm; const kny = kdY/kdm;
-
-        const drawLeg = (
-          hipX: number, hipY: number,
-          kneeX: number, kneeY: number,
-          legLen: number, flipX: number
-        ) => {
-          // Thigh: hip to knee (drawn on detected positions — thigh doesn't move in knee ext)
-          ctx.setLineDash([9, 5]); ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.strokeStyle = col;
-          ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
-          ctx.setLineDash([]);
-          // Shin: knee → extended position (animated by ghostT)
-          const shX2 = kneeX + knx * flipX * legLen;
-          const shY2 = kneeY + kny * shinLen;
-          ctx.setLineDash([9, 5]); ctx.strokeStyle = col;
-          ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(shX2, shY2); ctx.stroke();
-          ctx.setLineDash([]);
-          for (const [px, py] of [[hipX, hipY], [kneeX, kneeY], [shX2, shY2]]) {
-            ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI*2);
-            ctx.fillStyle = col; ctx.fill();
-            ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
-          }
-        };
-
-        if (isRight && hipVis(rhLm) && hipVis(rkLm)) {
-          drawLeg(rhLm!.x*W, rhLm!.y*H, rkLm!.x*W, rkLm!.y*H, kneeLenR, 1);
-        }
-        if (isLeft && hipVis(lhLm) && hipVis(lkLm)) {
-          drawLeg(lhLm!.x*W, lhLm!.y*H, lkLm!.x*W, lkLm!.y*H, kneeLenL, -1);
-        }
-
-      } else if (isSTS) {
-        // ── Sit to Stand: show body rising ───────────────────────────────────
-        const lhLm = lms[23]; const rhLm = lms[24];
-        const hVis = (lm: typeof lhLm) => !!lm && (lm.visibility ?? 1) > 0.25;
-
-        if (hVis(lhLm) && hVis(rhLm)) {
-          const hipMidX = (lhLm!.x + rhLm!.x) * 0.5 * W;
-          const hipMidY = (lhLm!.y + rhLm!.y) * 0.5 * H;
-          const riseLen = ghostSmoothedTorso.current * H * ghostT;
-          const arrowTipY = hipMidY - riseLen * 0.8;
-
-          ctx.setLineDash([9, 5]); ctx.lineWidth = 8; ctx.strokeStyle = col; ctx.lineCap = "round";
-          ctx.beginPath(); ctx.moveTo(hipMidX, hipMidY); ctx.lineTo(hipMidX, arrowTipY); ctx.stroke();
-          ctx.setLineDash([]);
-
-          // Arrowhead
-          ctx.beginPath();
-          ctx.moveTo(hipMidX, arrowTipY);
-          ctx.lineTo(hipMidX - 16, arrowTipY + 20);
-          ctx.lineTo(hipMidX + 16, arrowTipY + 20);
-          ctx.closePath();
-          ctx.fillStyle = col; ctx.fill();
-
-          // Joint dot at hip
-          ctx.beginPath(); ctx.arc(hipMidX, hipMidY, 9, 0, Math.PI*2);
-          ctx.fillStyle = col; ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
-        }
-      }
-
-      // ── ROM score ring — top-left corner ─────────────────────────────────
-      // Mirror of hold ring (top-right). Shows patient's current ROM as a
-      // percentage of their target. Orange→yellow→green as score improves.
-      // Dimmed during ready phase; full opacity during lifting/holding.
+      // ── 13. ROM score ring (top-left) ─────────────────────────────────────
       {
-        const romPct = score; // 0–1 from elevation formula above
+        const romPct    = score;
         const romRadius = Math.min(W, H) * 0.13;
         const romStrokeW = romRadius * 0.14;
-        const romCx = romRadius + romStrokeW * 2 + 12; // top-left
+        const romCx = romRadius + romStrokeW * 2 + 12;
         const romCy = romRadius + romStrokeW * 2 + 12;
         const isActivePhase = infPhase === "lifting" || infPhase === "holding" || infPhase === "lowering";
-        const ringOpacity = isActivePhase ? 1.0 : 0.35;
-
-        // Colour: orange (0%) → yellow (50%) → green (100%)
-        const rRom = romPct < 0.5
-          ? 210
-          : Math.floor(210 + (63 - 210) * ((romPct - 0.5) / 0.5));
-        const gRom = romPct < 0.5
-          ? Math.floor(100 + (185 - 100) * (romPct / 0.5))
-          : Math.floor(185 + (222 - 185) * ((romPct - 0.5) / 0.5));
+        const ringOpacity   = isActivePhase ? 1.0 : 0.35;
+        const rRom = romPct < 0.5 ? 210 : Math.floor(210 + (63  - 210) * ((romPct - 0.5) / 0.5));
+        const gRom = romPct < 0.5 ? Math.floor(100 + (185 - 100) * (romPct / 0.5)) : Math.floor(185 + (222 - 185) * ((romPct - 0.5) / 0.5));
         const bRom = romPct < 0.5 ? 34 : Math.floor(34 + (128 - 34) * ((romPct - 0.5) / 0.5));
         const ringColor = `rgba(${rRom},${gRom},${bRom},${ringOpacity})`;
-
         ctx.save();
         ctx.globalAlpha = ringOpacity;
-
-        // Dark backdrop
-        ctx.beginPath();
-        ctx.arc(romCx, romCy, romRadius + romStrokeW * 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(8,12,20,0.80)";
-        ctx.fill();
-
-        // Track ring
-        ctx.beginPath();
-        ctx.arc(romCx, romCy, romRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(255,255,255,0.10)";
-        ctx.lineWidth = romStrokeW;
-        ctx.lineCap = "round";
-        ctx.stroke();
-
-        // Progress arc
+        ctx.beginPath(); ctx.arc(romCx, romCy, romRadius + romStrokeW * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(8,12,20,0.80)"; ctx.fill();
+        ctx.beginPath(); ctx.arc(romCx, romCy, romRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = romStrokeW; ctx.lineCap = "round"; ctx.stroke();
         if (romPct > 0) {
-          ctx.beginPath();
-          ctx.arc(romCx, romCy, romRadius, -Math.PI / 2, -Math.PI / 2 + romPct * Math.PI * 2);
-          ctx.strokeStyle = ringColor;
-          ctx.lineWidth = romStrokeW;
-          ctx.lineCap = "round";
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(romCx, romCy, romRadius, -Math.PI / 2, -Math.PI / 2 + romPct * Math.PI * 2);
+          ctx.strokeStyle = ringColor; ctx.lineWidth = romStrokeW; ctx.lineCap = "round"; ctx.stroke();
         }
-
-        // Percentage number — shifted up slightly to make room for phase label
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#ffffff";
         ctx.font = `800 ${Math.round(romRadius * 0.72)}px system-ui, sans-serif`;
         ctx.fillText(`${Math.round(romPct * 100)}`, romCx, romCy - romRadius * 0.18);
-
-        // Phase label — replaces static "ROM %" text, shows current action
-        // Colours match the old DOM badge
         const phaseLabel = (() => {
           if (!sessionQueue.sessionStarted) return "ROM %";
           switch (infPhase) {
-            case "lifting":  return "Raise \u2191";
+            case "lifting":  return "Raise ↑";
             case "holding":  return "Hold";
-            case "lowering": return "Lower \u2193";
+            case "lowering": return "Lower ↓";
             case "ready":    return "Ready";
-            case "complete": return "Done \u2713";
+            case "complete": return "Done ✓";
             default:         return "ROM %";
           }
         })();
@@ -1590,58 +1768,37 @@ Reply with only the summary text, no JSON, no formatting.`;
         ctx.fillStyle = phaseLabelColor;
         ctx.font = `700 ${Math.round(romRadius * 0.28)}px system-ui, sans-serif`;
         ctx.fillText(phaseLabel, romCx, romCy + romRadius * 0.42);
-
         ctx.restore();
       }
 
-      // ── Hold countdown ring — top-right corner ───────────────────────────
-      if (isHolding) {
-        const holdElapsed = holdRem !== null ? Math.max(0, holdTotal - holdRem) : 0;
-        const pct = Math.min(1, holdElapsed / holdTotal);
-        const remaining = Math.max(0, Math.ceil((holdTotal - holdElapsed) / 1000));
-        const radius = Math.min(W, H) * 0.13;   // smaller than centre ring
-        const strokeW = radius * 0.14;
-        const cx = W - radius - strokeW * 2 - 12; // top-right, with padding
+      // ── 14. Hold countdown ring (top-right) ───────────────────────────────
+      if (anim.isHolding) {
+        const pct       = Math.min(1, anim.holdElapsedMs / holdTotal);
+        const remaining = Math.max(0, Math.ceil((holdTotal - anim.holdElapsedMs) / 1000));
+        const radius    = Math.min(W, H) * 0.13;
+        const strokeW   = radius * 0.14;
+        const cx = W - radius - strokeW * 2 - 12;
         const cy = radius + strokeW * 2 + 12;
-
-        // Dark backdrop
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius + strokeW * 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(8,12,20,0.80)';
-        ctx.fill();
-
-        // Track ring
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-        ctx.lineWidth = strokeW;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-
-        // Progress arc
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
-        ctx.strokeStyle = '#4ade80';
-        ctx.lineWidth = strokeW;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-
-        // Countdown number
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(cx, cy, radius + strokeW * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(8,12,20,0.80)"; ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = strokeW; ctx.lineCap = "round"; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+        ctx.strokeStyle = "#4ade80"; ctx.lineWidth = strokeW; ctx.lineCap = "round"; ctx.stroke();
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#ffffff";
         ctx.font = `800 ${Math.round(radius * 0.85)}px system-ui, sans-serif`;
         ctx.fillText(String(remaining), cx, cy - radius * 0.08);
-
-        // HOLD label
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
         ctx.font = `600 ${Math.round(radius * 0.28)}px system-ui, sans-serif`;
-        ctx.fillText('HOLD', cx, cy + radius * 0.45);
+        ctx.fillText("HOLD", cx, cy + radius * 0.45);
       }
 
+      // ── 15. Live skeleton overlay ─────────────────────────────────────────
       drawLive(ctx, lms, W, H, score);
+
       ghostAnimRef.current = requestAnimationFrame(tick);
     }
+
     ghostAnimRef.current = requestAnimationFrame(tick);
   }
 
@@ -1655,9 +1812,42 @@ Reply with only the summary text, no JSON, no formatting.`;
     framingIntelligence.reset("Camera is off.");
     coachingBrain.reset();
     setGhostScore(0); setGhostHoldMs(0);
+    setIsPaused(false);
+    videoElementRef.current = null;
+    // Flush debug log on every camera stop — catches navigate-away and manual end
+    flushDebugLogToSupabase("session_end");
   }
 
-  function endSession() { cameraRef.current?.stopCamera(); }
+  function pauseSession() {
+    if (!sessionQueue.sessionStarted || isPaused) return;
+    setIsPaused(true);
+    inferenceLoop.stopLoop();
+    cancelAnimationFrame(ghostAnimRef.current);
+    window.speechSynthesis?.cancel();
+    coachingBrain.setVoiceEnabled(false);
+    framingIntelligence.cancelPendingEval();
+    flushDebugLogToSupabase("pause");
+    writeDebugLog("info", "SESSION", "Paused");
+  }
+
+  function resumeSession() {
+    if (!isPaused) return;
+    const video = videoElementRef.current;
+    if (!video) { writeDebugLog("error", "SESSION", "Resume failed — no video element"); return; }
+    setIsPaused(false);
+    coachingBrain.setVoiceEnabled(true);
+    inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
+    startGhostLoop();
+    writeDebugLog("info", "SESSION", "Resumed");
+  }
+
+  async function endSession(partial = false) {
+    if (partial && sessionQueue.sessionStarted) {
+      await writeSessionResults(true);
+      flushDebugLogToSupabase("session_end");
+    }
+    cameraRef.current?.stopCamera();
+  }
 
   function resetSession() {
     sessionQueue.resetSession();
@@ -1702,130 +1892,343 @@ Reply with only the summary text, no JSON, no formatting.`;
   return (
     <div style={{ marginTop: 12, fontFamily: "system-ui, sans-serif" }}>
 
-      {/* ── HEADER ── */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
-            Rehably
-          </h1>
-          <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
-            AI Rehabilitation Intelligence
-          </div>
-        </div>
-
-        {/* SESSION TIMER */}
-        {inferenceLoop.engineStatus === "running" && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-            background: "rgba(124,198,255,0.08)",
-            border: "1px solid rgba(124,198,255,0.2)",
-            borderRadius: 10, padding: "8px 16px"
-          }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#9be7b0", boxShadow: "0 0 6px #9be7b0", animation: "pulse 2s infinite" }} />
-            <div>
-              <div style={{ fontSize: 11, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.8 }}>Session Time</div>
-              <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: "white", letterSpacing: 2 }}>
-                {sessionTimer}
-              </div>
-            </div>
-            <div style={{ borderLeft: "1px solid rgba(255,255,255,0.08)", paddingLeft: 12 }}>
-              <div style={{ fontSize: 11, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.8 }}>Exercise</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "white" }}>
-                {currentQueueItem
-                  ? `${sessionQueue.queueIndex + 1} / ${sessionQueue.getActiveQueue().length}`
-                  : "—"}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* API STATUS */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {/* ── ROW 1: COMPACT SESSION BAR ── */}
+      <div style={{
+        background: "#1a2040",
+        borderRadius: 12,
+        padding: isMobile ? "12px 14px" : "10px 18px",
+        border: "1px solid rgba(255,255,255,0.08)",
+        marginBottom: 12,
+        display: "flex",
+        alignItems: isMobile ? "flex-start" : "center",
+        justifyContent: "space-between",
+        flexDirection: isMobile ? "column" : "row",
+        gap: 10,
+      }}>
+        {/* Left: Branding + session meta */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          {/* Rehably logo mark */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : aiEngineStatus === "checking" ? "#ffcc80" : "#7a88a8",
-              boxShadow: aiEngineStatus === "ok" ? "0 0 6px #9be7b0" : aiEngineStatus === "checking" ? "0 0 6px #ffcc80" : "none",
-              animation: aiEngineStatus === "checking" ? "pulse 1s infinite" : "none"
-            }} />
-            <span style={{ fontSize: 12, color: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
-              {aiEngineStatus === "ok" ? "AI Engine Ready" : aiEngineStatus === "error" ? "AI Engine Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
-            </span>
-          </div>
-          <button
-            onClick={handleVoiceToggle}
-            style={{
-              background: voiceOn ? "rgba(100,220,150,0.12)" : "rgba(255,255,255,0.06)",
-              color: voiceOn ? "#9be7b0" : "#7a88a8",
-              border: "1px solid " + (voiceOn ? "rgba(100,220,150,0.3)" : "rgba(255,255,255,0.1)"),
-              borderRadius: 7, padding: "5px 12px",
-              fontSize: 11, fontWeight: 700, cursor: "pointer"
-            }}
-          >
-            {voiceOn ? "🔊 Voice" : "🔇 Muted"}
-          </button>
-          <button onClick={() => checkAiEngine(false)} style={{
-            background: "rgba(124,198,255,0.1)", color: "#7cc6ff",
-            border: "1px solid rgba(124,198,255,0.25)", borderRadius: 7,
-            padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer"
-          }}>
-            Test
-          </button>
-        </div>
-      </div>
-
-      {/* ── MAIN GRID ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start", marginBottom: 16 }}>
-
-        {/* CAMERA */}
-        <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-          <div style={{
-            marginBottom: 10, padding: "8px 12px", borderRadius: 8,
-            fontSize: 13, fontWeight: 600,
-            background: framingPanelState.tone === "good" ? "rgba(100,220,150,0.12)" : framingPanelState.tone === "critical" ? "rgba(255,100,100,0.12)" : "rgba(255,180,80,0.12)",
-            color: framingPanelState.tone === "good" ? "#9be7b0" : framingPanelState.tone === "critical" ? "#ff8f8f" : "#ffcc80",
-            border: `1px solid ${framingPanelState.tone === "good" ? "rgba(100,220,150,0.3)" : framingPanelState.tone === "critical" ? "rgba(255,100,100,0.3)" : "rgba(255,180,80,0.3)"}`,
-            display: "flex", alignItems: "center", gap: 8
-          }}>
-            {framingPanelState.evaluating && <span style={{ fontSize: 10, opacity: 0.6 }}>●</span>}
-            {framingPanelState.message}
-            <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.4 }}>[{framingPanelState.severity}]</span>
-          </div>
-
-          <div style={{ position: "relative" }}>
-            <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
-            <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-              <PoseCanvasOverlay frame={inferenceLoop.frame} />
+              width: 30, height: 30, borderRadius: 7, flexShrink: 0,
+              background: "linear-gradient(135deg, #6C63FF 0%, #4A90D9 60%, #00C2C7 100%)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 0 10px rgba(108,99,255,0.4)",
+            }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M9 2L4 9H8L7 14L12 7H8L9 2Z" fill="white" strokeLinejoin="round"/>
+              </svg>
             </div>
-            {/* Ghost silhouette canvas — layered on top of pose skeleton */}
-            <canvas
-              ref={ghostCanvasRef}
-              width={640} height={480}
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
-            />
-            {/* Phase indicator badge — drawn inside ROM ring on canvas, not as DOM overlay */}
+            <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 800, color: "white", letterSpacing: -0.4 }}>
+              Reha<span style={{ background: "linear-gradient(90deg, #4A90D9, #00C2C7)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>bly</span>
+            </div>
           </div>
-
-          {inferenceLoop.engineError && (
-            <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
-              {inferenceLoop.engineError}
+          <div>
+            {sessionTitle && (
+              <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 600, color: "#aab6d3" }}>
+                {sessionTitle}
+              </div>
+            )}
+            {patientName && (
+              <div style={{ fontSize: 11, color: "#aab6d3", marginTop: 1 }}>
+                {patientName}
+                {" · "}
+                <span style={{ color: "#7a88a8" }}>{patientProfile.type.replace(/_/g, " ")}</span>
+              </div>
+            )}
+            {/* Session ID chip — monospace, copy on click */}
+            {prescriptionId && (
+              <div
+                title="Click to copy session ID"
+                onClick={() => copyToClipboard(prescriptionId)}
+                style={{ fontSize: 10, fontFamily: "monospace", color: "#484f58", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 5, padding: "2px 7px", cursor: "pointer", letterSpacing: 0.5, userSelect: "none" }}
+              >
+                {prescriptionId.slice(0, 8)}
+              </div>
+            )}
+          </div>
+          {/* Stats badges */}
+          {combinedQueue.length > 0 && (
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {[
+                formatDurationRange(combinedDurationSeconds),
+                `${combinedQueue.length} exercise${combinedQueue.length !== 1 ? "s" : ""}`,
+                `${combinedTotalReps} reps`,
+              ].map(label => (
+                <span key={label} style={{
+                  padding: "3px 9px", borderRadius: 999,
+                  background: "rgba(124,198,255,0.08)", color: "#7cc6ff",
+                  fontSize: 11, fontWeight: 600,
+                }}>{label}</span>
+              ))}
             </div>
           )}
         </div>
 
-        {/* RIGHT COLUMN */}
+        {/* Right: Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          {/* AI status dot */}
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : aiEngineStatus === "checking" ? "#ffcc80" : "#7a88a8",
+              boxShadow: aiEngineStatus === "ok" ? "0 0 5px #9be7b0" : aiEngineStatus === "checking" ? "0 0 5px #ffcc80" : "none",
+              animation: aiEngineStatus === "checking" ? "pulse 1s infinite" : "none",
+            }} />
+            <span style={{ fontSize: 11, color: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
+              {aiEngineStatus === "ok" ? "AI Ready" : aiEngineStatus === "error" ? "AI Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
+            </span>
+          </div>
+
+          {/* Voice toggle */}
+          <button onClick={handleVoiceToggle} style={{
+            background: voiceOn ? "rgba(100,220,150,0.12)" : "rgba(255,255,255,0.06)",
+            color: voiceOn ? "#9be7b0" : "#7a88a8",
+            border: "1px solid " + (voiceOn ? "rgba(100,220,150,0.3)" : "rgba(255,255,255,0.1)"),
+            borderRadius: 7, padding: "5px 10px",
+            fontSize: 11, fontWeight: 700, cursor: "pointer",
+          }}>
+            {voiceOn ? "🔊 Voice" : "🔇 Muted"}
+          </button>
+
+          {/* Pre-session: Test + Begin */}
+          {!sessionQueue.sessionStarted && (
+            <>
+              <button onClick={() => checkAiEngine(false)} style={{
+                background: "rgba(124,198,255,0.1)", color: "#7cc6ff",
+                border: "1px solid rgba(124,198,255,0.25)", borderRadius: 7,
+                padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}>
+                Test
+              </button>
+              {combinedQueue.length > 0 && (
+                <button
+                  onClick={beginCombinedSession}
+                  disabled={!canBegin}
+                  style={{
+                    background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.15)",
+                    color: canBegin ? "#08111f" : "#7a88a8",
+                    border: "none", borderRadius: 8,
+                    padding: "8px 18px", fontSize: 13, fontWeight: 800,
+                    cursor: canBegin ? "pointer" : "not-allowed",
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  Begin Session
+                </button>
+              )}
+            </>
+          )}
+
+          {/* In-session: progress + pause/resume + end/reset */}
+          {sessionQueue.sessionStarted && (
+            <>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                background: isPaused ? "rgba(255,200,80,0.08)" : "rgba(155,231,176,0.08)",
+                border: `1px solid ${isPaused ? "rgba(255,200,80,0.2)" : "rgba(155,231,176,0.2)"}`,
+                borderRadius: 8, padding: "5px 12px",
+              }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isPaused ? "#ffcc80" : "#9be7b0", boxShadow: `0 0 5px ${isPaused ? "#ffcc80" : "#9be7b0"}`, animation: isPaused ? "none" : "pulse 2s infinite" }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: isPaused ? "#ffcc80" : "#9be7b0" }}>{isPaused ? "Paused" : "In Progress"}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: "white", letterSpacing: 1 }}>{sessionTimer}</span>
+              </div>
+              <span style={{ fontSize: 12, color: "#7a88a8" }}>
+                {sessionQueue.queueIndex + 1}&thinsp;/&thinsp;{sessionQueue.getActiveQueue().length}
+              </span>
+              {/* Pause / Resume */}
+              {isPaused ? (
+                <button onClick={resumeSession} style={{
+                  background: "rgba(155,231,176,0.15)", color: "#9be7b0", padding: "6px 14px",
+                  borderRadius: 7, border: "1px solid rgba(155,231,176,0.3)", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                }}>▶ Resume</button>
+              ) : (
+                <button onClick={pauseSession} style={{
+                  background: "rgba(255,200,80,0.1)", color: "#ffcc80", padding: "6px 12px",
+                  borderRadius: 7, border: "1px solid rgba(255,200,80,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
+                }}>⏸ Pause</button>
+              )}
+              <button onClick={() => endSession(true)} style={{
+                background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "6px 12px",
+                borderRadius: 7, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
+              }}>End</button>
+              <button onClick={resetSession} style={{
+                background: "rgba(255,255,255,0.06)", color: "#aab6d3", padding: "6px 12px",
+                borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12,
+              }}>Reset</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── ROW 2: MAIN GRID ── */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.1fr) minmax(0,0.9fr)",
+        gap: 16,
+        alignItems: "start",
+        marginBottom: 16,
+      }}>
+
+        {/* LEFT: Framing Intelligence Bar + Camera */}
+        <div>
+
+          {/* ── FRAMING INTELLIGENCE BAR ── */}
+          <div style={{
+            marginBottom: 8,
+            padding: "9px 14px",
+            borderRadius: 9,
+            fontSize: 13,
+            fontWeight: 600,
+            background: sessionPhase === "confirmed"
+              ? "rgba(63,185,80,0.10)"
+              : sessionPhase === "greeting"
+              ? "rgba(108,99,255,0.10)"
+              : framingPanelState.tone === "good"
+              ? "rgba(63,185,80,0.10)"
+              : framingPanelState.tone === "critical"
+              ? "rgba(248,81,73,0.10)"
+              : "rgba(210,153,34,0.10)",
+            border: `1px solid ${
+              sessionPhase === "confirmed" ? "rgba(63,185,80,0.30)"
+              : sessionPhase === "greeting" ? "rgba(108,99,255,0.30)"
+              : framingPanelState.tone === "good" ? "rgba(63,185,80,0.30)"
+              : framingPanelState.tone === "critical" ? "rgba(248,81,73,0.30)"
+              : "rgba(210,153,34,0.30)"
+            }`,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+              background: sessionPhase === "confirmed" ? "#3fb950"
+                : sessionPhase === "greeting" ? "#a78bfa"
+                : framingPanelState.tone === "good" ? "#3fb950"
+                : framingPanelState.tone === "critical" ? "#f85149" : "#d29922",
+              boxShadow: `0 0 6px ${
+                sessionPhase === "confirmed" ? "#3fb950"
+                : sessionPhase === "greeting" ? "#a78bfa"
+                : framingPanelState.tone === "good" ? "#3fb950"
+                : framingPanelState.tone === "critical" ? "#f85149" : "#d29922"
+              }`,
+              animation: sessionPhase === "greeting" ? "pulse 1.5s infinite" : framingPanelState.evaluating ? "pulse 1s infinite" : "none",
+            }} />
+            <span style={{
+              flex: 1,
+              color: sessionPhase === "confirmed" ? "#9be7b0"
+                : sessionPhase === "greeting" ? "#c4b5fd"
+                : framingPanelState.tone === "good" ? "#9be7b0"
+                : framingPanelState.tone === "critical" ? "#ff8f8f" : "#ffcc80",
+            }}>
+              {sessionPhase === "greeting"
+                ? "Preparing your session…"
+                : sessionPhase === "confirmed"
+                ? "Perfect — I can see you clearly. Starting…"
+                : framingPanelState.message}
+            </span>
+          </div>
+
+          {/* ── CAMERA CARD ── */}
+          <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+
+            {/* GREETING PHASE OVERLAY — shown while greeting is speaking, camera off */}
+            {(sessionPhase === "greeting") && (
+              <div style={{
+                minHeight: 280, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 16,
+                padding: 24,
+              }}>
+                {/* Animated waveform */}
+                <div style={{ display: "flex", alignItems: "center", gap: 4, height: 40 }}>
+                  {[0.4, 0.7, 1.0, 0.7, 0.4, 0.9, 0.5].map((h, i) => (
+                    <div key={i} style={{
+                      width: 4, borderRadius: 2,
+                      background: "linear-gradient(180deg, #6C63FF, #00C2C7)",
+                      height: `${h * 100}%`,
+                      animation: `wave 1.2s ease-in-out infinite`,
+                      animationDelay: `${i * 0.15}s`,
+                    }} />
+                  ))}
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#e6edf3", marginBottom: 6 }}>
+                    {patientName ? `Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${patientName.split(" ")[0]}` : "Welcome"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#7a88a8" }}>
+                    Preparing your session…
+                  </div>
+                </div>
+                {previousSession && (
+                  <div style={{
+                    background: "rgba(108,99,255,0.08)", border: "1px solid rgba(108,99,255,0.2)",
+                    borderRadius: 8, padding: "8px 14px", fontSize: 11, color: "#a78bfa",
+                    maxWidth: 280, textAlign: "center",
+                  }}>
+                    Last session: {previousSession.sessionTitle} · Score {previousSession.mobilityScore}/100
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* FRAMING CONFIRMED OVERLAY */}
+            {sessionPhase === "confirmed" && (
+              <div style={{
+                minHeight: 280, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 12,
+                padding: 24,
+              }}>
+                <div style={{ fontSize: 32 }}>✅</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#9be7b0" }}>
+                  Perfect — I can see you clearly
+                </div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>Starting your session…</div>
+              </div>
+            )}
+
+            {/* CAMERA — shown during framing and running phases */}
+            <div style={{ display: sessionPhase === "greeting" || sessionPhase === "confirmed" ? "none" : "block" }}>
+              <div style={{ position: "relative" }}>
+                <CameraViewport ref={cameraRef} onVideoReady={handleCameraReady} onCameraStop={handleCameraStop} showStartButton={false} />
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                  <PoseCanvasOverlay frame={inferenceLoop.frame} />
+                </div>
+                {/* Ghost silhouette canvas — layered on top of pose skeleton */}
+                <canvas
+                  ref={ghostCanvasRef}
+                  width={640} height={480}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
+                />
+                {/* Positioning coach: until the patient is placed and still (before the first rep) */}
+                {framingIntelligence.positionGuide &&
+                  framingIntelligence.positionGuide.state !== "locked" &&
+                  (sessionPhase === "framing" || sessionPhase === "running") &&
+                  inferenceLoop.repCount === 0 && (
+                    <PositionGuideOverlay guide={framingIntelligence.positionGuide} />
+                  )}
+              </div>
+              {inferenceLoop.engineError && (
+                <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
+                  {inferenceLoop.engineError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT: Coaching + Camera Sees */}
         <div style={{ display: "grid", gap: 12 }}>
 
-          {/* COACHING PANEL */}
+          {/* ── LIVE COACHING CARD ── */}
           <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
               <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Live Coaching</div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                 <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(124,198,255,0.12)", color: "#7cc6ff", fontSize: 11, fontWeight: 700 }}>
                   {formatPhase(inferenceLoop.phase)}
                 </span>
                 <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(255,255,255,0.06)", color: "white", fontSize: 11, fontWeight: 700 }}>
-                  {inferenceLoop.repCount}/{currentPrescription?.repTarget ?? 0}
+                  {inferenceLoop.repCount}/{currentPrescription?.repTarget ?? 0} reps
                 </span>
                 {inferenceLoop.holdRemainingMs !== null && inferenceLoop.phase === "holding" && (
                   <span style={{ padding: "3px 8px", borderRadius: 999, background: "rgba(100,220,150,0.12)", color: "#9be7b0", fontSize: 11, fontWeight: 700 }}>
@@ -1836,9 +2239,12 @@ Reply with only the summary text, no JSON, no formatting.`;
             </div>
 
             {/* Exercise title + instructions */}
-            <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 8, lineHeight: 1.2 }}>
-              {currentQueueItem?.displayName ?? "No active exercise"}
+            <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, marginBottom: 2, lineHeight: 1.2 }}>
+              {(currentQueueItem?.prescription as any)?.clinicalName ?? currentQueueItem?.displayName ?? "No active exercise"}
             </div>
+            {currentQueueItem && (
+              <div style={{ fontSize: 11, color: "#7a88a8", marginBottom: 8 }}>{currentQueueItem.displayName}</div>
+            )}
             <div style={{ fontSize: 13, color: "#aab6d3", marginBottom: 12, lineHeight: 1.5 }}>
               {instructionBody}
             </div>
@@ -1855,7 +2261,7 @@ Reply with only the summary text, no JSON, no formatting.`;
                 coachingPanelState.tone === "encouraging" ? "rgba(100,220,150,0.25)" :
                 "rgba(255,255,255,0.06)"
               }`,
-              display: "flex", alignItems: "center", gap: 10
+              display: "flex", alignItems: "center", gap: 10,
             }}>
               {coachingPanelState.isThinking ? (
                 <div style={{ color: "#7a88a8", fontSize: 13, fontStyle: "italic" }}>Thinking…</div>
@@ -1865,7 +2271,7 @@ Reply with only the summary text, no JSON, no formatting.`;
                     width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
                     background: coachingPanelState.tone === "corrective" ? "#ffcc80" :
                       coachingPanelState.tone === "urgent" ? "#ff8f8f" :
-                      coachingPanelState.tone === "encouraging" ? "#9be7b0" : "#7cc6ff"
+                      coachingPanelState.tone === "encouraging" ? "#9be7b0" : "#7cc6ff",
                   }} />
                   <div style={{ fontSize: 15, color: "white", fontWeight: 500, lineHeight: 1.4, flex: 1 }}>
                     {coachingPanelState.message}
@@ -1887,7 +2293,127 @@ Reply with only the summary text, no JSON, no formatting.`;
             </div>
           </div>
 
-          {/* CAMERA SEES */}
+          {/* ── EXERCISE PROGRESS ── */}
+          {sessionQueue.sessionStarted && currentPrescription && (
+            <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700 }}>Exercise Progress</div>
+                <div style={{ fontSize: 12, color: "#7a88a8" }}>{inferenceLoop.repCount} / {currentPrescription.repTarget} reps</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Reps</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "white", lineHeight: 1 }}>
+                    {inferenceLoop.repCount}<span style={{ fontSize: 13, color: "#7a88a8", fontWeight: 500 }}> / {currentPrescription.repTarget}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>This Exercise</div>
+                </div>
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const peaks = exercisePeakMetricsRef.current[qIdx] ?? [];
+                  const avgPeak = peaks.length > 0 ? Math.round(peaks.reduce((a: number, b: number) => a + b, 0) / peaks.length) : null;
+                  const liveMetric = inferenceLoop.phase !== "ready" ? inferenceLoop.activeMetricValue : null;
+                  const displayVal = liveMetric !== null ? Math.round(liveMetric) : avgPeak;
+                  const romTarget = (currentPrescription as any).romTargetDegrees ?? (currentPrescription as any).romAcceptableMin ?? null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>ROM</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: displayVal !== null ? "#7cc6ff" : "#7a88a8", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}°` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {peaks.length > 0 ? "Avg Peak" : "Live"}{romTarget !== null ? ` · Target ${romTarget}°` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const qIdx = sessionQueue.queueIndex;
+                  const holds = exerciseHoldDurationsRef.current[qIdx] ?? [];
+                  const avgHold = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const liveHold = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null
+                    ? Math.max(0, currentPrescription.hold.durationMs - inferenceLoop.holdRemainingMs) : null;
+                  const displayVal = liveHold !== null ? (liveHold / 1000).toFixed(1) : avgHold;
+                  const targetHold = currentPrescription.hold.required ? (currentPrescription.hold.durationMs / 1000).toFixed(1) : null;
+                  return (
+                    <div style={{ background: "#0d1526", borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Hold</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: inferenceLoop.phase === "holding" ? "#9be7b0" : "white", lineHeight: 1 }}>
+                        {displayVal !== null ? `${displayVal}s` : "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 4 }}>
+                        {holds.length > 0 ? "Avg" : inferenceLoop.phase === "holding" ? "Live" : "—"}{targetHold !== null ? ` · Target ${targetHold}s` : ""}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Vision confidence — landmark detection quality */}
+              {(() => {
+                const confPct = framingIntelligence.getLandmarkConfidencePct();
+                if (confPct === null) return null;
+                const confColor = confPct >= 80 ? "#3fb950" : confPct >= 60 ? "#d29922" : "#f85149";
+                return (
+                  <div style={{ marginBottom: 10, background: "#0d1526", borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+                      <span style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700 }}>Vision Confidence</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: confColor }}>{confPct}%</span>
+                    </div>
+                    <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${confPct}%`, background: confColor, borderRadius: 2, transition: "width 0.5s ease" }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: "#484f58", marginTop: 4 }}>Landmark detection quality this exercise</div>
+                  </div>
+                );
+              })()}
+
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+                {[
+                  { label: "Aligned",  color: "#3fb950", bg: "rgba(63,185,80,0.12)",   show: Boolean(inferenceLoop.frame?.personDetected) },
+                  { label: inferenceLoop.phase === "holding" ? "Holding" : inferenceLoop.phase === "lifting" ? "Lifting" : inferenceLoop.phase === "lowering" ? "Lowering" : "Ready",
+                    color: inferenceLoop.phase === "holding" ? "#9be7b0" : inferenceLoop.phase === "lifting" ? "#7cc6ff" : inferenceLoop.phase === "lowering" ? "#a78bfa" : "#7a88a8",
+                    bg: inferenceLoop.phase === "holding" ? "rgba(100,220,150,0.12)" : inferenceLoop.phase === "lifting" ? "rgba(124,198,255,0.12)" : inferenceLoop.phase === "lowering" ? "rgba(167,139,250,0.12)" : "rgba(255,255,255,0.06)",
+                    show: true },
+                  { label: "Centered", color: "#7cc6ff", bg: "rgba(124,198,255,0.12)", show: framingPanelState.tone === "good" },
+                ].filter(p => p.show).map(pill => (
+                  <span key={pill.label} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: pill.bg, color: pill.color, fontWeight: 600 }}>{pill.label}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── NEXT EXERCISE ── */}
+          {sessionQueue.sessionStarted && (() => {
+            const nextIdx = sessionQueue.queueIndex + 1;
+            const queue = sessionQueue.getActiveQueue();
+            const nextItem = queue[nextIdx];
+            if (!nextItem) return null;
+            const np = nextItem.prescription as any;
+            const nextTarget = np.romTargetDegrees ?? np.romAcceptableMin ?? null;
+            const nextHold = nextItem.prescription.hold.required ? ` · ${nextItem.prescription.hold.durationMs / 1000}s hold` : "";
+            return (
+              <div style={{ background: "#1a2040", borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Next Exercise</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0, background: "rgba(124,198,255,0.1)", border: "1px solid rgba(124,198,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#7cc6ff" }}>
+                    {nextIdx + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{(nextItem.prescription as any).clinicalName ?? nextItem.displayName}</div>
+                    <div style={{ fontSize: 11, color: "#7a88a8", marginTop: 1 }}>{nextItem.displayName}</div>
+                    <div style={{ fontSize: 12, color: "#7a88a8", marginTop: 2 }}>
+                      {nextItem.prescription.repTarget} reps{nextHold}
+                      {nextTarget !== null && <span style={{ color: "#d29922" }}> · Target {nextTarget}°</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+
+          {/* ── CAMERA SEES (secondary observations) ── */}
           <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
             <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 10 }}>Camera Sees</div>
             <div style={{ display: "grid", gap: 3 }}>
@@ -1902,143 +2428,216 @@ Reply with only the summary text, no JSON, no formatting.`;
         </div>
       </div>
 
-      {/* ── PRE-SESSION CARD (prescription mode) ── */}
-      {prescriptionQueue && prescriptionQueue.length > 0 && !sessionQueue.sessionStarted && (
-        <div style={{ background: "#1a2040", borderRadius: 12, padding: 20, border: "1px solid rgba(124,198,255,0.2)", marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 4 }}>
-                Your Session
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "white" }}>
-                {sessionTitle ?? "Prescribed Session"}
-              </div>
-              {patientName && (
-                <div style={{ fontSize: 13, color: "#aab6d3", marginTop: 3 }}>
-                  Patient: <strong style={{ color: "white" }}>{patientName}</strong>
-                  {" · "}<span style={{ color: "#7a88a8" }}>{patientProfile.type.replace(/_/g, " ")}</span>
-                </div>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[
-                formatDurationRange(combinedDurationSeconds),
-                `${combinedQueue.length} exercise${combinedQueue.length !== 1 ? "s" : ""}`,
-                `${combinedTotalReps} reps`
-              ].map(label => (
-                <span key={label} style={{
-                  padding: "4px 12px", borderRadius: 999,
-                  background: "rgba(124,198,255,0.08)", color: "#7cc6ff",
-                  fontSize: 12, fontWeight: 600
-                }}>{label}</span>
-              ))}
+      {/* ── ROW 3: SESSION DETAILS TABLE ── */}
+      {combinedQueue.length > 0 && (
+        <div style={{ background: "#1a2040", borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12, overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "white" }}>Session Details &amp; Performance</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {combinedGoal && <span style={{ fontSize: 12, color: "#7a88a8" }}>{combinedGoal}</span>}
+              <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "rgba(124,198,255,0.08)", color: "#7cc6ff", fontWeight: 600 }}>
+                {combinedTotalReps} reps total
+              </span>
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            {combinedQueue.map((item, i) => {
-              const p = item.prescription as any;
-              const romTarget = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
-              const romNorm = p.romNormDegrees ?? null;
-              const romStart = p.romStartDegrees ?? 0;
-              const encourage = p.encourageThreshold ?? null;
-              const hasRom = romTarget !== null || romNorm !== null;
-              return (
-                <div key={i} style={{
-                  padding: "10px 14px", borderRadius: 8,
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.05)"
-                }}>
-                  {/* Row 1: name + reps/hold */}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: hasRom ? 8 : 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{
-                        width: 22, height: 22, borderRadius: "50%",
-                        background: "rgba(124,198,255,0.12)", color: "#7cc6ff",
-                        fontSize: 11, fontWeight: 700,
-                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
-                      }}>{i + 1}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "white" }}>{item.displayName}</span>
-                    </div>
-                    <span style={{ fontSize: 12, color: "#7a88a8" }}>
-                      {item.prescription.repTarget} reps
-                      {item.prescription.hold.required ? ` · ${item.prescription.hold.durationMs / 1000}s hold` : ""}
-                    </span>
-                  </div>
-                  {/* Row 2: ROM targets — only when data available */}
-                  {hasRom && (
-                    <div style={{
-                      display: "flex", gap: 8, flexWrap: "wrap" as const,
-                      borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 7
+          {/* Table — scrollable on mobile */}
+          <div style={{ overflowX: "auto" as const }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                  {["#", "Exercise", "ROM Target", "Push Target", "Peak ROM", "Sets", "Avg ROM", "Avg Hold", "Confidence"].map(h => (
+                    <th key={h} style={{ padding: "9px 14px", textAlign: "left" as const, fontSize: 10, fontWeight: 700, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, whiteSpace: "nowrap" as const }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {combinedQueue.map((item, i) => {
+                  const p = item.prescription as any;
+                  const romTarget   = p.romTargetDegrees ?? p.romAcceptableMin ?? null;
+                  const encourage   = p.encourageThreshold ?? null;
+                  const isActive    = sessionQueue.sessionStarted && sessionQueue.queueIndex === i;
+                  const isPast      = sessionQueue.sessionStarted && sessionQueue.queueIndex > i;
+                  const repsCompleted = isActive ? inferenceLoop.repCount : isPast ? item.prescription.repTarget : 0;
+                  const completionRate = item.prescription.repTarget > 0 ? repsCompleted / item.prescription.repTarget : 0;
+
+                  // ROM accumulators
+                  const peakMetrics = exercisePeakMetricsRef.current[i] ?? [];
+                  const maxPeak  = peakMetrics.length > 0 ? Math.max(...peakMetrics) : null;
+                  const avgPeak  = peakMetrics.length > 0 ? Math.round(peakMetrics.reduce((a: number, b: number) => a + b, 0) / peakMetrics.length) : null;
+                  const holds    = exerciseHoldDurationsRef.current[i] ?? [];
+                  const avgHold  = holds.length > 0 ? (holds.reduce((a: number, b: number) => a + b, 0) / holds.length / 1000).toFixed(1) : null;
+                  const confPct  = exerciseLandmarkConfidenceRef.current[i] ?? null;
+                  const liveConf = isActive ? framingIntelligence.getLandmarkConfidencePct() : null;
+                  const confVal  = confPct ?? liveConf;
+                  const confColor = confVal !== null ? (confVal >= 80 ? "#3fb950" : confVal >= 60 ? "#d29922" : "#f85149") : "#484f58";
+
+                  return (
+                    <React.Fragment key={i}>
+                    <tr style={{
+                      borderBottom: i < combinedQueue.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
+                      background: isActive ? "rgba(124,198,255,0.04)" : "transparent",
                     }}>
-                      {/* Rest baseline */}
-                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.05)", color: "#7a88a8" }}>
-                        Rest: {romStart}°
-                      </span>
-                      {/* Physio target (Expected ROM) */}
-                      {romTarget !== null && (
-                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(210,153,34,0.15)", color: "#d29922", fontWeight: 600 }}>
-                          🎯 Target: {romTarget}°
-                        </span>
-                      )}
-                      {/* Population norm reference */}
-                      {romNorm !== null && (
-                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(124,198,255,0.08)", color: "#7cc6ff" }}>
-                          Norm: {romNorm}°
-                        </span>
-                      )}
-                      {/* AI encourage-to target */}
-                      {encourage !== null ? (
-                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(63,185,80,0.15)", color: "#3fb950", fontWeight: 600 }}>
-                          💬 AI push-to: {encourage}°
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.04)", color: "#484f58", fontStyle: "italic" as const }}>
-                          No AI push target
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                      {/* # */}
+                      <td style={{ padding: "12px 14px", color: "#7a88a8", fontWeight: 600 }}>{i + 1}</td>
 
-          <button
-            onClick={beginCombinedSession}
-            disabled={!canBegin}
-            style={{
-              width: "100%", padding: "12px 0",
-              background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.2)",
-              color: canBegin ? "#08111f" : "#7a88a8",
-              fontWeight: 800, fontSize: 15,
-              borderRadius: 10, border: "none",
-              cursor: canBegin ? "pointer" : "not-allowed",
-              letterSpacing: 0.3
-            }}
-          >
-            Begin Session
-          </button>
-        </div>
-      )}
+                      {/* Exercise */}
+                      <td style={{ padding: "12px 14px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+                          <div>
+                            <span style={{ fontWeight: 600, color: "white" }}>
+                              {(item.prescription as any).clinicalName ?? item.displayName}
+                            </span>
+                            <div style={{ fontSize: 10, color: "#7a88a8", marginTop: 1 }}>
+                              {item.displayName}
+                            </div>
+                          </div>
+                          {isActive && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: "rgba(124,198,255,0.15)", color: "#7cc6ff", fontWeight: 700, flexShrink: 0 }}>Active</span>}
+                        </div>
+                      </td>
 
-      {/* ── SESSION CONTROLS (prescription mode — session running) ── */}
-      {prescriptionQueue && prescriptionQueue.length > 0 && sessionQueue.sessionStarted && (
-        <div style={{ background: "#1a2040", borderRadius: 12, padding: "12px 16px", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ fontSize: 13, color: "#aab6d3" }}>
-            {patientName && <><strong style={{ color: "white" }}>{patientName}</strong>{" · "}</>}
-            <span style={{ color: "#7cc6ff" }}>{sessionTitle ?? "Session"}</span>
-            {" · "}Exercise {sessionQueue.queueIndex + 1} of {sessionQueue.getActiveQueue().length}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={endSession} style={{
-              background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "7px 14px",
-              borderRadius: 8, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 13
-            }}>End</button>
-            <button onClick={resetSession} style={{
-              background: "rgba(255,255,255,0.06)", color: "#aab6d3", padding: "7px 14px",
-              borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13
-            }}>Reset</button>
+                      {/* ROM Target */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {romTarget !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: "#d29922" }}>{romTarget}°</div>
+                            <div style={{ fontSize: 10, color: "#7a88a8" }}>
+                              {item.prescription.repTarget} reps·{item.prescription.hold.required ? ` ${item.prescription.hold.durationMs / 1000}s` : "—"}
+                            </div>
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Push Target */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {encourage !== null ? (
+                          <div style={{ fontWeight: 700, color: "#3fb950" }}>{encourage}°</div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Peak ROM */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {maxPeak !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: maxPeak >= (romTarget ?? 0) ? "#7cc6ff" : "#ffcc80" }}>{maxPeak}°</div>
+                            {romTarget !== null && <div style={{ fontSize: 10, color: maxPeak >= romTarget ? "#3fb950" : "#f85149" }}>{maxPeak >= romTarget ? "↑ target" : `↓ ${romTarget - maxPeak}° short`}</div>}
+                          </div>
+                        ) : isActive && inferenceLoop.activeMetricValue !== null ? (
+                          <div style={{ fontWeight: 700, color: "#a78bfa" }}>{Math.round(inferenceLoop.activeMetricValue)}°</div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Sets Completed */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {sessionQueue.sessionStarted ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ fontWeight: 700, color: completionRate >= 0.9 ? "#9be7b0" : completionRate >= 0.6 ? "#ffcc80" : repsCompleted > 0 ? "#ff8f8f" : "#7a88a8" }}>
+                              {repsCompleted} / {item.prescription.repTarget}
+                            </span>
+                            {isPast && completionRate >= 1 && <span style={{ fontSize: 12 }}>✓</span>}
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Avg ROM */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {avgPeak !== null ? (
+                          <div style={{ fontWeight: 700, color: "#7cc6ff" }}>{avgPeak}°</div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Avg Hold */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {avgHold !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: "white" }}>{avgHold}s</div>
+                            {item.prescription.hold.required && (
+                              <div style={{ fontSize: 10, color: parseFloat(avgHold) >= item.prescription.hold.durationMs / 1000 * 0.9 ? "#3fb950" : "#f85149" }}>
+                                target {item.prescription.hold.durationMs / 1000}s
+                              </div>
+                            )}
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+
+                      {/* Vision Confidence */}
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" as const }}>
+                        {confVal !== null ? (
+                          <div>
+                            <div style={{ fontWeight: 700, color: confColor }}>{confVal}%</div>
+                            <div style={{ height: 3, width: 48, background: "rgba(255,255,255,0.08)", borderRadius: 2, marginTop: 3 }}>
+                              <div style={{ height: "100%", width: `${confVal}%`, background: confColor, borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        ) : <span style={{ color: "#484f58" }}>—</span>}
+                      </td>
+                      {/* Expand toggle */}
+                      <td style={{ padding: "0 14px 0 0", textAlign: "right" as const }}>
+                        {(peakMetrics.length > 0 || (exerciseRepTimelineRef.current[i]?.length ?? 0) > 0) && (
+                          <button
+                            onClick={() => setExpandedExerciseRow(expandedExerciseRow === i ? null : i)}
+                            style={{ background: "none", border: "none", color: "#7a88a8", cursor: "pointer", fontSize: 11, padding: "4px 6px", borderRadius: 4, fontFamily: "inherit" }}
+                          >
+                            {expandedExerciseRow === i ? "▲" : "▼"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {/* Per-rep breakdown row */}
+                    {expandedExerciseRow === i && (() => {
+                      const repTimeline = exerciseRepTimelineRef.current[i] ?? [];
+                      if (repTimeline.length === 0) return null;
+                      const romTarget = ((item.prescription as any).romTargetDegrees ?? (item.prescription as any).romAcceptableMin ?? null) as number | null;
+                      return (
+                        <tr key={`${i}-reps`} style={{ background: "rgba(0,0,0,0.2)" }}>
+                          <td colSpan={10} style={{ padding: "0 14px 12px 14px" }}>
+                            <div style={{ borderLeft: "2px solid rgba(124,198,255,0.2)", paddingLeft: 16, marginLeft: 8 }}>
+                              <div style={{ fontSize: 10, color: "#7a88a8", textTransform: "uppercase" as const, letterSpacing: 0.5, fontWeight: 700, marginBottom: 8, marginTop: 8 }}>
+                                Per-Rep Breakdown
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "40px 70px 80px 80px 80px 1fr", gap: "4px 12px", fontSize: 11 }}>
+                                {/* Header */}
+                                {["Rep", "Outcome", "Peak ROM", "Hold", "vs Target", ""].map(h => (
+                                  <div key={h} style={{ color: "#484f58", fontWeight: 700, fontSize: 10, textTransform: "uppercase" as const, letterSpacing: 0.4, paddingBottom: 4, borderBottom: "1px solid rgba(255,255,255,0.04)" }}>{h}</div>
+                                ))}
+                                {/* Rows */}
+                                {repTimeline.map((rep, ri) => {
+                                  const isSuccess = rep.outcome === "success";
+                                  const vsTarget = rep.peakRomDeg !== null && romTarget !== null
+                                    ? rep.peakRomDeg - romTarget : null;
+                                  return (
+                                    <React.Fragment key={ri}>
+                                      <div style={{ color: "#aab6d3", fontWeight: 600 }}>{rep.rep}</div>
+                                      <div style={{ color: isSuccess ? "#3fb950" : "#f85149", fontWeight: 600 }}>
+                                        {isSuccess ? "✓ Done" : "✗ Failed"}
+                                      </div>
+                                      <div style={{ color: isSuccess ? "#7cc6ff" : "#7a88a8" }}>
+                                        {rep.peakRomDeg !== null ? `${rep.peakRomDeg}°` : "—"}
+                                      </div>
+                                      <div style={{ color: rep.holdMs !== null ? "white" : "#484f58" }}>
+                                        {rep.holdMs !== null ? `${(rep.holdMs / 1000).toFixed(1)}s` : "—"}
+                                      </div>
+                                      <div style={{ color: vsTarget === null ? "#484f58" : vsTarget >= 0 ? "#3fb950" : "#f85149" }}>
+                                        {vsTarget !== null ? `${vsTarget >= 0 ? "+" : ""}${vsTarget.toFixed(0)}°` : "—"}
+                                      </div>
+                                      <div style={{ color: "#7a88a8", fontSize: 10 }}>
+                                        {!isSuccess && rep.failureReason ? rep.failureReason.replace(/_/g, " ") : ""}
+                                      </div>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })()}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -2048,12 +2647,8 @@ Reply with only the summary text, no JSON, no formatting.`;
       <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: selectorCollapsed ? 0 : 14, flexWrap: "wrap", gap: 10 }}>
           <div style={{ fontSize: 11, color: "#7cc6ff", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700 }}>Session Selector</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={beginCombinedSession} disabled={!canBegin} style={{
-              background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.2)", color: canBegin ? "#08111f" : "#7a88a8",
-              fontWeight: 700, padding: "7px 14px", borderRadius: 8, border: "none", cursor: canBegin ? "pointer" : "not-allowed", fontSize: 13
-            }}>Begin Session</button>
-            <button onClick={endSession} disabled={inferenceLoop.engineStatus !== "running"} style={{
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => endSession(true)} disabled={inferenceLoop.engineStatus !== "running"} style={{
               background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "7px 14px",
               borderRadius: 8, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 13
             }}>End</button>
@@ -2069,7 +2664,7 @@ Reply with only the summary text, no JSON, no formatting.`;
         </div>
 
         {!selectorCollapsed && (
-          <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "240px 1fr", gap: 16 }}>
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ fontSize: 11, color: "#7a88a8", textTransform: "uppercase", letterSpacing: 0.6 }}>Sessions</div>
               {sessions.map((session) => {
@@ -2124,8 +2719,15 @@ Reply with only the summary text, no JSON, no formatting.`;
       </div>
       )}
 
+      {/* ── DEVELOPER TOOLS ── */}
+      <div style={{ marginBottom: 4 }}>
+        <div style={{ fontSize: 10, color: "#484f58", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 700, marginBottom: 6, paddingLeft: 2 }}>
+          Developer Tools
+        </div>
+      </div>
+
       {/* ── GHOST INTELLIGENCE LOG ── */}
-      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(167,139,250,0.2)", overflow: "hidden", marginBottom: 12 }}>
+      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(167,139,250,0.2)", overflow: "hidden", marginBottom: 8 }}>
         <div onClick={() => setGhostLogOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "rgba(167,139,250,0.05)", borderBottom: ghostLogOpen ? "1px solid rgba(167,139,250,0.1)" : "none", cursor: "pointer" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 0.8 }}>Ghost Intelligence</span>
@@ -2164,7 +2766,7 @@ Reply with only the summary text, no JSON, no formatting.`;
       </div>
 
       {/* ── REP CYCLE DEBUG LOG ── */}
-      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(74,222,128,0.2)" }}>
+      <div style={{ background: "#0a0f1e", borderRadius: 12, border: "1px solid rgba(74,222,128,0.2)", marginBottom: 8 }}>
         <div onClick={() => setRepCycleOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "rgba(74,222,128,0.04)", borderBottom: repCycleOpen ? "1px solid rgba(74,222,128,0.1)" : "none", cursor: "pointer" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.08em" }}>REP CYCLE LOG</span>
@@ -2343,6 +2945,10 @@ Reply with only the summary text, no JSON, no formatting.`;
       <MovementTimelinePanel defaultOpen={true} />
 
       <style>{`
+        @keyframes wave {
+          0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+          50% { transform: scaleY(1); opacity: 1; }
+        }
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }

@@ -1,3 +1,4 @@
+import { emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import type { MovementFeatures } from "@/lib/types/movement";
 
 function average(values: Array<number | null>): number | null {
@@ -40,38 +41,7 @@ function majorityPosture(
   return "unknown";
 }
 
-function emptyFeatures(): MovementFeatures {
-  return {
-    posture: "unknown",
-
-    rightArmElevationDeg: null,
-    leftArmElevationDeg: null,
-    bilateralArmElevationDeg: null,
-
-    rightElbowAngleDeg: null,
-    leftElbowAngleDeg: null,
-
-    torsoLeanDeg: null,
-    shoulderTiltDeg: null,
-
-    rightWristAboveShoulder: false,
-    leftWristAboveShoulder: false,
-
-    rightWristToShoulderDy: null,
-    leftWristToShoulderDy: null,
-
-    hipCenterY: null,
-    hipHeightNormalized: null,
-
-    kneeAngleLeft: null,
-    kneeAngleRight: null,
-
-    hipVelocityY: null,
-
-    isStanding: false,
-    isSeated: false
-  };
-}
+const emptyFeatures = emptyMovementFeatures;
 
 export function smoothMovementFeatures(history: MovementFeatures[]): MovementFeatures {
   if (history.length === 0) {
@@ -86,6 +56,10 @@ export function smoothMovementFeatures(history: MovementFeatures[]): MovementFea
     bilateralArmElevationDeg: average(
       history.map((item) => item.bilateralArmElevationDeg)
     ),
+
+    rightShoulderAbductionDeg: average(history.map((item) => item.rightShoulderAbductionDeg)),
+    leftShoulderAbductionDeg: average(history.map((item) => item.leftShoulderAbductionDeg)),
+    bilateralShoulderAbductionDeg: average(history.map((item) => item.bilateralShoulderAbductionDeg)),
 
     rightElbowAngleDeg: average(history.map((item) => item.rightElbowAngleDeg)),
     leftElbowAngleDeg: average(history.map((item) => item.leftElbowAngleDeg)),
