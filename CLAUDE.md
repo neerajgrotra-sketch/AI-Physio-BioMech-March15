@@ -126,6 +126,13 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   bill. They need a check, such as a valid session id and a rate limit.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
 
+## Versions
+
+- The version is `package.json`'s `version` plus the commit Vercel built: `next.config.mjs` puts them in
+  `NEXT_PUBLIC_APP_*`, `lib/app/version.ts` (`versionLabel()`, e.g. `v0.2.0 · 2622702`, with the branch on test builds)
+  shows them in the admin header and on the session screen, and every saved debug log starts with an `APP` entry
+  holding them. Raise the version for changes testers should notice (MINOR for a feature, PATCH for a fix).
+
 ## Branches and deploys
 
 - Vercel deploys production from the branch set in the Vercel project; it was `feature/-module20-ghost-split-by-exercise`
