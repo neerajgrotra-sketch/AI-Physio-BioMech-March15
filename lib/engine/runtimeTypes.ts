@@ -30,6 +30,13 @@ export type RuntimeRepState = {
   everViolatedIsolation: boolean;
   everHadBilateralParticipationGap: boolean;
 
+  // When the metric first dipped below the hold floor during HOLDING
+  // (null when it has not). See HOLD_DIP_GRACE_MS.
+  dipStartedAtMs?: number | null;
+
+  // Highest metric value of the current lift (LIFTING only).
+  attemptPeak?: number | null;
+
   lastRepEvaluation: RepEvaluation;
 };
 

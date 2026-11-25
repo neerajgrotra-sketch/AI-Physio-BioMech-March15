@@ -29,10 +29,11 @@ import * as poseDetection from "@tensorflow-models/pose-detection";
 import { createPoseDetector } from "@/lib/pose/createPoseDetector";
 import { normalizePoseFrame } from "@/lib/pose/normalizePoseFrame";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
-import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
+import { extractMovementFeatures, emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
-import { interpretMovement } from "@/lib/interpreter/movementInterpreter";
+import { interpretMovement, getEffectiveActiveMetricValue } from "@/lib/interpreter/movementInterpreter";
+import { calibrationKindFor, calibrateThresholds, applyThresholds, FeatureSpikeFilter } from "@/lib/engine/calibration";
 
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { PoseFrame } from "@/lib/types/pose";
@@ -44,32 +45,8 @@ import type { PatientProfile, ExerciseSessionContext } from "@/lib/patient/patie
 // EMPTY FEATURES FACTORY
 // ============================================================
 
-export function createEmptyFeatures(): MovementFeatures {
-  return {
-    posture: "unknown",
-    rightArmElevationDeg: null,
-    leftArmElevationDeg: null,
-    bilateralArmElevationDeg: null,
-    rightShoulderAbductionDeg: null,
-    leftShoulderAbductionDeg: null,
-    bilateralShoulderAbductionDeg: null,
-    rightElbowAngleDeg: null,
-    leftElbowAngleDeg: null,
-    torsoLeanDeg: null,
-    shoulderTiltDeg: null,
-    rightWristAboveShoulder: false,
-    leftWristAboveShoulder: false,
-    rightWristToShoulderDy: null,
-    leftWristToShoulderDy: null,
-    hipCenterY: null,
-    hipHeightNormalized: null,
-    kneeAngleLeft: null,
-    kneeAngleRight: null,
-    hipVelocityY: null,
-    isStanding: false,
-    isSeated: false
-  };
-}
+// One definition, shared with the feature extractor.
+export const createEmptyFeatures = emptyMovementFeatures;
 
 // ============================================================
 // LIVE OBSERVATION TYPE
@@ -302,7 +279,7 @@ export function useInferenceLoop() {
   // Track hold entry time for holdElapsedMs calculation
   const holdEnteredAtMsRef = useRef<number | null>(null);
   // Spike filter: tracks previous frame metric to reject impossible jumps (>50° per frame)
-  const prevMetricValueRef = useRef<number | null>(null);
+  const spikeFilterRef = useRef(new FeatureSpikeFilter());
   // Peak metric reached during current rep (reset on READY→LIFTING, updated each LIFTING/HOLDING frame)
   // Passed to onRepCompleted so session results can store the actual achieved ROM
   const peakMetricThisRepRef = useRef<number | null>(null);
@@ -365,7 +342,7 @@ export function useInferenceLoop() {
     featureHistoryRef.current.clear();
     prevPhaseRef.current = "ready";
     holdEnteredAtMsRef.current = null;
-    prevMetricValueRef.current = null; // reset spike filter on each exercise
+    spikeFilterRef.current.reset(); // reset spike filter on each exercise
     peakMetricThisRepRef.current = null;
     lastHoldDurationMsRef.current = null;
     debugFrameCountRef.current = 0;
@@ -498,210 +475,46 @@ export function useInferenceLoop() {
 
             setFeatures(smoothedFeatures);
 
-            // ── Dynamic Rest Baseline Calibration ─────────────────────────
-            // During the first 2 seconds while the patient is at rest (before
-            // any movement is detected), sample the active metric to compute
-            // the true resting baseline. This corrects TensorFlow's ~20° offset
-            // which varies with camera distance, posture, and patient size.
-            // All thresholds are then offset from this real measured baseline.
+            // ── Resting-baseline calibration (lib/engine/calibration.ts) ──
+            // For arm exercises, sample the metric for the first few seconds
+            // after the person is seen and set start / target / finish from
+            // the resting reading. Knees and sit-to-stand use fixed thresholds.
+            const activeMetric = activePrescription.target.metric;
             if (normalized.personDetected && !calibrationCompleteRef.current) {
-              // Start calibration timer on first detected person
-              if (calibrationStartMsRef.current === null) {
-                calibrationStartMsRef.current = nowMs;
-              }
-
-              // Compute raw metric value for this frame
-              const rawMetricForCalib = (() => {
-                const id = activePrescription.id;
-                const f = smoothedFeatures;
-                // Skip calibration sampling for abduction — fixed thresholds used instead
-                if (id.includes("abduction")) return null;
-                if (id.includes("flexion")) {
-                  if (id.includes("right")) return f.rightArmElevationDeg;
-                  if (id.includes("left")) return f.leftArmElevationDeg;
-                  return f.bilateralArmElevationDeg;
-                }
-                return null;
-              })();
-
-              // Abduction uses fixed thresholds — bypass dynamic calibration entirely.
-              // The wrist-based metric has a predictable resting floor of ~5-8°.
-              // Dynamic calibration fails for abduction because patients are often
-              // already moving during the calibration window.
-              if (activePrescription.id.includes("abduction") && !calibrationCompleteRef.current) {
+              if (calibrationKindFor(activeMetric) === "none") {
                 calibrationCompleteRef.current = true;
-                calibrationBaselineRef.current = 8; // known resting floor
-                setCalibrationBaseline(8);
-                // Fixed thresholds: start=25° (well above rest), target=physioTarget or 80°,
-                // finish=20° (clearly back at rest)
-                const physioTargetAbd = (activePrescription as any).romTargetDegrees ?? null;
-                const abdTarget = physioTargetAbd ?? 80;
-                activePrescription.startThreshold = 25;
-                activePrescription.targetThreshold = abdTarget;
-                activePrescription.finishThreshold = 20;
-                if (activePrescription.target) {
-                  activePrescription.target.tolerance = 15;
+              } else {
+                if (calibrationStartMsRef.current === null) {
+                  calibrationStartMsRef.current = nowMs;
                 }
-                console.log(
-                  `[CALIBRATION COMPLETE] ex=${activePrescription.id}` +
-                  ` | mode=FIXED (abduction)` +
-                  ` | start=25.0° | target=${abdTarget.toFixed(1)}° | finish=20.0°` +
-                  ` | physioTarget=${physioTargetAbd ?? "none — using 80°"}`
-                );
-              }
+                const sample = getEffectiveActiveMetricValue(smoothedFeatures, activePrescription);
+                if (sample !== null) calibrationSamplesRef.current.push(sample);
 
-              if (rawMetricForCalib !== null && rawMetricForCalib > 0) {
-                calibrationSamplesRef.current.push(rawMetricForCalib);
-              }
-
-              // After calibration window, compute baseline and update thresholds
-              if (nowMs - calibrationStartMsRef.current >= calibrationWindowMs) {
-                const samples = calibrationSamplesRef.current;
-                if (samples.length >= 5) {
-                  // Use 10th percentile (not median) to find true resting baseline.
-                  // At rest the metric is at its minimum. Any movement during the
-                  // calibration window only pushes values higher. The 10th percentile
-                  // reliably captures the resting floor even if the patient starts
-                  // moving partway through the 2s window.
-                  const sorted = [...samples].sort((a, b) => a - b);
-                  const p10Index = Math.floor(sorted.length * 0.10);
-                  const baseline = sorted[p10Index];
-                  calibrationBaselineRef.current = baseline;
+                if (nowMs - calibrationStartMsRef.current >= calibrationWindowMs) {
                   calibrationCompleteRef.current = true;
-                  setCalibrationBaseline(baseline); // mirrors ref for external consumers
-
-                  // Recompute thresholds offset from real resting baseline.
-                  // romStart (e.g. 0°) is the anatomical rest — baseline is what
-                  // TensorFlow actually reads at that anatomical position.
-                  // We shift all thresholds by (baseline - romStart).
-                  const romStart = (activePrescription as any).romStartDegrees ?? 0;
-                  const offset = Math.max(0, baseline - romStart);
-                  const romMin = (activePrescription as any).romAcceptableMin;
-
-                  // Fix B: physio override (romTargetDegrees) takes priority over
-                  // population-level romAcceptableMin. buildPrescription already set
-                  // targetThreshold = romTargetDegrees ?? romMin, but calibration was
-                  // overwriting it back to romMin. Use the same priority here.
-                  const physioTarget = (activePrescription as any).romTargetDegrees ?? null;
-                  const effectiveTarget = physioTarget ?? romMin;
-
-                  if (effectiveTarget != null) {
-                    const start = baseline + 15;
-
-                    // For abduction exercises using the new wrist-based metric:
-                    // The metric reads ~5-8° at rest and scales naturally with arm elevation.
-                    // physioTarget is set in clinical degrees relative to anatomical zero.
-                    // Add only the small resting offset (baseline) not the full population offset.
-                    const isAbduction = activePrescription.id.includes("abduction");
-                    const target = isAbduction
-                      ? effectiveTarget + offset  // offset is small (~5-8°) for abduction — correct
-                      : effectiveTarget + offset; // flexion: same formula, larger offset (~15-20°)
-
-                    // finishThreshold: used during LOWERING to detect arms returned to rest.
-                    // Must be above resting noise floor (baseline ± 3-5°).
-                    const finish = Math.max(0, baseline + 10);
-
-                    // CRITICAL: Also set target.tolerance on the prescription so HOLDING
-                    // phase allows metric to drop from physio target back toward romMin
-                    // without immediately failing. Without this, a physio target of 135°+
-                    // calibrated offset makes hold impossible to sustain.
-                    // holdSustainFloor = romAcceptableMin + offset (population-level floor)
-                    // tolerance = target - holdSustainFloor (gap between trigger and floor)
-                    const holdSustainFloor = isAbduction
-                      ? (effectiveTarget ?? 70) + offset - 20  // abduction: 20° tolerance below target
-                      : (romMin ?? 110) + offset;              // flexion: population floor
-                    const holdTolerance = Math.max(10, target - holdSustainFloor);
-
-                    (activePrescription as any).startThreshold = start;
-                    (activePrescription as any).targetThreshold = target;
-                    (activePrescription as any).finishThreshold = finish;
-                    activePrescription.startThreshold = start;
-                    activePrescription.targetThreshold = target;
-                    activePrescription.finishThreshold = finish;
-                    // Update tolerance so hold sustains down to romAcceptableMin + offset
-                    if (activePrescription.target) {
-                      activePrescription.target.tolerance = holdTolerance;
-                    }
-
-                    // ── CALIBRATION DEBUG LOG ──────────────────────────────
-                    // This fires ONCE per exercise after calibration completes.
-                    // If you see wrong threshold values here, the calibration
-                    // window captured bad samples (patient was moving).
+                  const t = calibrateThresholds(calibrationSamplesRef.current, {
+                    romAcceptableMin: (activePrescription as any).romAcceptableMin ?? null,
+                    romTargetDegrees: (activePrescription as any).romTargetDegrees ?? null,
+                  });
+                  if (t) {
+                    applyThresholds(activePrescription, t);
+                    calibrationBaselineRef.current = t.baseline;
+                    setCalibrationBaseline(t.baseline);
                     console.log(
                       `[CALIBRATION COMPLETE] ex=${activePrescription.id}` +
-                      ` | baseline=${baseline.toFixed(1)}°` +
-                      ` | offset=${offset.toFixed(1)}°` +
-                      ` | samples=${samples.length}` +
-                      ` | start=${start.toFixed(1)}°` +
-                      ` | target=${target.toFixed(1)}°` +
-                      ` | finish=${finish.toFixed(1)}°` +
-                      ` | holdTolerance=${holdTolerance.toFixed(1)}°` +
-                      ` | holdFloor=${holdSustainFloor.toFixed(1)}°` +
-                      ` | physioTarget=${physioTarget ?? "population"}` +
-                      ` | verify: prescription.finishThreshold=${activePrescription.finishThreshold.toFixed(1)}°`
+                      ` | baseline=${t.baseline.toFixed(1)}° | samples=${calibrationSamplesRef.current.length}` +
+                      ` | start=${t.start.toFixed(1)}° | target=${t.target.toFixed(1)}°` +
+                      ` | finish=${t.finish.toFixed(1)}° | tolerance=${t.tolerance.toFixed(1)}°`
                     );
                   }
-                } else {
-                  // Not enough samples — mark complete to avoid blocking
-                  calibrationCompleteRef.current = true;
                 }
               }
             }
 
-            // ── Spike filter ───────────────────────────────────────────────
-            // TensorFlow occasionally produces single-frame landmark jumps that
-            // cause the metric to spike 50°+ in one frame (e.g. 15° → 103°).
-            // These spikes cause premature hold triggers. The interpreter reads
-            // metric from smoothedFeatures directly, so we clamp the relevant
-            // field back to the previous known-good value on spike frames.
-            const rawMetricThisFrame = (() => {
-              const id = activePrescription.id;
-              const f = smoothedFeatures;
-              if (id.includes("flexion")) {
-                if (id.includes("right")) return f.rightArmElevationDeg;
-                if (id.includes("left")) return f.leftArmElevationDeg;
-                return f.bilateralArmElevationDeg;
-              }
-              if (id.includes("abduction")) {
-                if (id.includes("right")) return f.rightShoulderAbductionDeg;
-                if (id.includes("left")) return f.leftShoulderAbductionDeg;
-                return f.bilateralShoulderAbductionDeg;
-              }
-              return null;
-            })();
-
-            // Spike threshold: 40° per frame for abduction (wrist-based metric
-            // is smoother than elbow-based), 50° for flexion and others.
-            const SPIKE_THRESHOLD_DEG = activePrescription.id.includes("abduction") ? 40 : 50;
-            if (
-              rawMetricThisFrame !== null &&
-              prevMetricValueRef.current !== null &&
-              Math.abs(rawMetricThisFrame - prevMetricValueRef.current) > SPIKE_THRESHOLD_DEG
-            ) {
-              // Clamp the spiked field back to previous value so the interpreter
-              // sees a stable reading — do not update prevMetricValueRef this frame
-              const id = activePrescription.id;
-              const prev = prevMetricValueRef.current;
-              if (id.includes("flexion")) {
-                if (id.includes("right")) smoothedFeatures.rightArmElevationDeg = prev;
-                else if (id.includes("left")) smoothedFeatures.leftArmElevationDeg = prev;
-                else {
-                  smoothedFeatures.bilateralArmElevationDeg = prev;
-                  smoothedFeatures.rightArmElevationDeg = prev;
-                  smoothedFeatures.leftArmElevationDeg = prev;
-                }
-              } else if (id.includes("abduction")) {
-                if (id.includes("right")) smoothedFeatures.rightShoulderAbductionDeg = prev;
-                else if (id.includes("left")) smoothedFeatures.leftShoulderAbductionDeg = prev;
-                else {
-                  smoothedFeatures.bilateralShoulderAbductionDeg = prev;
-                  smoothedFeatures.rightShoulderAbductionDeg = prev;
-                  smoothedFeatures.leftShoulderAbductionDeg = prev;
-                }
-              }
-            } else if (rawMetricThisFrame !== null) {
-              prevMetricValueRef.current = rawMetricThisFrame;
-            }
+            // ── Spike filter (lib/engine/calibration.ts) ────────────────
+            // Drops single-frame pose glitches on the fields this exercise
+            // reads; a change that lasts 3 frames is accepted.
+            spikeFilterRef.current.apply(smoothedFeatures, activeMetric);
 
             // Run movement interpreter
             const output = interpretMovement(

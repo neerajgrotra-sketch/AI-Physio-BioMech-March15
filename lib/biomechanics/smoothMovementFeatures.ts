@@ -1,3 +1,4 @@
+import { emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import type { MovementFeatures } from "@/lib/types/movement";
 
 function average(values: Array<number | null>): number | null {
@@ -40,42 +41,7 @@ function majorityPosture(
   return "unknown";
 }
 
-function emptyFeatures(): MovementFeatures {
-  return {
-    posture: "unknown",
-
-    rightArmElevationDeg: null,
-    leftArmElevationDeg: null,
-    bilateralArmElevationDeg: null,
-
-    rightShoulderAbductionDeg: null,
-    leftShoulderAbductionDeg: null,
-    bilateralShoulderAbductionDeg: null,
-
-    rightElbowAngleDeg: null,
-    leftElbowAngleDeg: null,
-
-    torsoLeanDeg: null,
-    shoulderTiltDeg: null,
-
-    rightWristAboveShoulder: false,
-    leftWristAboveShoulder: false,
-
-    rightWristToShoulderDy: null,
-    leftWristToShoulderDy: null,
-
-    hipCenterY: null,
-    hipHeightNormalized: null,
-
-    kneeAngleLeft: null,
-    kneeAngleRight: null,
-
-    hipVelocityY: null,
-
-    isStanding: false,
-    isSeated: false
-  };
-}
+const emptyFeatures = emptyMovementFeatures;
 
 export function smoothMovementFeatures(history: MovementFeatures[]): MovementFeatures {
   if (history.length === 0) {

@@ -27,7 +27,7 @@ function buildResult(
   };
 }
 
-function getMetricValue(
+export function getMetricValue(
   features: MovementFeatures,
   metric: MetricSource
 ): number | null {
@@ -88,6 +88,17 @@ function getMetricValue(
       return (left + right) / 2;
     }
 
+    case "rightKneeExtensionDeg":
+      return features.kneeAngleRight;
+
+    case "leftKneeExtensionDeg":
+      return features.kneeAngleLeft;
+
+    case "bilateralKneeExtensionDeg":
+      // Both legs must straighten: the lower of the two counts.
+      if (features.kneeAngleLeft === null || features.kneeAngleRight === null) return null;
+      return Math.min(features.kneeAngleLeft, features.kneeAngleRight);
+
     case "rightWristAboveShoulder":
     case "leftWristAboveShoulder":
     default:
@@ -95,7 +106,7 @@ function getMetricValue(
   }
 }
 
-function getEffectiveActiveMetricValue(
+export function getEffectiveActiveMetricValue(
   features: MovementFeatures,
   prescription: ExercisePrescription
 ): number | null {
@@ -148,9 +159,14 @@ function getBilateralParticipationOk(
 ): boolean {
   if (prescription.side !== "both") return true;
 
-  const isAbduction = prescription.id.includes("abduction");
-  const left = isAbduction ? features.leftShoulderAbductionDeg : features.leftArmElevationDeg;
-  const right = isAbduction ? features.rightShoulderAbductionDeg : features.rightArmElevationDeg;
+  // Each side of whatever joint this exercise measures.
+  const metric = prescription.target.metric;
+  const [left, right] =
+    metric === "bilateralShoulderAbductionDeg"
+      ? [features.leftShoulderAbductionDeg, features.rightShoulderAbductionDeg]
+      : metric === "bilateralKneeExtensionDeg" || metric === "kneeToHipExtensionScore"
+      ? [features.kneeAngleLeft, features.kneeAngleRight]
+      : [features.leftArmElevationDeg, features.rightArmElevationDeg];
 
   if (left === null || right === null) return false;
 
@@ -347,6 +363,18 @@ function interpretRiseHoldLower(
   if (repState.phase === "holding") {
     if (!balanceOk) {
       return buildResult(repState, activeMetricValue, null, "keep_balanced");
+    }
+
+    // Sat back down before the hold finished: the rep fails on the hold.
+    // (It used to pass on time alone, whatever the patient did.)
+    if (features.isSeated) {
+      repState.justFailedRep = true;
+      repState.lastRepEvaluation = { outcome: "failed", reason: "failed_hold" };
+      repState.phase = "ready";
+      repState.enteredTopAtMs = null;
+      repState.holdSatisfied = false;
+      repState.everReachedTarget = false;
+      return buildResult(repState, activeMetricValue, null, "rep_failed_hold");
     }
 
     const enteredAt = repState.enteredTopAtMs ?? frameContext.timestampMs;
