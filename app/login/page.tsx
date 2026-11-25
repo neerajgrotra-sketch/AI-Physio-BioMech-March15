@@ -50,10 +50,10 @@ function LoginForm() {
       email,
       password,
       options: {
+        // Only the name is sent. Role and clinic are decided by the
+        // database (handle_new_user), never by the browser.
         data: {
-          role: 'physio',
           full_name: fullName.trim(),
-          clinic_id: '00000000-0000-0000-0000-000000000001',
         }
       }
     })
