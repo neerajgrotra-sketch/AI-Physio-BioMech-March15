@@ -3,14 +3,16 @@
 import { useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import { BRAND, BrandLogo } from '@/components/brand/brand'
 
+// Light theme matching the landing page (components/brand/brand.tsx).
 const C = {
-  bg: '#0d1117', surface: '#161b22', surfaceHover: '#1c2230',
-  border: '#21262d', borderFocus: '#388bfd',
-  text: '#e6edf3', textMuted: '#7d8590',
-  blue: '#388bfd', blueDim: 'rgba(56,139,253,0.08)',
-  purple: '#a371f7',
-  red: '#f85149', redDim: 'rgba(248,81,73,0.12)',
+  bg: BRAND.off, surface: BRAND.white, surfaceHover: '#F1F2F8',
+  border: BRAND.border, borderFocus: BRAND.violet,
+  text: BRAND.ink, textMuted: BRAND.ink3,
+  blue: BRAND.violet, blueDim: 'rgba(108,99,255,0.08)',
+  purple: '#8B5CF6',
+  red: '#DC2626', redDim: 'rgba(220,38,38,0.08)',
 }
 
 function LoginForm() {
@@ -67,7 +69,7 @@ function LoginForm() {
 
   const inputStyle = {
     width: '100%', padding: '11px 14px', borderRadius: 8,
-    border: `1px solid ${C.border}`, background: C.bg,
+    border: `1px solid ${C.border}`, background: C.surface,
     color: C.text, fontSize: 14, outline: 'none',
     boxSizing: 'border-box' as const,
     fontFamily: 'inherit',
@@ -89,36 +91,22 @@ function LoginForm() {
       alignItems: 'center',
       justifyContent: 'center',
       padding: 24,
-      fontFamily: "'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      fontFamily: BRAND.fontBody,
+      backgroundImage: 'radial-gradient(ellipse 60% 40% at 50% 0%, rgba(108,99,255,0.08), transparent 70%)',
     }}>
 
       {/* ── Brand block ── */}
       <div style={{ textAlign: 'center', marginBottom: 40 }}>
 
-        {/* Logo mark — matches the admin header icon */}
-        <div style={{
-          width: 56, height: 56, borderRadius: 14,
-          background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 28, margin: '0 auto 16px',
-          boxShadow: `0 0 0 1px ${C.blue}30, 0 8px 32px rgba(56,139,253,0.25)`,
-        }}>
-          ⚡
-        </div>
-
-        {/* Product name */}
-        <div style={{
-          fontSize: 32, fontWeight: 800, color: C.text,
-          letterSpacing: '-0.03em', marginBottom: 8,
-        }}>
-          Rehably
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+          <BrandLogo size={44} href="/" />
         </div>
 
         {/* Tagline */}
         <div style={{
           fontSize: 13, fontWeight: 500,
           color: 'transparent',
-          background: `linear-gradient(90deg, ${C.blue}, ${C.purple})`,
+          background: BRAND.grad,
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           letterSpacing: '0.06em',
@@ -135,12 +123,12 @@ function LoginForm() {
         border: `1px solid ${C.border}`,
         borderRadius: 14,
         padding: 32,
-        boxShadow: '0 4px 40px rgba(0,0,0,0.4)',
+        boxShadow: BRAND.shadow,
       }}>
 
         {/* Card heading */}
         <div style={{ marginBottom: 24, textAlign: 'center' }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, fontFamily: BRAND.fontHead, letterSpacing: '-0.01em' }}>
             {mode === 'signin' ? 'Welcome back' : 'Create your account'}
           </div>
           <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>
@@ -162,7 +150,7 @@ function LoginForm() {
               fontSize: 13, fontWeight: mode === m ? 600 : 400,
               cursor: 'pointer', transition: 'all 0.15s',
               fontFamily: 'inherit',
-              boxShadow: mode === m ? `0 1px 4px rgba(0,0,0,0.3)` : 'none',
+              boxShadow: mode === m ? '0 1px 3px rgba(15,17,23,0.10)' : 'none',
             }}>
               {m === 'signin' ? 'Sign in' : 'Register'}
             </button>
@@ -222,10 +210,10 @@ function LoginForm() {
           disabled={loading || !email || !password}
           style={{
             width: '100%', marginTop: 24, padding: '12px 0',
-            borderRadius: 8, border: 'none',
+            borderRadius: 10, border: 'none',
             background: loading || !email || !password
               ? C.surfaceHover
-              : `linear-gradient(135deg, ${C.blue}, ${C.purple})`,
+              : BRAND.grad,
             color: loading || !email || !password ? C.textMuted : '#fff',
             fontSize: 14, fontWeight: 700,
             cursor: loading ? 'wait' : ((!email || !password) ? 'not-allowed' : 'pointer'),
@@ -233,7 +221,7 @@ function LoginForm() {
             letterSpacing: '0.01em',
             transition: 'opacity 0.15s',
             boxShadow: (!loading && email && password)
-              ? '0 4px 16px rgba(56,139,253,0.3)'
+              ? BRAND.glow
               : 'none',
           }}
         >

@@ -86,6 +86,14 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 - `lib/engine/readinessEngine.ts` and `framingMonitor.evaluatePrerequisites` are the older checks; the readiness text
   is still shown in the observation panel, `evaluatePrerequisites` is no longer called.
 
+## Look and feel
+
+- The signed-in app (login, admin, access pages) uses the landing page's light look: `components/brand/brand.tsx`
+  (`BRAND` colours and fonts, `BrandLogo`). The Inter and Plus Jakarta Sans fonts load once in `app/layout.tsx`. The
+  admin page maps its `C` tokens onto `BRAND`; use those tokens, not new hard-coded colours. The patient session
+  screen is still dark (to be restyled with the portrait redesign).
+- Parked ideas and decisions waiting on something are in `BACKLOG.md`.
+
 ## Database
 
 - `supabase/migrations/20261125000000_baseline_schema.sql` is the whole live schema (tables, functions, triggers, RLS

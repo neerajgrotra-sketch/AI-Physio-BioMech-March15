@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { ExerciseTemplate, CoachingStrings } from "@/lib/supabase/types";
+import { BRAND, BrandLogo } from "@/components/brand/brand";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,15 +75,16 @@ interface ExerciseResult {
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
+// Light theme matching the landing page (components/brand/brand.tsx).
 const C = {
-  bg: "#0d1117", surface: "#161b22", surfaceHover: "#1c2230",
-  border: "#21262d", borderFocus: "#388bfd",
-  text: "#e6edf3", textMuted: "#7d8590", textDim: "#484f58",
-  green: "#3fb950", greenDim: "rgba(63,185,80,0.12)",
-  blue: "#388bfd", blueDim: "rgba(56,139,253,0.12)",
-  orange: "#d29922", orangeDim: "rgba(210,153,34,0.12)",
-  red: "#f85149", redDim: "rgba(248,81,73,0.12)",
-  purple: "#a371f7", purpleDim: "rgba(163,113,247,0.12)",
+  bg: BRAND.off, surface: BRAND.white, surfaceHover: "#F1F2F8",
+  border: BRAND.border, borderFocus: BRAND.violet,
+  text: BRAND.ink, textMuted: BRAND.ink3, textDim: BRAND.ink4,
+  green: "#16A34A", greenDim: "rgba(22,163,74,0.10)",
+  blue: BRAND.violet, blueDim: "rgba(108,99,255,0.10)",
+  orange: "#D97706", orangeDim: "rgba(217,119,6,0.10)",
+  red: "#DC2626", redDim: "rgba(220,38,38,0.08)",
+  purple: "#8B5CF6", purpleDim: "rgba(139,92,246,0.10)",
 };
 
 const PATIENT_TYPE_LABELS: Record<string, string> = {
@@ -164,7 +166,7 @@ function UnitToggle({ value, options, onChange }: { value: string; options: stri
   return <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>{options.map(opt => <button key={opt} onClick={() => onChange(opt)} style={{ background: value === opt ? C.blue : "transparent", color: value === opt ? "#fff" : C.textMuted, border: "none", padding: "6px 12px", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>{opt}</button>)}</div>;
 }
 function Btn({ children, onClick, variant = "ghost", disabled, small, fullWidth }: { children: React.ReactNode; onClick?: () => void; variant?: "primary" | "ghost" | "danger" | "success"; disabled?: boolean; small?: boolean; fullWidth?: boolean; }) {
-  const s = { primary: { bg: C.blue, color: "#fff", border: C.blue }, ghost: { bg: "transparent", color: C.text, border: C.border }, danger: { bg: "transparent", color: C.red, border: C.red + "60" }, success: { bg: C.green, color: "#fff", border: C.green } }[variant];
+  const s = { primary: { bg: BRAND.grad, color: "#fff", border: "transparent" }, ghost: { bg: "transparent", color: C.text, border: C.border }, danger: { bg: "transparent", color: C.red, border: C.red + "60" }, success: { bg: C.green, color: "#fff", border: C.green } }[variant];
   return <button onClick={onClick} disabled={disabled} style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}`, borderRadius: 6, padding: small ? "4px 10px" : "8px 16px", fontSize: small ? 12 : 13, fontWeight: 500, fontFamily: "inherit", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap" as const, width: fullWidth ? "100%" : "auto" }}>{children}</button>;
 }
 function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
@@ -223,7 +225,7 @@ function PatientPhoto({ photoUrl, name, size = 64, editable = false, onUpload }:
 
   return (
     <div style={{ position: "relative", display: "inline-block" }}>
-      <div style={{ width: size, height: size, borderRadius: "50%", background: photoUrl ? "transparent" : `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.3, fontWeight: 700, color: "#fff", overflow: "hidden", border: `2px solid ${C.border}`, flexShrink: 0 }}>
+      <div style={{ width: size, height: size, borderRadius: "50%", background: photoUrl ? "transparent" : BRAND.grad, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.3, fontWeight: 700, color: "#fff", overflow: "hidden", border: `2px solid ${C.border}`, flexShrink: 0 }}>
         {photoUrl ? <img src={photoUrl} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
       </div>
       {editable && (
@@ -347,7 +349,7 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
   const scoreColor = score === null ? C.textMuted : score >= 80 ? C.green : score >= 60 ? C.orange : C.red;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 300, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,17,23,0.40)", zIndex: 300, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ width: "min(720px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
         {/* Header */}
@@ -477,7 +479,7 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
 
                         {/* Per-rep breakdown — expanded */}
                         {isExpanded && repTimeline.length > 0 && (
-                          <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 16px", background: "rgba(0,0,0,0.2)" }}>
+                          <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 16px", background: BRAND.off }}>
                             <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em", fontWeight: 700, marginBottom: 10 }}>Per-Rep Detail</div>
                             <div style={{ overflowX: "auto" as const }}>
                               <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 12 }}>
@@ -767,7 +769,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
   const filterBtnStyle = (active: boolean) => ({ padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer" as const, border: "none", background: active ? C.blue + "22" : "transparent", color: active ? C.blue : C.textMuted, outline: active ? `1px solid ${C.blue}44` : "1px solid transparent" });
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,17,23,0.40)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ width: "min(600px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
           <PatientPhoto photoUrl={patient.photo_url} name={patient.full_name} size={56} />
@@ -1131,7 +1133,7 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
       )}
 
       {builderOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) cancelEdit(); }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,17,23,0.40)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) cancelEdit(); }}>
           <div style={{ width: "min(640px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
               <div>
@@ -1426,7 +1428,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
 
       {/* ── Edit / Customise panel ── */}
       {editingTemplate && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) setEditingTemplate(null); }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,17,23,0.40)", zIndex: 200, display: "flex", justifyContent: "flex-end" }} onClick={e => { if (e.target === e.currentTarget) setEditingTemplate(null); }}>
           <div style={{ width: "min(500px, 100vw)", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1444,7 +1446,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
                   {(editingTemplate as any).media_url && (
                     <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}` }}>
                       <img src={(editingTemplate as any).media_url} alt="Exercise reference" style={{ width: "100%", maxHeight: 160, objectFit: "cover", display: "block" }} />
-                      <button onClick={() => setEditingTemplate(t => t ? { ...t, media_url: null } as any : t)} style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                      <button onClick={() => setEditingTemplate(t => t ? { ...t, media_url: null } as any : t)} style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: "50%", background: "rgba(15,17,23,0.40)", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                     </div>
                   )}
                   <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 6, border: `1px dashed ${C.border}`, cursor: "pointer", color: C.textMuted, fontSize: 12 }}>
@@ -1549,22 +1551,24 @@ export default function AdminPage() {
     : "?";
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: BRAND.fontBody }}>
+      {/* One tab bar per screen size (both used to show on desktop) */}
+      <style>{`
+        @media (min-width: 721px) { .rb-mob-tabs { display: none !important; } }
+        @media (max-width: 720px) { .rb-desk-tabs { visibility: hidden; } }
+      `}</style>
 
       {/* ── Nav bar ── */}
-      <div style={{ borderBottom: `1px solid ${C.border}`, padding: "0 16px", display: "flex", alignItems: "center", height: 56, position: "sticky", top: 0, background: C.bg, zIndex: 50, gap: 8 }}>
+      <div style={{ borderBottom: `1px solid ${C.border}`, padding: "0 16px", display: "flex", alignItems: "center", height: 56, position: "sticky", top: 0, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", zIndex: 50, gap: 8 }}>
 
         {/* Logo */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚡</div>
-          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Rehably</span>
-        </div>
+        <BrandLogo size={30} href="/admin" />
 
         {/* Desktop tabs — hidden on mobile via media query workaround: use flex with overflow hidden */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden", gap: 2 }}>
+        <div className="rb-desk-tabs" style={{ display: "flex", flex: 1, overflow: "hidden", gap: 2 }}>
           {tabs.map(({ key, label, icon }) => (
             <button key={key} onClick={() => { setActiveTab(key); loadShared(); setMobileMenuOpen(false); }}
-              style={{ background: activeTab === key ? C.surfaceHover : "transparent", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "0 14px", height: 56, color: activeTab === key ? C.text : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, flexShrink: 0, transition: "all 0.15s" }}>
+              style={{ background: "transparent", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "0 14px", height: 56, color: activeTab === key ? C.blue : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, flexShrink: 0, transition: "all 0.15s" }}>
               <span style={{ fontSize: 14 }}>{icon}</span>
               <span className="tab-label">{label}</span>
             </button>
@@ -1574,7 +1578,7 @@ export default function AdminPage() {
         {/* Right side: avatar + sign out */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
           {physioName && (
-            <div style={{ width: 30, height: 30, borderRadius: "50%", background: `linear-gradient(135deg, ${C.blue}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }} title={physioName}>
+            <div style={{ width: 30, height: 30, borderRadius: "50%", background: BRAND.grad, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }} title={physioName}>
               {initials}
             </div>
           )}
@@ -1590,7 +1594,7 @@ export default function AdminPage() {
       </div>
 
       {/* ── Mobile tab bar (below nav, always visible on small screens) ── */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: C.surface, overflowX: "auto" as const, WebkitOverflowScrolling: "touch" as any }}>
+      <div className="rb-mob-tabs" style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: C.surface, overflowX: "auto" as const, WebkitOverflowScrolling: "touch" as any }}>
         {tabs.map(({ key, label, icon }) => (
           <button key={key} onClick={() => { setActiveTab(key); loadShared(); }}
             style={{ flex: "0 0 auto", background: "none", border: "none", borderBottom: activeTab === key ? `2px solid ${C.blue}` : "2px solid transparent", padding: "10px 20px", color: activeTab === key ? C.blue : C.textMuted, fontSize: 13, fontWeight: activeTab === key ? 600 : 400, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const }}>
