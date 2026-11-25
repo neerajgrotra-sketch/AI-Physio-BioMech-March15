@@ -62,12 +62,29 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 - Knee templates store ROM as **flexion** (90 bent, 0 straight; `rom_acceptable_min` 30 = within 30° of straight).
   `lib/exercises/kneeThresholds.ts` converts to the interior angle the app measures. A physio knee target of 90 or
   less is read as flexion, above 90 as an interior angle.
-- `exercise_templates.camera_position` says `front` for shoulder flexion, but flexion can only be measured from the
-  side; and the app does not yet read `camera_position` at all. `measurement_spec` is not read at runtime either (and
-  is wrong for several rows). Both are known; fix them with the positioning work.
+- The camera side and set-up for each exercise are decided in code by `positionSetupFor`
+  (`lib/positioning/positionCoach.ts`), from the metric; `exercise_templates.camera_position` is display only (it was
+  corrected to match by `20261125000200_camera_position_fixes.sql`). `measurement_spec` is not read at runtime (and is
+  wrong for several rows).
 - `lib/exercises/exerciseLibrary.ts` and `lib/exercises/definitions/*` are the older, hard-coded exercise set
   (`right-arm-raise` etc.), still used by `SessionRunner`/`SessionBuilder` for the local demo flow. The live sessions
   use the Supabase templates.
+
+## Positioning (getting the patient where the camera can measure)
+
+- `lib/positioning/positionCoach.ts`: `assessPosition` (pure, one frame) gives the first thing to fix, in order: in
+  view, facing the right way (front or side, and which side toward the camera), fits top to bottom with room for the
+  movement's peak (arms overhead, standing up), not too far, room left and right, seated or standing. `PositionTracker`
+  steadies it: an instruction must last 500 ms before it replaces the last, and a good position held still for 1.5 s
+  locks in (a problem must then last 1.2 s to unlock). Tests: `positionCoach.test.ts`.
+- Directions: front view in the patient's own terms ("step to your left": raw image-left is the patient's right);
+  side view in screen terms. Arrows are in display terms; the preview is mirrored (`assessPosition(..., { mirrored })`).
+- Wiring: `useFramingIntelligence.evaluateFraming` runs the tracker every ready-phase frame and turns it into the
+  `PrerequisiteResult` that the inference loop and `SessionRunner` already use (met = locked). The loop's gate stops the
+  rep state machine before the first rep until it is met, and the voice repeats the short instruction every 8 s while a
+  problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrow, instruction and hold ring.
+- `lib/engine/readinessEngine.ts` and `framingMonitor.evaluatePrerequisites` are the older checks; the readiness text
+  is still shown in the observation panel, `evaluatePrerequisites` is no longer called.
 
 ## Database
 
@@ -89,9 +106,6 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 
 - `/api/coach` and `/api/tts` are open to anyone (patients use them without logging in), so they can run up the OpenAI
   bill. They need a check, such as a valid session id and a rate limit.
-- Positioning: `readinessEngine`, `framingMonitor.evaluatePrerequisites` and the AI framing evaluator overlap; none
-  checks the camera angle (front vs side) or that the peak of the movement will stay in frame, and distance checks use
-  raw normalised coordinates. This is the next piece of work.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
 
 ## Branches and deploys

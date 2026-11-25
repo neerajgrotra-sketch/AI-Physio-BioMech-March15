@@ -12,6 +12,7 @@ import React, {
   useCallback
 } from "react";
 
+import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -2198,6 +2199,13 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                   width={640} height={480}
                   style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: sessionQueue.sessionStarted ? 1 : 0, transition: "opacity 0.5s ease" }}
                 />
+                {/* Positioning coach: until the patient is placed and still (before the first rep) */}
+                {framingIntelligence.positionGuide &&
+                  framingIntelligence.positionGuide.state !== "locked" &&
+                  (sessionPhase === "framing" || sessionPhase === "running") &&
+                  inferenceLoop.repCount === 0 && (
+                    <PositionGuideOverlay guide={framingIntelligence.positionGuide} />
+                  )}
               </div>
               {inferenceLoop.engineError && (
                 <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>

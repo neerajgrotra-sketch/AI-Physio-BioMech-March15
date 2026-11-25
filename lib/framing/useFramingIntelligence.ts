@@ -11,7 +11,22 @@
 
 import { useRef, useState, useCallback } from "react";
 
-import { FramingMonitor, evaluatePrerequisites } from "@/lib/framing/framingMonitor";
+import { FramingMonitor } from "@/lib/framing/framingMonitor";
+import {
+  assessPosition, positionSetupFor, PositionTracker, silhouetteFor, setupInstruction,
+  type PositionIssue, type PositionState, type Silhouette,
+} from "@/lib/positioning/positionCoach";
+
+// What the on-screen position guide draws (components/session/PositionGuideOverlay.tsx).
+export type PositionGuide = {
+  state: PositionState;
+  issue: PositionIssue | null;
+  progress: number;        // 0..1 toward locking in
+  silhouette: Silhouette;
+  setupLine: string;
+  videoWidth: number;
+  videoHeight: number;
+};
 import type { PrerequisiteResult } from "@/lib/framing/framingMonitor";
 import { FramingEvaluator } from "@/lib/framing/framingEvaluator";
 import type { PatientProfile } from "@/lib/patient/patientTypes";
@@ -123,6 +138,13 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     failures: []
   });
   const prerequisiteResultRef = useRef<PrerequisiteResult>({ allMet: true, failures: [] });
+
+  // Positioning coach (lib/positioning/positionCoach.ts): one tracker per
+  // exercise, so a new exercise (say, the other side) asks again.
+  const positionTrackerRef = useRef(new PositionTracker());
+  const positionForIdRef = useRef<string | null>(null);
+  const [positionGuide, setPositionGuide] = useState<PositionGuide | null>(null);
+  const positionGuideKeyRef = useRef<string>("");
 
   // Live refs — updated every frame so delayed checks read current data
   const liveFrameRef        = useRef<PoseFrame | null>(null);
@@ -264,9 +286,14 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       window.clearTimeout(voiceTimeoutRef.current);
       voiceTimeoutRef.current = null;
     }
-    const initial: PrerequisiteResult = { allMet: true, failures: [] };
+    // Not met until the positioning coach has seen the patient in place.
+    const initial: PrerequisiteResult = { allMet: false, failures: [] };
     prerequisiteResultRef.current = initial;
     setPrerequisiteResult(initial);
+    positionTrackerRef.current.reset();
+    positionForIdRef.current = null;
+    positionGuideKeyRef.current = "";
+    setPositionGuide(null);
     setFramingPanelState(buildPanelState(message, "warning", false));
   }, []);
 
@@ -336,10 +363,46 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
     sampleLandmarkConfidence(frame, prescription);
 
-    // Run prerequisite check every frame — pure function, cheap
-    const prereqResult = evaluatePrerequisites(prescription, frame, features);
+    // Positioning coach, every frame: the first thing to fix, steadied
+    // over time; "met" only once the patient is placed and has held still.
+    if (positionForIdRef.current !== prescription.id) {
+      positionForIdRef.current = prescription.id;
+      positionTrackerRef.current.reset();
+    }
+    const setup = positionSetupFor(prescription);
+    // The preview is mirrored (front camera): see CameraViewport.
+    const assessment = assessPosition(frame, setup, { mirrored: true });
+    const tracked = positionTrackerRef.current.update(assessment, nowMs);
+    const prereqResult: PrerequisiteResult = {
+      allMet: tracked.state === "locked",
+      failures: tracked.issue
+        ? [{
+            id: tracked.issue.id,
+            patientMessage: tracked.issue.say,
+            retryMessage: tracked.issue.retry,
+            clinicalNote: `position: ${tracked.state} (${tracked.issue.id})`,
+          }]
+        : [],
+    };
+    const prev = prerequisiteResultRef.current; // a ref: this callback's state would be stale
     prerequisiteResultRef.current = prereqResult;
-    setPrerequisiteResult(prereqResult);
+    if (prev.allMet !== prereqResult.allMet || prev.failures[0]?.id !== prereqResult.failures[0]?.id) {
+      setPrerequisiteResult(prereqResult);
+    }
+    const guide: PositionGuide = {
+      state: tracked.state,
+      issue: tracked.issue,
+      progress: Math.round(tracked.progress * 20) / 20,
+      silhouette: silhouetteFor(setup),
+      setupLine: setupInstruction(setup),
+      videoWidth: frame?.sourceWidth ?? 1280,
+      videoHeight: frame?.sourceHeight ?? 720,
+    };
+    const key = `${guide.state}|${guide.issue?.id ?? ""}|${guide.progress}|${guide.silhouette}|${guide.videoWidth}x${guide.videoHeight}`;
+    if (key !== positionGuideKeyRef.current) {
+      positionGuideKeyRef.current = key;
+      setPositionGuide(guide);
+    }
 
     // When prerequisites fail, show the specific instruction in the framing panel
     // and skip the generic monitor evaluation. Throttle the debug log to 2s.
@@ -444,6 +507,8 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
     // by SessionRunner via state
     prerequisiteResult,
     prerequisiteResultRef,
+    // Positioning coach state for the on-screen guide
+    positionGuide,
   };
 }
 

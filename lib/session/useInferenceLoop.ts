@@ -233,7 +233,7 @@ export type FramingEventCallbacks = {
   ) => void;
   cancelPendingEval: () => void;
   // Returns the most recent prerequisite result — read via ref, zero cost.
-  getPrerequisiteResult: () => { allMet: boolean; failures: Array<{ id: string; patientMessage: string; clinicalNote: string }> };
+  getPrerequisiteResult: () => { allMet: boolean; failures: Array<{ id: string; patientMessage: string; clinicalNote: string; retryMessage?: string }> };
 };
 
 // ============================================================
@@ -296,7 +296,7 @@ export function useInferenceLoop() {
   const prereqVoiceStateRef   = useRef<"unsaid" | "spoken_initial" | "waiting" | "spoken_retry" | "exhausted">("unsaid");
   const prereqVoiceSpokenAtMs = useRef<number | null>(null);
   const prereqLastFailureId   = useRef<string | null>(null);
-  const PREREQ_RETRY_DELAY_MS = 12000;
+  const PREREQ_RETRY_DELAY_MS = 8000;
 
   // ── Dynamic rest baseline calibration ─────────────────────────────────────
   // Sample activeMetricValue for 2s after exercise start to compute the true
@@ -529,6 +529,24 @@ export function useInferenceLoop() {
               }
             );
 
+            // Position gate (before the first rep): until the patient is
+            // in position and has held still (lib/positioning), the rep
+            // state machine does not move. The gate used to run AFTER this
+            // update, so it never actually held anything back.
+            const gateClosed =
+              repStateRef.current.phase === "ready" &&
+              repStateRef.current.repCount === 0 &&
+              !framingCallbacks.getPrerequisiteResult().allMet;
+            if (gateClosed) {
+              output.repState = {
+                ...repStateRef.current,
+                justCompletedRep: false,
+                justFailedRep: false,
+                justCompletedHold: false,
+                lastRepEvaluation: { outcome: "none", reason: null },
+              };
+            }
+
             repStateRef.current = output.repState;
 
             const currentPhase = output.repState.phase;
@@ -760,16 +778,17 @@ export function useInferenceLoop() {
                 } else if (vs === "spoken_initial" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
                   prereqVoiceStateRef.current = "waiting";
                 } else if (vs === "waiting") {
-                  const retry = buildPrereqRetryMessage(failure.id);
+                  const retry = failure.retryMessage ?? buildPrereqRetryMessage(failure.id);
                   speakOnce(retry);
                   prereqVoiceStateRef.current   = "spoken_retry";
                   prereqVoiceSpokenAtMs.current = nowMs;
                   console.log(`[PREREQ GATE] retry | id=${failure.id} | "${retry}"`);
                 } else if (vs === "spoken_retry" && spokenAt !== null && nowMs - spokenAt >= PREREQ_RETRY_DELAY_MS) {
-                  prereqVoiceStateRef.current = "exhausted";
-                  console.log(`[PREREQ GATE] exhausted | id=${failure.id} | visual only`);
+                  // Keep guiding: repeat the short version every
+                  // PREREQ_RETRY_DELAY_MS for as long as the problem lasts.
+                  // (It used to go silent after two tries.)
+                  prereqVoiceStateRef.current = "waiting";
                 }
-                // "exhausted" — panel shows message, no more speech
 
                 // Block interpretMovement this frame only
                 // Jump to readiness/observation panel below

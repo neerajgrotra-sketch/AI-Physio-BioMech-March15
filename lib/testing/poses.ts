@@ -138,3 +138,18 @@ export function flexionSide(deg: number, side: "right" | "left" | "both" = "righ
   }
   return b;
 }
+
+/**
+ * Scales a body about its own centre and moves that centre to (cx, cy) px.
+ * Lets a test put the same pose near, far, or off to one side.
+ */
+export function place(body: PixelBody, scale: number, cx: number, cy: number): PixelBody {
+  const pts = Object.values(body) as Px[];
+  const mx = (Math.min(...pts.map((p) => p.x)) + Math.max(...pts.map((p) => p.x))) / 2;
+  const my = (Math.min(...pts.map((p) => p.y)) + Math.max(...pts.map((p) => p.y))) / 2;
+  const out: PixelBody = {};
+  for (const [k, p] of Object.entries(body) as Array<[LandmarkName, Px]>) {
+    out[k] = { x: cx + (p.x - mx) * scale, y: cy + (p.y - my) * scale };
+  }
+  return out;
+}

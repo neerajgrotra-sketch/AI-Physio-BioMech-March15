@@ -58,6 +58,7 @@ export type PrerequisiteFailure = {
   id: string;
   patientMessage: string;   // Spoken aloud to patient
   clinicalNote: string;     // Debug panel only
+  retryMessage?: string;    // Shorter repeat, spoken while the problem lasts
 };
 
 export type PrerequisiteResult = {
