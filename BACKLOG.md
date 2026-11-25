@@ -2,6 +2,14 @@
 
 Parked ideas and decisions waiting on something. Newest first.
 
+## Session screen layout (owner's note 2026-11-25)
+
+The current session screen (`SessionRunner`: header with Begin Session, camera panel, Live Coaching, Camera Sees,
+Session Details table, and the developer logs underneath: Ghost Intelligence, Rep Cycle Log, Debug Log, Movement
+Timeline) is not very functional for patients. Fine for the proof-of-concept stage. Replace it with the portrait
+patient screen from the mockups, and move the developer logs behind a hidden debug switch (keep them: they are how
+we diagnose real-camera tests).
+
 ## Expected ROM and Encourage-to ROM (problem area, owner's note 2026-11-25)
 
 Set per exercise when a protocol is assigned to a patient (admin, Patients → Assign Protocol; saved as
