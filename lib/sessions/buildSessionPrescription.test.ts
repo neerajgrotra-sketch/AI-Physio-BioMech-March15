@@ -233,3 +233,27 @@ describe("the exercise library's Clinical Setup is honoured", () => {
     expect(p.posture).not.toBe("standing");
   });
 });
+
+describe("at a desk: the owner's test (front view, hand resting on the desk between reps)", () => {
+  const slug = "shoulder_flexion_right";
+  const p = (() => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+  })();
+  const near = { seated: true, camPx: 700 };
+  const DESK = 35; // upper arm ~35° forward with the hand on the desk
+
+  it("three reps from a desk rest all count", () => {
+    const h = p.hold.durationMs + 600;
+    const rep: Array<[number, (u: number) => number]> = [[1200, ramp(DESK, 140)], [h, hold(140)], [1200, ramp(140, DESK)], [1000, hold(DESK)]];
+    const pts = timeline([
+      [2500, hold(3)],      // sitting down, arm hanging, not yet in position
+      [3500, hold(DESK)],   // in position, hand on the desk
+      ...rep, ...rep, ...rep,
+    ]);
+    const fr = pts.map(({ t, v }) => frameFromPixels(flexionFront(v, near), 1280, 720, { timestamp: t }));
+    const r = replay(p, fr, { positioned: (i) => pts[i].t >= 2500 });
+    expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(3);
+  });
+});

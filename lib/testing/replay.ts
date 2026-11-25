@@ -21,7 +21,17 @@ export const CALIBRATION_WINDOW_MS = 3000; // same as useInferenceLoop
 
 export type ReplayEvent = { t: number; kind: "rep" | "fail" | "hold"; reason?: string | null };
 
-export function replay(prescription: ExercisePrescription, frames: PoseFrame[]) {
+/**
+ * `positioned(i)` stands in for the positioning coach's lock (the live
+ * loop calibrates, and lets the first rep start, only once the patient is
+ * placed). Default: always placed.
+ */
+export function replay(
+  prescription: ExercisePrescription,
+  frames: PoseFrame[],
+  opts: { positioned?: (i: number) => boolean } = {}
+) {
+  const positioned = opts.positioned ?? (() => true);
   const p: ExercisePrescription = structuredClone(prescription);
   let rep = createInitialRepState();
   const history = new FeatureHistory(5);
@@ -33,14 +43,14 @@ export function replay(prescription: ExercisePrescription, frames: PoseFrame[]) 
   const events: ReplayEvent[] = [];
   const metric: Array<number | null> = [];
 
-  for (const frame of frames) {
+  for (const [i, frame] of frames.entries()) {
     const now = frame.timestamp;
     if (frame.personDetected) history.push(extractMovementFeatures(frame));
     else history.clear();
     const f = frame.personDetected ? smoothMovementFeatures(history.getAll()) : emptyMovementFeatures();
     if (frame.personDetected) view.apply(f);
 
-    if (frame.personDetected && !calibrated) {
+    if (frame.personDetected && positioned(i) && !calibrated) {
       if (calibrationKindFor(p.target.metric) === "none") calibrated = true;
       else {
         calibStart ??= now;
@@ -62,7 +72,10 @@ export function replay(prescription: ExercisePrescription, frames: PoseFrame[]) 
     const out = interpretMovement(rep, f, p, {
       timestampMs: now, personDetected: frame.personDetected, balanceOk: true, activeMetricValue: null,
     });
-    rep = out.repState;
+    // Position gate, as in the loop: before the first rep, nothing moves
+    // until the patient is placed.
+    const gateClosed = rep.phase === "ready" && rep.repCount === 0 && !positioned(i);
+    rep = gateClosed ? { ...rep, justCompletedRep: false, justFailedRep: false, justCompletedHold: false } : out.repState;
     metric.push(out.activeMetricValue);
     if (rep.justCompletedRep) events.push({ t: now, kind: "rep" });
     if (rep.justFailedRep) events.push({ t: now, kind: "fail", reason: rep.lastRepEvaluation.reason });

@@ -163,11 +163,13 @@ export function place(body: PixelBody, scale: number, cx: number, cy: number): P
  */
 export function flexionFront(
   deg: number,
-  opts: { side?: "right" | "left" | "both"; outDeg?: number; seated?: boolean; restDeg?: number } = {}
+  opts: { side?: "right" | "left" | "both"; outDeg?: number; seated?: boolean; restDeg?: number; camPx?: number } = {}
 ): PixelBody {
   const side = opts.side ?? "right";
   const base = opts.seated ? seatedFront() : standingFront({ rightArmDeg: 0, leftArmDeg: 0 });
-  const CAM = 6800; // camera distance in px at the body's depth (~2.5 m)
+  // Camera distance in px at the body's depth: 6800 is ~2.5 m; ~700 is a
+  // laptop at arm's length (~0.8 m), where perspective is strong.
+  const CAM = opts.camPx ?? 6800;
   const out = rad(opts.outDeg ?? 0);
   const project = (sh: Px, p3: { x: number; y: number; z: number }): Px => {
     const k = CAM / (CAM - p3.z); // z = toward the camera

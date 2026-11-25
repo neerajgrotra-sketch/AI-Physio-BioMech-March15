@@ -13,6 +13,7 @@ import React, {
 } from "react";
 
 import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
+import { drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
   type CameraViewportHandle
@@ -87,7 +88,7 @@ function writeDebugLog(level: LogLevel, category: string, message: string, detai
     }),
     level, category, message, detail
   };
-  globalDebugLog = [entry, ...globalDebugLog].slice(0, 500);
+  globalDebugLog = [entry, ...globalDebugLog].slice(0, 1500); // ~10 min with the 1 s TRACE
   if (globalSetDebugLog) globalSetDebugLog([...globalDebugLog]);
 }
 
@@ -522,7 +523,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostFrameInitRef    = useRef<boolean>(false);
   const ghostRepCountRef   = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
   const ghostPrevPhaseRef  = useRef<string>("");  // detect phase transitions for debug log
-  const ghostReadyStartRef = useRef<number>(0);  // when ready phase started, for animation after wait
+  const ghostReadyStartRef = useRef<number>(0);
+  const lastTraceMsRef = useRef<number>(0);  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
   const ghostTransitionRef = useRef<{ active: boolean; startMs: number; fromGhostT: number }>({
     active: false, startMs: 0, fromGhostT: 0,
@@ -1269,7 +1271,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
   // to diagnose framing and engine issues without any copy-paste.
   // ============================================================
 
-  async function flushDebugLogToSupabase(reason: "session_end" | "pause" | "error" | "manual" | "page_hidden") {
+  async function flushDebugLogToSupabase(reason: "session_end" | "pause" | "error" | "manual" | "page_hidden" | "periodic") {
     if (!prescriptionId) return; // no session ID — can't associate the log
     try {
       const supabase = getSupabaseClient();
@@ -1312,7 +1314,16 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
       }
     };
     document.addEventListener("visibilitychange", onHide);
-    return () => document.removeEventListener("visibilitychange", onHide);
+    // And every 30 s while it runs, so every test run reaches Supabase even
+    // if the tab is left open (each row holds the whole log so far; read the
+    // newest row per session).
+    const timer = sessionQueue.sessionStarted
+      ? window.setInterval(() => { if (globalDebugLog.length > 0) void flushRef.current("periodic"); }, 30000)
+      : null;
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      if (timer !== null) window.clearInterval(timer);
+    };
   }, [sessionQueue.sessionStarted]);
 
   async function beginCombinedSession() {
@@ -1599,6 +1610,24 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         writeDebugLog("FRAMING_SNAP", "FRAMING", headline, detail);
       }
 
+      // ── 3b. Measurement trace (every 1 s while running) ─────────────────
+      // What the rep logic sees, so a saved test run shows why a rep did or
+      // didn't count: phase, the measured angle, the thresholds in force,
+      // which way the patient faces, the learned arm length, the lock.
+      if (sessionPhaseRef.current === "running" && snapNow - lastTraceMsRef.current >= 1000) {
+        lastTraceMsRef.current = snapNow;
+        const p = ghostPrescriptionRef.current;
+        const side = (p?.side === "left" ? "left" : "right") as "left" | "right";
+        const m = ghostActiveMetricRef.current;
+        const L = inferenceLoop.getArmLength(side);
+        writeDebugLog("info", "TRACE",
+          `${ghostPhaseInfRef.current} | metric=${m === null ? "null" : m.toFixed(1)} | start=${p?.startThreshold?.toFixed(1) ?? "?"} ` +
+          `target=${p?.targetThreshold?.toFixed(1) ?? "?"} finish=${p?.finishThreshold?.toFixed(1) ?? "?"} | ` +
+          `view=${inferenceLoop.getFacingView() ?? "?"} arm=${L === null ? "?" : L.toFixed(3)} | ` +
+          `placed=${framingIntelligence.prerequisiteResultRef.current.allMet} reps=${ghostRepCountRef.current} | ` +
+          `baseline=${inferenceLoop.calibrationBaselineRef.current.toFixed(1)}`);
+      }
+
       // ── 4. Landmarks ──────────────────────────────────────────────────────
       const rawLms = poseFrameToLandmarkArray(frame);
       const lms    = mirrorLandmarks(rawLms);
@@ -1610,8 +1639,15 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
       // Facing the camera, a forward raise comes toward the lens. The ghost
       // draws the arm sweeping across the image, which from the front would
-      // demonstrate the wrong movement (a sideways raise), so it is not drawn.
+      // demonstrate the wrong movement (a sideways raise), so instead a
+      // "Reach here" line shows how high the hand must go (lib/pose/reachGuide).
       if (slug.startsWith("shoulder_flexion") && inferenceLoop.getFacingView() === "front") {
+        const target = ghostPrescriptionRef.current?.targetThreshold ?? 110;
+        const metricNow = ghostActiveMetricRef.current;
+        for (const side of config.sides) {
+          const y = reachLineY(frame, side, inferenceLoop.getArmLength(side), target);
+          if (y !== null) drawReachGuide(ctx, frame, side, y, metricNow !== null && metricNow >= target, target, W, H, now);
+        }
         ghostAnimRef.current = requestAnimationFrame(tick);
         return;
       }

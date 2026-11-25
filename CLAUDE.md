@@ -35,10 +35,12 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
 3. `lib/biomechanics/smoothMovementFeatures.ts`: average of the last 5 frames. Then
    `lib/biomechanics/flexionView.ts` (`FlexionViewEstimator`): when the patient faces the camera, arm elevation is
    replaced by `acos(elbow drop / arm length)` (drop and the seen upper-arm length in torso lengths; the arm length is
-   learned as a high percentile of the seen length, since an arm never looks longer than it is). Side on, the plain
+   learned as a high percentile of the seen length in frames where the arm hangs down). Side on, the plain
    2D angle is kept. Which way they face: shoulder width / torso, side under 0.35, front over 0.5.
-4. `lib/engine/calibration.ts`: for arm exercises, a 3 s resting baseline sets start / target / finish
-   (`calibrateThresholds`; the target is never shifted by the baseline). Then `FeatureSpikeFilter` drops one-frame
+4. `lib/engine/calibration.ts`: for arm exercises, a 3 s resting baseline, taken once the patient is placed (the
+   positioning lock), sets start / target / finish (`calibrateThresholds`; the target is never shifted by the baseline;
+   finish = baseline + 30% of the way to the target, so a hand resting on a desk between reps still finishes a rep;
+   baseline capped at 45). Then `FeatureSpikeFilter` drops one-frame
    glitches on the fields the exercise reads.
 5. `lib/interpreter/movementInterpreter.ts` + `repStateMachine.ts`: the rep state machine (ready -> lifting -> top ->
    holding -> lowering), pass or fail with a reason (height, hold, balance, isolation, bilateral participation).
@@ -82,7 +84,8 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   view, facing the right way (front or side, and which side toward the camera), fits top to bottom with room for the
   movement's peak (arms overhead, standing up), not too far, room left and right, seated or standing. `PositionTracker`
   steadies it: an instruction must last 500 ms before it replaces the last, and a good position held still for 1.5 s
-  locks in (a problem must then last 1.2 s to unlock). Tests: `positionCoach.test.ts`.
+  locks in. Once locked, small shifts (`TOLERATED_WHEN_LOCKED`: off centre, a little far) never unlock, and a real
+  problem must last 3 s (`UNLOCK_AFTER_MS`). Tests: `positionCoach.test.ts`.
 - Directions: front view in the patient's own terms ("step to your left": raw image-left is the patient's right);
   side view in screen terms. Arrows are in display terms; the preview is mirrored (`assessPosition(..., { mirrored })`).
 - Wiring: `useFramingIntelligence.evaluateFraming` runs the tracker every ready-phase frame and turns it into the
@@ -91,8 +94,11 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrow, instruction and hold ring.
 - One thing at a time on the camera panel (`SessionRunner`: `positioningOnScreen`, `exerciseOnScreen`): while being
   positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
-  patient is placed, and the ghost's demo timer starts then. Facing the camera, the ghost is not drawn for forward
-  raises (it would sweep the arm sideways, demonstrating the wrong movement).
+  patient is placed, and the ghost's demo timer starts then. Facing the camera, forward raises get a "Reach here" line
+  instead of the ghost (`lib/pose/reachGuide.ts`; the ghost would sweep the arm sideways, the wrong movement).
+- Test logs: the debug log is saved to `session_debug_logs` every 30 s while running, when the tab is hidden, and at
+  the end (read the newest row per session). It starts with an `APP` entry (version, commit) and has a `TRACE` line
+  each second: phase, metric, start / target / finish, view, learned arm length, placed, reps, baseline.
 - `lib/engine/readinessEngine.ts` and `framingMonitor.evaluatePrerequisites` are the older checks; the readiness text
   is still shown in the observation panel, `evaluatePrerequisites` is no longer called.
 

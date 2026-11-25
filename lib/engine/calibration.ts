@@ -48,10 +48,15 @@ export function featureKeysFor(metric: MetricSource): Array<keyof MovementFeatur
   }
 }
 
-// A resting arm should read well under this. If the 10th percentile of
-// the calibration window is higher, the patient was moving (or already
-// had the arm up) and the reading is capped so the targets stay sane.
-export const MAX_BASELINE_DEG = 30;
+// A resting arm reads well under this, even with the hand resting on a desk
+// or the lap (upper arm 30-40° forward). If the 10th percentile of the
+// calibration window is higher, the patient was moving and the reading is
+// capped so the targets stay sane.
+export const MAX_BASELINE_DEG = 45;
+
+// How far back down from the target the arm must come for a rep to finish,
+// as a share of the way from rest to target.
+export const FINISH_SHARE = 0.3;
 
 export type CalibratedThresholds = {
   baseline: number;
@@ -66,7 +71,12 @@ export type CalibratedThresholds = {
  *
  * - baseline: the 10th percentile of the samples (rest is the lowest
  *   reading; movement only pushes values up), capped at MAX_BASELINE_DEG.
- * - start = baseline + 15, finish = baseline + 10: clear of resting jitter.
+ * - finish = baseline + 30% of the way to the target (at least 10°): a rep
+ *   counts once the arm comes back most of the way down. It used to be
+ *   baseline + 10, so a patient who rested a hand on the desk between reps
+ *   (upper arm 30-40° forward) never came down far enough and no rep counted.
+ * - start = the higher of baseline + 15 and finish + 5, so a rep starts above
+ *   where the last one finished.
  * - target: the physio's target if set, else the population minimum.
  *   It is NOT shifted by the baseline any more. A resting arm that reads
  *   15° does not mean every angle reads 15° too high, and the shift made
@@ -89,8 +99,9 @@ export function calibrateThresholds(
   const effectiveTarget = opts.romTargetDegrees ?? opts.romAcceptableMin;
   if (effectiveTarget == null) return null;
 
-  const start = baseline + 15;
-  const finish = baseline + 10;
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const finish = round1(baseline + Math.max(10, FINISH_SHARE * (effectiveTarget - baseline)));
+  const start = round1(Math.max(baseline + 15, finish + 5));
   const target = Math.max(effectiveTarget, start + 20);
 
   const floor =
