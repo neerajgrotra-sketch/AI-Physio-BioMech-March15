@@ -44,6 +44,21 @@ Timeline) is not very functional for patients. Fine for the proof-of-concept sta
 patient screen from the mockups, and move the developer logs behind a hidden debug switch (keep them: they are how
 we diagnose real-camera tests).
 
+**Decided 2026-11-26 (mockup: https://claude.ai/artifact/CeS5aALXZDMZBp2EjDNeiS).** Users at home said that once
+they sit far enough back to be measured, they are too far from the monitor to see the small camera view. The new
+layout is built to be read from 2-3 m:
+- The guide gets a tall panel on the left (about 40%) and the camera a large panel on the right (about 60%).
+  The guide figure moves out of the camera view into its own panel, with a caption that changes with each phase and
+  a tag such as "Moving with you" or "Holding with you".
+- One instruction at a time: the line the voice says is shown in a big band along the bottom of the camera, coloured
+  by state (amber keep going, green good or hold, white lower). The rep count is large, top right; the hold
+  countdown is a big ring.
+- Screens: getting in place (a checklist on the left, an outline and an arrow on the camera), lifting, holding, and
+  rep counted. On a portrait tablet or phone the guide stacks above the camera.
+- For now (owner, 2026-11-26) Live Coaching, Camera Sees, Session details and Performance stay as panels below the
+  full-size exercise screen, with the logs under them (scroll down to see them). Hiding them is decided later.
+- Build it as a new layout component when `SessionRunner` is split.
+
 ## Expected ROM and Encourage-to ROM (problem area, owner's note 2026-11-25)
 
 Set per exercise when a protocol is assigned to a patient (admin, Patients → Assign Protocol; saved as
