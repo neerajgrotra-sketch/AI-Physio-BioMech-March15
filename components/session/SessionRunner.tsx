@@ -2110,6 +2110,10 @@ Keep it to 2–3 natural spoken sentences. No lists.`
   // DERIVED
   // ============================================================
 
+  // Before Begin Session, with a protocol loaded: a welcome screen (the plan
+  // on the left, what to do and a big Begin button on the camera) instead of
+  // "Camera is off" and "No active exercise" (the owner's report, v0.6.1).
+  const welcomeOnScreen = !sessionQueue.sessionStarted && combinedQueue.length > 0;
   const canBegin = combinedQueue.length > 0 && inferenceLoop.engineStatus !== "running" && inferenceLoop.engineStatus !== "loading";
   const currentPrescription = sessionQueue.currentPrescription;
   const currentQueueItem = sessionQueue.currentQueueItem;
@@ -2339,7 +2343,36 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               objectFit: "contain", display: guideInPanel && exerciseOnScreen ? "block" : "none",
             }}
           />
-          {!(guideInPanel && exerciseOnScreen) && (
+          {welcomeOnScreen && (
+            <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>
+                {patientName ? `GOOD ${new Date().getHours() < 12 ? "MORNING" : new Date().getHours() < 17 ? "AFTERNOON" : "EVENING"}, ${patientName.split(" ")[0].toUpperCase()}` : "WELCOME"}
+              </div>
+              <div style={{ fontSize: isMobile ? 24 : 34, fontWeight: 800, lineHeight: 1.15, color: "white" }}>
+                {sessionTitle ?? "Today's exercises"}
+              </div>
+              <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+                {combinedQueue.map((item, i) => {
+                  const p = item.prescription as any;
+                  const target = p.romTargetDegrees ?? p.targetThreshold ?? null;
+                  const hold = p.hold?.required && p.hold?.durationMs ? Math.round(p.hold.durationMs / 1000) : null;
+                  return (
+                    <li key={`${item.id}-${i}`} style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                      <span style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 18, background: "#2A3352", color: "#C9D2EE", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{i + 1}</span>
+                      <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <span style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: "white" }}>{p.clinicalName ?? item.displayName}</span>
+                        <span style={{ fontSize: isMobile ? 15 : 18, color: "#AEB8D6" }}>
+                          {[`${p.repTarget} reps`, hold ? `hold ${hold} s` : null, target !== null ? `up to ${Math.round(target)}°` : null].filter(Boolean).join(" · ")}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+              <div style={{ fontSize: isMobile ? 15 : 18, color: "#AEB8D6" }}>{formatDurationRange(combinedDurationSeconds)} in all</div>
+            </div>
+          )}
+          {!welcomeOnScreen && !(guideInPanel && exerciseOnScreen) && (
             <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>
                 {positioningOnScreen ? "LET'S GET YOU IN PLACE" : "YOUR EXERCISE"}
@@ -2357,8 +2390,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         {/* RIGHT: Framing Intelligence Bar + Camera */}
         <div>
 
-          {/* ── FRAMING INTELLIGENCE BAR ── */}
+          {/* ── FRAMING INTELLIGENCE BAR ── (not on the welcome screen) */}
           <div style={{
+            display: welcomeOnScreen ? "none" : "flex",
             marginBottom: 8,
             padding: "9px 14px",
             borderRadius: 9,
@@ -2380,7 +2414,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               : framingPanelState.tone === "critical" ? "rgba(248,81,73,0.30)"
               : "rgba(210,153,34,0.30)"
             }`,
-            display: "flex",
+            
             alignItems: "center",
             gap: 10,
           }}>
@@ -2488,6 +2522,41 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                 />
                 {/* Positioning coach: until the patient is placed and still (before the first rep) */}
                 {positioningOnScreen && <PositionGuideOverlay guide={framingIntelligence.positionGuide!} />}
+                {welcomeOnScreen && (
+                  <div style={{
+                    position: "absolute", inset: 0, borderRadius: 18, background: "#141A2E", overflowY: "auto",
+                    display: "flex", flexDirection: "column", justifyContent: isMobile ? "flex-start" : "center", gap: isMobile ? 12 : 20,
+                    padding: isMobile ? 16 : "24px 40px",
+                  }}>
+                    <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>BEFORE YOU START</div>
+                    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: isMobile ? 8 : 14 }}>
+                      {[
+                        "Put the screen where you can see it, with the camera facing you.",
+                        "Sit on a firm chair, 2 to 3 metres back, so your whole body is in view.",
+                        "Leave room above your head to raise your arms.",
+                        "Turn the sound up: I'll talk you through each exercise.",
+                      ].map((t, i) => (
+                        <li key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", fontSize: isMobile ? 16 : "clamp(18px, 1.6vw, 24px)", color: "#EEF2FF", lineHeight: 1.3 }}>
+                          <span style={{ flexShrink: 0, width: 10, height: 10, borderRadius: 5, background: "#3FB950", marginTop: "0.45em" }} />
+                          {t}
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      onClick={beginCombinedSession}
+                      disabled={!canBegin}
+                      style={{
+                        alignSelf: "flex-start", marginTop: 4,
+                        background: canBegin ? "#3FB950" : "rgba(63,185,80,0.2)", color: canBegin ? "#08240F" : "#7a88a8",
+                        border: "none", borderRadius: 16, padding: isMobile ? "14px 28px" : "18px 40px",
+                        fontSize: isMobile ? 20 : 28, fontWeight: 800, cursor: canBegin ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      Begin session
+                    </button>
+                    <div style={{ fontSize: isMobile ? 13 : 16, color: "#AEB8D6" }}>Your camera turns on when you begin.</div>
+                  </div>
+                )}
                 {/* Big rep count and one instruction line, readable from across the room. */}
                 {exerciseOnScreen && currentPrescription && (
                   <div style={{
@@ -2561,7 +2630,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
             {/* Exercise title + instructions */}
             <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, marginBottom: 2, lineHeight: 1.2 }}>
-              {(currentQueueItem?.prescription as any)?.clinicalName ?? currentQueueItem?.displayName ?? "No active exercise"}
+              {(currentQueueItem?.prescription as any)?.clinicalName ?? currentQueueItem?.displayName
+                ?? (combinedQueue[0] ? `First up: ${(combinedQueue[0].prescription as any)?.clinicalName ?? combinedQueue[0].displayName}` : "No active exercise")}
             </div>
             {currentQueueItem && (
               <div style={{ fontSize: 11, color: "#7a88a8", marginBottom: 8 }}>{currentQueueItem.displayName}</div>

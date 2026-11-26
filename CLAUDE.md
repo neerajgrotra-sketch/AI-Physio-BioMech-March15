@@ -133,7 +133,9 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   otherwise the panel shows the exercise and its instruction, or the positioning message), the camera large on the
   right with a big rep count and one instruction band (the coaching line, or "Hold it there… n"; coloured by tone).
   On a screen taller than wide (`isPortrait`, a monitor turned upright) or a phone, the guide stacks above a
-  full-width camera. Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
+  full-width camera. Before Begin Session (`welcomeOnScreen`) the guide panel lists the plan (greeting, protocol,
+  each exercise's reps, hold and target, the time) and the camera panel shows "Before you start" and a big Begin
+  button, not "Camera is off". Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
   to be read from 2-3 m. Parked details: BACKLOG.md "Session screen layout".
 - `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
   and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check
