@@ -48,8 +48,10 @@ function judgeRep(
   balanceOk: boolean,
   isolationOk: boolean,
   everViolatedIsolation: boolean,
-  everHadBilateralParticipationGap: boolean
+  everHadBilateralParticipationGap: boolean,
+  everBadForm = false
 ): RepEvaluation {
+  if (everBadForm) return buildRepEvaluation("failed", "failed_form");
   if (prescription.side === "both" && everHadBilateralParticipationGap) {
     return buildRepEvaluation("failed", "failed_bilateral_participation");
   }
@@ -71,7 +73,8 @@ export function updateRepState(
   nowMs: number,
   balanceOk: boolean,
   isolationOk: boolean,
-  bilateralParticipationOk: boolean
+  bilateralParticipationOk: boolean,
+  formOk = true
 ): RuntimeRepState {
   // No reading this frame (the joint was not seen, or tracking dropped out):
   // keep the rep exactly where it is. It used to count as 0°, which dropped
@@ -102,6 +105,7 @@ export function updateRepState(
 
   let everViolatedIsolation = currentState.everViolatedIsolation;
   let everHadBilateralParticipationGap = currentState.everHadBilateralParticipationGap;
+  let everBadForm = currentState.everBadForm ?? false;
 
   let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
   let dipStartedAtMs = currentState.dipStartedAtMs ?? null;
@@ -133,6 +137,10 @@ export function updateRepState(
     if (!bilateralParticipationOk) {
       everHadBilateralParticipationGap = true;
     }
+
+    if (!formOk) {
+      everBadForm = true;
+    }
   }
 
   switch (currentState.phase) {
@@ -148,6 +156,7 @@ export function updateRepState(
       hasDescendedFromPeak = false;
       everReachedTarget = false;
       everViolatedIsolation = false;
+      everBadForm = false;
       everHadBilateralParticipationGap = false;
       break;
     }
@@ -180,6 +189,7 @@ export function updateRepState(
         hasDescendedFromPeak = false;
         everReachedTarget = false;
         everViolatedIsolation = false;
+      everBadForm = false;
         everHadBilateralParticipationGap = false;
       }
       break;
@@ -193,7 +203,7 @@ export function updateRepState(
         enteredTopAtMs = null;
       } else if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
         // No hold: the rep is done the moment the target is reached.
-        lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
+        lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap, everBadForm);
         if (lastRepEvaluation.outcome === "success") { repCount += 1; justCompletedRep = true; } else { justFailedRep = true; }
         holdSatisfied = true;
         phase = "lowering";
@@ -229,7 +239,7 @@ export function updateRepState(
         if (!holdSatisfied && heldForMs >= prescription.hold.durationMs) {
           holdSatisfied = true;
           justCompletedHold = true;
-          lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
+          lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap, everBadForm);
           if (lastRepEvaluation.outcome === "success") { repCount += 1; justCompletedRep = true; } else { justFailedRep = true; }
           phase = "lowering";
           enteredLoweringAtMs = nowMs;
@@ -263,6 +273,7 @@ export function updateRepState(
         hasDescendedFromPeak = false;
         everReachedTarget = false;
         everViolatedIsolation = false;
+      everBadForm = false;
         everHadBilateralParticipationGap = false;
       }
       break;
@@ -290,6 +301,7 @@ export function updateRepState(
     everViolatedIsolation,
     everHadBilateralParticipationGap,
 
+    everBadForm,
     dipStartedAtMs: phase === "holding" ? dipStartedAtMs : null,
     attemptPeak: phase === "lifting" || phase === "lowering" ? attemptPeak : null,
 

@@ -32,6 +32,7 @@ import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { extractMovementFeatures, emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
+import { arm3D, type Arm3D, type V3 } from "@/lib/biomechanics/world3d";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement, getEffectiveActiveMetricValue } from "@/lib/interpreter/movementInterpreter";
 import { calibrationKindFor, calibrateThresholds, applyThresholds, FeatureSpikeFilter } from "@/lib/engine/calibration";
@@ -283,6 +284,9 @@ export function useInferenceLoop() {
   const spikeFilterRef = useRef(new FeatureSpikeFilter());
   // Arm elevation facing the camera or side on (lib/biomechanics/flexionView.ts).
   const flexionViewRef = useRef(new FlexionViewEstimator());
+  // EXPERIMENT: the arm read from BlazePose's own 3D estimate (keypoints3D),
+  // logged next to the 2D method for comparison (lib/biomechanics/world3d.ts).
+  const world3dRef = useRef<{ right: Arm3D | null; left: Arm3D | null }>({ right: null, left: null });
   // Peak metric reached during current rep (reset on READY→LIFTING, updated each LIFTING/HOLDING frame)
   // Passed to onRepCompleted so session results can store the actual achieved ROM
   const peakMetricThisRepRef = useRef<number | null>(null);
@@ -455,6 +459,8 @@ export function useInferenceLoop() {
             if (!trackingActiveRef.current) return;
 
             const pose = poses[0] ?? null;
+            const kp3 = (pose as { keypoints3D?: V3[] } | null)?.keypoints3D;
+            world3dRef.current = { right: arm3D(kp3, "right"), left: arm3D(kp3, "left") };
             const normalized = normalizePoseFrame(
               pose,
               liveVideo.videoWidth || 1,
@@ -905,6 +911,8 @@ export function useInferenceLoop() {
   return {
     /** Facing the camera or side on, as the arm measurement judges it (null until seen). */
     getFacingView: () => flexionViewRef.current.currentView(),
+    /** EXPERIMENT: the arm from BlazePose keypoints3D (logged only). */
+    getWorld3D: () => world3dRef.current,
     /** The learned upper-arm length in torso lengths (front-view flexion), or null. */
     getArmLength: (side: "right" | "left") => flexionViewRef.current.armLength(side),
     // State

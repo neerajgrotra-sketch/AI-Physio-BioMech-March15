@@ -56,6 +56,18 @@ export function demoCycle(s: number): number {
 
 // After a rep, the ghost rests this long before showing the next one.
 export const BETWEEN_REPS_REST_S = 1.5;
+// It shows a rep once, then waits; only if the patient still hasn't moved
+// after this long does it show it again (it used to loop non-stop).
+export const IDLE_BEFORE_REPEAT_S = 8;
+
+/** Demonstrate once, then wait; again only after a long pause. `s` = seconds since the demo could start. */
+export function demoOnceThenWait(s: number): number {
+  if (s < 0) return 0;
+  if (s < DEMO_CYCLE_S) return demoCycle(s);
+  const period = IDLE_BEFORE_REPEAT_S + DEMO_CYCLE_S;
+  const t = (s - DEMO_CYCLE_S) % period;
+  return t < IDLE_BEFORE_REPEAT_S ? 0 : demoCycle(t - IDLE_BEFORE_REPEAT_S);
+}
 
 export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {
   const { infPhase, holdRemainingMs, holdTotalMs, repsDone, readyElapsedS, nowMs } = input;
@@ -68,7 +80,7 @@ export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {
   if (infPhase === 'ready' || infPhase === 'idle') {
     if (repsDone === 0) {
       // Teaching before the first rep: demonstrate the whole movement.
-      ghostT   = demoCycle(readyElapsedS);
+      ghostT   = demoOnceThenWait(readyElapsedS);
       opacity  = 0.7;
       badgePhase = 'demo';
     } else if (readyElapsedS < BETWEEN_REPS_REST_S) {
@@ -78,7 +90,7 @@ export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {
       badgePhase = 'attempt';
     } else {
       // Then it shows the next rep, inviting the patient to go again.
-      ghostT   = demoCycle(readyElapsedS - BETWEEN_REPS_REST_S);
+      ghostT   = demoOnceThenWait(readyElapsedS - BETWEEN_REPS_REST_S);
       opacity  = 0.72;
       badgePhase = 'attempt';
     }

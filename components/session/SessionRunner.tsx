@@ -15,6 +15,7 @@ import React, {
 import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
 import { drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
+import { RepCoach } from "@/lib/coaching/repCoach";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
   type CameraViewportHandle
@@ -526,6 +527,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostPrevPhaseRef  = useRef<string>("");  // detect phase transitions for debug log
   const ghostReadyStartRef = useRef<number>(0);
   const lastTraceMsRef = useRef<number>(0);
+  const repCoachRef = useRef(new RepCoach());  // coaching through the rep
   const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
   const ghostLowerStartRef = useRef<number>(0);   // when lowering began  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
@@ -1025,6 +1027,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           ghostRepCountRef.current = 0;
           ghostPrevPhaseRef.current = "";
           ghostPhaseSeenRef.current = "";
+    repCoachRef.current.reset();
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
@@ -1467,6 +1470,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     ghostRepCountRef.current = 0;
     ghostPrevPhaseRef.current = "";
     ghostPhaseSeenRef.current = "";
+    repCoachRef.current.reset();
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1625,12 +1629,43 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         const side = (p?.side === "left" ? "left" : "right") as "left" | "right";
         const m = ghostActiveMetricRef.current;
         const L = inferenceLoop.getArmLength(side);
+        const w3 = inferenceLoop.getWorld3D()[side];
+        const fmt = (v: number | null | undefined) => (v === null || v === undefined ? "?" : v.toFixed(1));
         writeDebugLog("info", "TRACE",
           `${ghostPhaseInfRef.current} | metric=${m === null ? "null" : m.toFixed(1)} | start=${p?.startThreshold?.toFixed(1) ?? "?"} ` +
           `target=${p?.targetThreshold?.toFixed(1) ?? "?"} finish=${p?.finishThreshold?.toFixed(1) ?? "?"} | ` +
           `view=${inferenceLoop.getFacingView() ?? "?"} arm=${L === null ? "?" : L.toFixed(3)} | ` +
           `placed=${framingIntelligence.prerequisiteResultRef.current.allMet} reps=${ghostRepCountRef.current} | ` +
-          `baseline=${inferenceLoop.calibrationBaselineRef.current.toFixed(1)}`);
+          `baseline=${inferenceLoop.calibrationBaselineRef.current.toFixed(1)} | ` +
+          // Form (2D, facing the camera) and the 3D experiment, for comparison.
+          `plane2d=${fmt(inferenceLoop.features?.[side === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"])} ` +
+          `bent=${inferenceLoop.features?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] ?? "?"} | ` +
+          `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)}`);
+      }
+
+      // ── 3c. Coaching through the rep (lib/coaching/repCoach.ts) ─────────
+      if (sessionPhaseRef.current === "running") {
+        const p = ghostPrescriptionRef.current;
+        const sd = p?.side === "left" ? "left" : "right";
+        const feats = inferenceLoop.features;
+        const plane = feats?.[sd === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"] ?? null;
+        const flexion = (ghostSlugRef.current ?? "").startsWith("shoulder_flexion");
+        const line = repCoachRef.current.update({
+          nowMs: snapNow,
+          phase: ghostPhaseInfRef.current,
+          metric: ghostActiveMetricRef.current,
+          target: p?.targetThreshold ?? 110,
+          repCount: ghostRepCountRef.current,
+          repTarget: p?.repTarget ?? 0,
+          elbowBent: flexion ? (feats?.[sd === "left" ? "leftElbowBent" : "rightElbowBent"] ?? null) : null,
+          wrongPlane: flexion && plane !== null ? plane > 45 : null,
+        });
+        if (line && typeof window !== "undefined" && window.speechSynthesis && !window.speechSynthesis.speaking) {
+          const u = new SpeechSynthesisUtterance(line);
+          u.rate = 0.95;
+          window.speechSynthesis.speak(u);
+          writeDebugLog("info", "COACHING", `Rep coach: "${line}"`);
+        }
       }
 
       // ── 4. Landmarks ──────────────────────────────────────────────────────
@@ -1784,13 +1819,25 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           const y = reachLineY(frame, side, inferenceLoop.getArmLength(side), target);
           if (y !== null) drawReachGuide(ctx, frame, side, y, metricNow !== null && metricNow >= target, target, W, H, now);
         }
+        // The card leads like a physio: it demonstrates while the patient is
+        // at rest (once, then again only after a long pause), and during a
+        // rep it mirrors the patient's own arm against the target line.
+        const activeRep = infPhase === "lifting" || infPhase === "top" || infPhase === "holding" || infPhase === "lowering";
+        const sideNow = config.sides[0];
+        const bent = inferenceLoop.features?.[sideNow === "left" ? "leftElbowBent" : "rightElbowBent"];
+        const plane = inferenceLoop.features?.[sideNow === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"];
+        const holdLeft = ghostHoldRemRef.current;
         const caption =
-          infPhase === "holding" || infPhase === "top" ? "Hold it there"
+          activeRep && plane !== null && plane !== undefined && plane > 45 ? "Arm in front of you"
+          : activeRep && bent && infPhase !== "lowering" ? "Keep your arm straight"
+          : infPhase === "holding" || infPhase === "top"
+            ? (holdLeft !== null ? `Hold… ${Math.max(1, Math.ceil(holdLeft / 1000))}` : "Hold it there")
           : infPhase === "lowering" ? "Lower slowly"
-          : `Raise to ${Math.round(target)}°`;
+          : infPhase === "lifting" ? (metricNow !== null && metricNow < target ? "Higher…" : "That's it")
+          : `Raise to ${Math.round(target)}° — arm straight`;
         drawExampleCard({
           ctx, W, H,
-          armDeg: anim.ghostT * target,
+          armDeg: activeRep && metricNow !== null ? Math.max(0, Math.min(180, metricNow)) : anim.ghostT * target,
           targetDeg: target,
           seated: !!inferenceLoop.features?.isSeated,
           caption,

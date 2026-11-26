@@ -340,3 +340,25 @@ describe("the owner's session of 2026-11-26 (v0.3.0): hands resting on the lap",
     expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_isolation");
   });
 });
+
+describe("forward raise done out to the side instead (the owner's trick)", () => {
+  const slug = "shoulder_flexion_right";
+  const p = (() => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+  })();
+
+  it("raising the arm sideways to the same height fails as form, not counted", () => {
+    const pts = oneRep(5, 125, p.hold.durationMs);
+    const fr = pts.map(({ t, v }) => frameFromPixels(standingFront({ rightArmDeg: v, leftArmDeg: 5 }), 1280, 720, { timestamp: t }));
+    const r = replay(p, fr);
+    expect(r.repCount).toBe(0);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_form");
+  });
+
+  it("the proper forward raise still counts", () => {
+    const pts = oneRep(5, 125, p.hold.durationMs);
+    const r = replay(p, pts.map(({ t, v }) => frameFromPixels(flexionFront(v), 1280, 720, { timestamp: t })));
+    expect(r.repCount).toBe(1);
+  });
+});

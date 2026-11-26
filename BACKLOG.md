@@ -48,6 +48,9 @@ Set per exercise when a protocol is assigned to a patient (admin, Patients → A
   readings against side-view ones; (2) a depth camera (Orbbec Femto Bolt, Intel RealSense D455 class), which measures
   depth properly but needs a native app, not the browser; (3) iPad Pro LiDAR with Apple's 3D body tracking (native).
 - **Status:** the owner is looking into buying a depth camera (2026-11-25). Decide after the keypoints3D experiment.
+- **keypoints3D experiment started (v0.4.0, 2026-11-26):** `lib/biomechanics/world3d.ts` computes the arm's elevation
+  and plane from BlazePose's 3D output; each TRACE line logs it (`3d: elev plane`) next to the 2D estimate
+  (`metric`, `plane2d`). Compare over a few real runs; if 3D agrees and is steadier, score with it.
 - **Affects:** `positionSetupFor` (camera side per exercise), the measurement metrics, and whether a native app is
   needed.
 

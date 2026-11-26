@@ -83,6 +83,42 @@ class ArmLength {
   }
 }
 
+// Form checks facing the camera.
+// Plane: the arm's direction around the body, from its sideways offset and
+// the forward part left over (a 2D camera can't see forward directly):
+// 0 = straight in front (flexion), 90 = straight out to the side
+// (abduction). Judged only between 50° and 130° of elevation, where the
+// two are clearly different.
+export const PLANE_MIN_ELEV = 50;
+export const PLANE_MAX_ELEV = 130;
+// Bent elbow: a straight arm puts the wrist (1 + FOREARM) times as far from
+// the shoulder's height as the elbow; a hand well above that means a bent
+// elbow (the hand can reach a line while the upper arm hasn't).
+export const FOREARM = 0.9;
+export const BENT_MARGIN = 0.45; // upper-arm lengths
+
+export function armForm(
+  drop: number | null,
+  wristDrop: number | null,
+  out: number | null,
+  length: number
+): { planeDeg: number | null; elbowBent: boolean | null } {
+  if (drop === null) return { planeDeg: null, elbowBent: null };
+  const c = Math.max(-1, Math.min(1, drop / length));
+  const elev = (Math.acos(c) * 180) / Math.PI;
+  let planeDeg: number | null = null;
+  if (out !== null && elev >= PLANE_MIN_ELEV && elev <= PLANE_MAX_ELEV) {
+    const o = Math.min(1, out / length);
+    const fwd = Math.sqrt(Math.max(0, 1 - c * c - o * o));
+    planeDeg = Math.round(((Math.atan2(o, fwd) * 180) / Math.PI) * 10) / 10;
+  }
+  let elbowBent: boolean | null = null;
+  if (wristDrop !== null && elev >= 30 && elev <= 150) {
+    elbowBent = drop * (1 + FOREARM) - wristDrop > BENT_MARGIN * length;
+  }
+  return { planeDeg, elbowBent };
+}
+
 /** Elevation from straight down, from the elbow's drop and the arm's length. */
 export function elevationFromDrop(drop: number, length: number): number {
   const c = Math.max(-1, Math.min(1, drop / length));
@@ -163,6 +199,12 @@ export class FlexionViewEstimator {
       drop === null ? null : elevationFromDrop(drop, arm.get());
     f.rightArmElevationDeg = est(rDrop, this.right);
     f.leftArmElevationDeg = est(lDrop, this.left);
+    const rf = armForm(rDrop, pick(f.rightWristDrop, f.rightWristDropSw), pick(f.rightElbowOut, f.rightElbowOutSw), this.right.get());
+    const lf = armForm(lDrop, pick(f.leftWristDrop, f.leftWristDropSw), pick(f.leftElbowOut, f.leftElbowOutSw), this.left.get());
+    f.rightArmPlaneDeg = rf.planeDeg;
+    f.rightElbowBent = rf.elbowBent;
+    f.leftArmPlaneDeg = lf.planeDeg;
+    f.leftElbowBent = lf.elbowBent;
     const both = [f.rightArmElevationDeg, f.leftArmElevationDeg].filter((v): v is number => v !== null);
     f.bilateralArmElevationDeg = both.length
       ? Math.round((both.reduce((a, b) => a + b, 0) / both.length) * 10) / 10

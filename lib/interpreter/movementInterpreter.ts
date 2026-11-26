@@ -159,6 +159,23 @@ function getIsolationOk(
   return opposite <= Math.max(limit, (oppositeRest ?? 0) + limit);
 }
 
+// A forward raise may drift this far toward the side (0 = straight in
+// front, 90 = straight out); beyond it the arm is going out to the side (a
+// different exercise, abduction). Generous: 30° out (scaption) still passes.
+export const MAX_PLANE_DEG_FLEXION = 45;
+
+/** Forward raises facing the camera: the arm must go forward, not out to the side. */
+function getFormOk(features: MovementFeatures, prescription: ExercisePrescription): boolean {
+  const m = prescription.target.metric;
+  const flexion = m === "rightArmElevationDeg" || m === "leftArmElevationDeg" || m === "bilateralArmElevationDeg";
+  if (!flexion) return true;
+  const planes =
+    prescription.side === "right" ? [features.rightArmPlaneDeg]
+    : prescription.side === "left" ? [features.leftArmPlaneDeg]
+    : [features.rightArmPlaneDeg, features.leftArmPlaneDeg];
+  return planes.every((p) => p === null || p === undefined || p <= MAX_PLANE_DEG_FLEXION);
+}
+
 function getBilateralParticipationOk(
   features: MovementFeatures,
   prescription: ExercisePrescription
@@ -281,7 +298,8 @@ function interpretRaiseHoldLower(
     frameContext.timestampMs,
     balanceOk,
     isolationOk,
-    bilateralParticipationOk
+    bilateralParticipationOk,
+    getFormOk(features, prescription)
   );
   const repState = { ...updated, oppositeRest };
 

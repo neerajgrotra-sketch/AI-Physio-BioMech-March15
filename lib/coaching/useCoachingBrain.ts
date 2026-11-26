@@ -942,6 +942,8 @@ function getFallbackText(
         return prescription.coaching.failedHold;
       if (failureReason === "failed_balance")
         return prescription.coaching.failedBalance;
+      if (failureReason === "failed_form")
+        return "Raise your arm in front of you, not out to the side.";
       if (failureReason === "failed_isolation")
         return prescription.coaching.failedIsolation ?? null;
       return prescription.coaching.failedHeight;
