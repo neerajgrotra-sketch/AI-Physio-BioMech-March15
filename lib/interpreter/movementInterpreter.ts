@@ -161,8 +161,10 @@ function getIsolationOk(
 
 // A forward raise may drift this far toward the side (0 = straight in
 // front, 90 = straight out); beyond it the arm is going out to the side (a
-// different exercise, abduction). Generous: 30° out (scaption) still passes.
-export const MAX_PLANE_DEG_FLEXION = 45;
+// different exercise, abduction). In the owner's first 3D run, forward
+// raises read 30-38° and sideways ones 80-90°; 60 sits clearly between
+// (45 wrongly failed two forward reps).
+export const MAX_PLANE_DEG_FLEXION = 60;
 
 /** Forward raises facing the camera: the arm must go forward, not out to the side. */
 function getFormOk(features: MovementFeatures, prescription: ExercisePrescription): boolean {

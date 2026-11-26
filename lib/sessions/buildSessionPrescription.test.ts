@@ -362,3 +362,68 @@ describe("forward raise done out to the side instead (the owner's trick)", () =>
     expect(r.repCount).toBe(1);
   });
 });
+
+describe("raised out to the side, then brought in front while up (the owner's case)", () => {
+  const slug = "shoulder_flexion_right";
+  const p = (() => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+  })();
+  // Each segment: [ms, elevation(u), outward(u)]
+  const path = (segs: Array<[number, (u: number) => number, (u: number) => number]>) => {
+    const out: Array<{ t: number; v: number; o: number }> = [];
+    let t0 = 0;
+    for (const [ms, ev, ov] of segs) {
+      const n = Math.round((ms / 1000) * 30);
+      for (let i = 0; i < n; i++) out.push({ t: t0 + (i * 1000) / 30, v: ev(i / n), o: ov(i / n) });
+      t0 += (n * 1000) / 30;
+    }
+    return out;
+  };
+  const frames = (pts: Array<{ t: number; v: number; o: number }>) =>
+    pts.map(({ t, v, o }) => frameFromPixels(flexionFront(v, { outDeg: o }), 1280, 720, { timestamp: t }));
+
+  it("counts once the arm is held in front (the hold starts when it gets there)", () => {
+    const pts = path([
+      [3500, hold(5), hold(90)],                 // rest
+      [1000, ramp(5, 120), hold(90)],            // up, out to the side
+      [1200, hold(120), ramp(90, 0)],            // swept in front while up
+      [p.hold.durationMs + 600, hold(120), hold(0)], // held in front
+      [1000, ramp(120, 5), hold(0)],
+      [800, hold(5), hold(0)],
+    ]);
+    const r = replay(p, frames(pts));
+    expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(1);
+  });
+
+  it("held out to the side the whole time: no hold, and it fails as form when lowered", () => {
+    const pts = path([
+      [3500, hold(5), hold(90)],
+      [1000, ramp(5, 120), hold(90)],
+      [p.hold.durationMs + 600, hold(120), hold(90)],
+      [1000, ramp(120, 5), hold(90)],
+      [800, hold(5), hold(90)],
+    ]);
+    const r = replay(p, frames(pts));
+    expect(r.events.some((e) => e.kind === "hold")).toBe(false);
+    expect(r.repCount).toBe(0);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_form");
+  });
+
+  it("drifting out mid-hold restarts the hold; back in front, it completes", () => {
+    const pts = path([
+      [3500, hold(5), hold(0)],
+      [1000, ramp(5, 120), hold(0)],
+      [1200, hold(120), hold(0)],               // 1.2 s of a 2 s hold
+      [800, hold(120), hold(90)],               // out to the side: hold restarts
+      [p.hold.durationMs + 600, hold(120), hold(0)], // back in front: full hold
+      [1000, ramp(120, 5), hold(0)],
+      [800, hold(5), hold(0)],
+    ]);
+    const r = replay(p, frames(pts));
+    expect(r.repCount).toBe(1);
+    const rep = r.events.find((e) => e.kind === "rep")!;
+    expect(rep.t).toBeGreaterThan(3500 + 1000 + 1200 + 800 + p.hold.durationMs - 100); // not after the first 1.2 s
+  });
+});

@@ -49,9 +49,13 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    only waits for the arm to come back: below finish, or half way down and rising again (`REARM_*`), which starts the
    next rep. A hold dropped early fails at once (`failed_hold`). Isolation: the other arm may not rise more than
    `maxOppositeArmElevationDeg` above where it rested while ready (`oppositeRest`), not an absolute 35° (a seated
-   patient's resting arm reads 40-60°). Form: a forward raise facing the camera that goes out to the side (plane over
-   `MAX_PLANE_DEG_FLEXION` 45°, from `armForm` in flexionView.ts: the elbow's sideways offset against the forward
-   part left over) fails as `failed_form`; a bent elbow is coached, not failed.
+   patient's resting arm reads 40-60°). Form (forward raises facing the camera, plane over `MAX_PLANE_DEG_FLEXION`
+   60° = out to the side) is judged AT THE TARGET: on the way up it is only coached; the hold runs only while the arm
+   is in front (it waits at `top`, and a slip of more than `HOLD_DIP_GRACE_MS` mid-hold restarts it), so raising
+   sideways and then bringing the arm in front while up is a good rep (the owner's case); lowering without ever
+   holding it in front fails as `failed_form`. A bent elbow is coached, not failed. The plane and bent elbow
+   come from BlazePose's 3D estimate when it has one (`applyWorld3DForm`, lib/biomechanics/world3d.ts, applied in the
+   loop after flexionView), else from the 2D `armForm`; the replay has no 3D input, so tests cover the 2D path.
    A missing reading (`null`) pauses the rep; it must never be treated as 0°.
 6. Coaching (`lib/coaching/*`, `lib/engine/*`) and framing (`lib/framing/*`) sit on top.
 
@@ -111,8 +115,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`). `lib/coaching/repCoach.ts`
   coaches through the rep: "A little higher" on a stall, "Keep your arm straight", "Bring your arm in front of you",
   "And again".
-- EXPERIMENT: `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the
-  webcam); logged on the TRACE line (`3d: elev plane`) next to the 2D method, not yet scored. Voice: the rep-completed line ends "Now lower your
+- `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
+  and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check
+  run says whether it or the 2D angle is closer. Code outside React renders (the ghost loop) must read
+  `inferenceLoop.getFeatures()`, not `inferenceLoop.features` (a copy frozen when the loop started). Voice: the rep-completed line ends "Now lower your
   arm slowly"; holds of 3 s or more count the last seconds aloud.
 - Test logs: the debug log is saved to `session_debug_logs` every 30 s while running, when the tab is hidden, and at
   the end (read the newest row per session). It starts with an `APP` entry (version, commit) and has a `TRACE` line

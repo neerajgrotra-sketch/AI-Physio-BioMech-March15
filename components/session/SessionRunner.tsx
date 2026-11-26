@@ -16,6 +16,7 @@ import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
 import { drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
+import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
   type CameraViewportHandle
@@ -1638,16 +1639,16 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           `placed=${framingIntelligence.prerequisiteResultRef.current.allMet} reps=${ghostRepCountRef.current} | ` +
           `baseline=${inferenceLoop.calibrationBaselineRef.current.toFixed(1)} | ` +
           // Form (2D, facing the camera) and the 3D experiment, for comparison.
-          `plane2d=${fmt(inferenceLoop.features?.[side === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"])} ` +
-          `bent=${inferenceLoop.features?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] ?? "?"} | ` +
-          `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)}`);
+          `plane2d=${fmt(inferenceLoop.getFeatures()?.[side === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"])} ` +
+          `bent=${inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] ?? "?"} | ` +
+          `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)} elbow=${fmt(w3?.elbowDeg)}`);
       }
 
       // ── 3c. Coaching through the rep (lib/coaching/repCoach.ts) ─────────
       if (sessionPhaseRef.current === "running") {
         const p = ghostPrescriptionRef.current;
         const sd = p?.side === "left" ? "left" : "right";
-        const feats = inferenceLoop.features;
+        const feats = inferenceLoop.getFeatures();
         const plane = feats?.[sd === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"] ?? null;
         const flexion = (ghostSlugRef.current ?? "").startsWith("shoulder_flexion");
         const line = repCoachRef.current.update({
@@ -1658,7 +1659,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           repCount: ghostRepCountRef.current,
           repTarget: p?.repTarget ?? 0,
           elbowBent: flexion ? (feats?.[sd === "left" ? "leftElbowBent" : "rightElbowBent"] ?? null) : null,
-          wrongPlane: flexion && plane !== null ? plane > 45 : null,
+          wrongPlane: flexion && plane !== null ? plane > MAX_PLANE_DEG_FLEXION : null,
         });
         if (line && typeof window !== "undefined" && window.speechSynthesis && !window.speechSynthesis.speaking) {
           const u = new SpeechSynthesisUtterance(line);
@@ -1824,11 +1825,11 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // rep it mirrors the patient's own arm against the target line.
         const activeRep = infPhase === "lifting" || infPhase === "top" || infPhase === "holding" || infPhase === "lowering";
         const sideNow = config.sides[0];
-        const bent = inferenceLoop.features?.[sideNow === "left" ? "leftElbowBent" : "rightElbowBent"];
-        const plane = inferenceLoop.features?.[sideNow === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"];
+        const bent = inferenceLoop.getFeatures()?.[sideNow === "left" ? "leftElbowBent" : "rightElbowBent"];
+        const plane = inferenceLoop.getFeatures()?.[sideNow === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"];
         const holdLeft = ghostHoldRemRef.current;
         const caption =
-          activeRep && plane !== null && plane !== undefined && plane > 45 ? "Arm in front of you"
+          activeRep && plane !== null && plane !== undefined && plane > MAX_PLANE_DEG_FLEXION ? "Arm in front of you"
           : activeRep && bent && infPhase !== "lowering" ? "Keep your arm straight"
           : infPhase === "holding" || infPhase === "top"
             ? (holdLeft !== null ? `Hold… ${Math.max(1, Math.ceil(holdLeft / 1000))}` : "Hold it there")
@@ -1839,7 +1840,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           ctx, W, H,
           armDeg: activeRep && metricNow !== null ? Math.max(0, Math.min(180, metricNow)) : anim.ghostT * target,
           targetDeg: target,
-          seated: !!inferenceLoop.features?.isSeated,
+          seated: !!inferenceLoop.getFeatures()?.isSeated,
           caption,
           rgb: { r: 96, g: 190, b: 250 },
           corner: config.sides.includes("right") ? "bottom-left" : "bottom-right",

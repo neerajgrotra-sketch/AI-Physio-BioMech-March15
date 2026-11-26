@@ -86,10 +86,13 @@ export function drawReachGuide(
   ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
   ctx.setLineDash([]);
   // Label just above the bar, anchored at its outer end.
-  const label = reached ? "✓ Elbow at target" : "Lift your elbow to here";
+  const label = reached ? "✓ Target" : "Elbow here";
   ctx.font = "700 16px Inter, system-ui, sans-serif";
   const tw = ctx.measureText(label).width;
-  const lx = out > 0 ? Math.min(x2 - tw, W - tw - 8) : Math.max(x2, 8);
+  // Starts at the bar's inner end and runs OUTWARD, away from the face (it
+  // used to be anchored at the outer end and run inward, across the face);
+  // it only slides back if it would run off the frame.
+  const lx = out > 0 ? Math.min(x1, W - tw - 8) : Math.max(x1 - tw, 8);
   ctx.fillStyle = "rgba(10,14,30,0.72)";
   ctx.beginPath();
   (ctx as any).roundRect ? (ctx as any).roundRect(lx - 7, y - 30, tw + 14, 24, 7) : ctx.rect(lx - 7, y - 30, tw + 14, 24);

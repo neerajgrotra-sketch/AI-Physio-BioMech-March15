@@ -51,6 +51,11 @@ Set per exercise when a protocol is assigned to a patient (admin, Patients → A
 - **keypoints3D experiment started (v0.4.0, 2026-11-26):** `lib/biomechanics/world3d.ts` computes the arm's elevation
   and plane from BlazePose's 3D output; each TRACE line logs it (`3d: elev plane`) next to the 2D estimate
   (`metric`, `plane2d`). Compare over a few real runs; if 3D agrees and is steadier, score with it.
+- **First run (2026-11-26, v0.4.0):** the 3D plane separated forward raises (30-38°) from sideways ones (80-90°)
+  cleanly, where the 2D estimate wrongly failed two forward reps; v0.4.1 uses 3D for the form checks. Elevation: 3D
+  read 5-25° higher than 2D near the top (2D 110° vs 3D 117-135°). Next: a check run with known angles (arm level
+  forward = 90°, straight up = 180°, held 3 s each, side photo for reference) to decide which elevation to score with.
+  Webcam 3D may make the depth camera unnecessary for these exercises.
 - **Affects:** `positionSetupFor` (camera side per exercise), the measurement metrics, and whether a native app is
   needed.
 
