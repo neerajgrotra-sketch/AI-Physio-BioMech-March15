@@ -13,7 +13,8 @@ import React, {
 } from "react";
 
 import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
-import { drawFrontGhost, drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
+import { drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
+import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
   type CameraViewportHandle
@@ -1773,18 +1774,29 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         ?? null;
 
       if (frontFlexion) {
-        // Front view: the ghost arm reaching toward the camera, from rest to
-        // the target as ghostT goes 0 -> 1, and the "Reach here" line.
+        // Front view: the movement is shown on an "Example" card in the corner
+        // (a side-view figure in step with the ghost's timing: demo, rise,
+        // hold, lower, invite), and a short target marker beside the raised
+        // arm. Painting a ghost arm over the patient looked odd.
         const target = ghostPrescriptionRef.current?.targetThreshold ?? 110;
-        const base = inferenceLoop.calibrationBaselineRef.current || 0;
-        const ghostDeg = base + anim.ghostT * (target - base);
         const metricNow = ghostActiveMetricRef.current;
         for (const side of config.sides) {
-          const L = inferenceLoop.getArmLength(side);
-          drawFrontGhost(ctx, frame, side, L, ghostDeg, anim.opacity, anim.colorRGB, W, H);
-          const y = reachLineY(frame, side, L, target);
+          const y = reachLineY(frame, side, inferenceLoop.getArmLength(side), target);
           if (y !== null) drawReachGuide(ctx, frame, side, y, metricNow !== null && metricNow >= target, target, W, H, now);
         }
+        const caption =
+          infPhase === "holding" || infPhase === "top" ? "Hold it there"
+          : infPhase === "lowering" ? "Lower slowly"
+          : `Raise to ${Math.round(target)}°`;
+        drawExampleCard({
+          ctx, W, H,
+          armDeg: anim.ghostT * target,
+          targetDeg: target,
+          seated: !!inferenceLoop.features?.isSeated,
+          caption,
+          rgb: { r: 96, g: 190, b: 250 },
+          corner: config.sides.includes("right") ? "bottom-left" : "bottom-right",
+        });
       } else dispatchGhostDraw({
         ctx,
         config,

@@ -133,24 +133,30 @@ export function getEffectiveActiveMetricValue(
   return getMetricValue(features, prescription.target.metric);
 }
 
+/** The other arm's elevation for a one-arm exercise (null if both arms, or not seen). */
+function oppositeArm(features: MovementFeatures, prescription: ExercisePrescription): number | null {
+  if (prescription.side === "right") return features.leftArmElevationDeg;
+  if (prescription.side === "left") return features.rightArmElevationDeg;
+  return null;
+}
+
+/**
+ * The other arm must stay where it was: it may not rise more than the
+ * limit (maxOppositeArmElevationDeg, 35°) above where it rested when the
+ * rep started. It used to be an absolute 35°, and a seated patient with
+ * hands on the lap rests the other arm at 40-60°, so every rep failed
+ * "keep the other arm still" at the moment it should have counted.
+ */
 function getIsolationOk(
   features: MovementFeatures,
-  prescription: ExercisePrescription
+  prescription: ExercisePrescription,
+  oppositeRest: number | null
 ): boolean {
   const limit = prescription.qualityLimits?.maxOppositeArmElevationDeg;
   if (limit === undefined) return true;
-
-  if (prescription.side === "right") {
-    const opposite = features.leftArmElevationDeg;
-    return opposite === null || opposite <= limit;
-  }
-
-  if (prescription.side === "left") {
-    const opposite = features.rightArmElevationDeg;
-    return opposite === null || opposite <= limit;
-  }
-
-  return true;
+  const opposite = oppositeArm(features, prescription);
+  if (opposite === null) return true;
+  return opposite <= Math.max(limit, (oppositeRest ?? 0) + limit);
 }
 
 function getBilateralParticipationOk(
@@ -256,13 +262,19 @@ function interpretRaiseHoldLower(
     features.torsoLeanDeg === null ||
     features.torsoLeanDeg <= maxTorsoLeanDeg;
 
-  const isolationOk = getIsolationOk(features, prescription);
+  // Track where the other arm rests while waiting for a rep (smoothed).
+  const opp = oppositeArm(features, prescription);
+  let oppositeRest = currentRepState.oppositeRest ?? null;
+  if (currentRepState.phase === "ready" && opp !== null) {
+    oppositeRest = oppositeRest === null ? opp : oppositeRest + (opp - oppositeRest) * 0.1;
+  }
+  const isolationOk = getIsolationOk(features, prescription, oppositeRest);
   const bilateralParticipationOk = getBilateralParticipationOk(
     features,
     prescription
   );
 
-  const repState = updateRepState(
+  const updated = updateRepState(
     currentRepState,
     activeMetricValue,
     prescription,
@@ -271,6 +283,7 @@ function interpretRaiseHoldLower(
     isolationOk,
     bilateralParticipationOk
   );
+  const repState = { ...updated, oppositeRest };
 
   let holdRemainingMs: number | null = null;
 

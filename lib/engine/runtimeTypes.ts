@@ -36,6 +36,8 @@ export type RuntimeRepState = {
 
   // Highest metric value of the current lift (LIFTING only).
   attemptPeak?: number | null;
+  /** Where the opposite arm rests (updated while ready), for the isolation check. */
+  oppositeRest?: number | null;
 
   lastRepEvaluation: RepEvaluation;
 };
