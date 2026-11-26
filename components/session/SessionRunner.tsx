@@ -13,9 +13,11 @@ import React, {
 } from "react";
 
 import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
-import { drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
+import { drawArmLabel, drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
+import { DemoNarrator } from "@/lib/coaching/demoNarrator";
+import { demoClock, BETWEEN_REPS_REST_S } from "@/lib/pose/ghostAnimator";
 import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
@@ -529,6 +531,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostReadyStartRef = useRef<number>(0);
   const lastTraceMsRef = useRef<number>(0);
   const repCoachRef = useRef(new RepCoach());  // coaching through the rep
+  const narratorRef = useRef(new DemoNarrator()); // the guide talks while demonstrating
+  const guideYawRef = useRef(90);                 // the guide figure's current viewing angle
+  const guideSeatedRef = useRef<boolean | null>(null); // last posture seen
   const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
   const ghostLowerStartRef = useRef<number>(0);   // when lowering began  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
@@ -1029,6 +1034,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           ghostPrevPhaseRef.current = "";
           ghostPhaseSeenRef.current = "";
     repCoachRef.current.reset();
+    narratorRef.current.reset();
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
@@ -1472,6 +1478,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     ghostPrevPhaseRef.current = "";
     ghostPhaseSeenRef.current = "";
     repCoachRef.current.reset();
+    narratorRef.current.reset();
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1660,12 +1667,35 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           repTarget: p?.repTarget ?? 0,
           elbowBent: flexion ? (feats?.[sd === "left" ? "leftElbowBent" : "rightElbowBent"] ?? null) : null,
           wrongPlane: flexion && plane !== null ? plane > MAX_PLANE_DEG_FLEXION : null,
+          side: p?.side === "both" ? "both" : sd,
+          oppositeMetric: flexion ? (feats?.[sd === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"] ?? null) : null,
+          startThreshold: p?.startThreshold,
         });
         if (line && typeof window !== "undefined" && window.speechSynthesis && !window.speechSynthesis.speaking) {
           const u = new SpeechSynthesisUtterance(line);
           u.rate = 0.95;
           window.speechSynthesis.speak(u);
           writeDebugLog("info", "COACHING", `Rep coach: "${line}"`);
+        }
+
+        // The guide narrates its demonstration (lib/coaching/demoNarrator.ts),
+        // on the same clock as the figure: before the first rep, and when it
+        // demonstrates again after a long pause (not the quick show between
+        // reps, which "And again" covers).
+        if (ghostPhaseInfRef.current === "ready" && typeof window !== "undefined" && window.speechSynthesis) {
+          const reps = ghostRepCountRef.current;
+          const sinceReady = (performance.now() - ghostReadyStartRef.current) / 1000;
+          const clock = demoClock(reps === 0 ? sinceReady : sinceReady - BETWEEN_REPS_REST_S);
+          const narrate = clock && (reps === 0 || clock.cycle >= 1) ? clock : null;
+          const say = narratorRef.current.update(narrate, window.speechSynthesis.speaking);
+          if (say) {
+            const u = new SpeechSynthesisUtterance(say);
+            u.rate = 0.95;
+            window.speechSynthesis.speak(u);
+            writeDebugLog("info", "COACHING", `Guide: "${say}"`);
+          }
+        } else {
+          narratorRef.current.update(null, false);
         }
       }
 
@@ -1828,8 +1858,29 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         const bent = inferenceLoop.getFeatures()?.[sideNow === "left" ? "leftElbowBent" : "rightElbowBent"];
         const plane = inferenceLoop.getFeatures()?.[sideNow === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"];
         const holdLeft = ghostHoldRemRef.current;
+        const wrongArm = repCoachRef.current.wrongArmNow;
+        const wrongPlaneNow = activeRep && plane !== null && plane !== undefined && plane > MAX_PLANE_DEG_FLEXION;
+        // Label the arm to use: before the first rep, and loudly on the wrong arm.
+        if (config.sides.length === 1 && (wrongArm || (repsDone === 0 && (infPhase === "ready" || infPhase === "lifting")))) {
+          drawArmLabel(ctx, frame, sideNow, W, H, wrongArm, now);
+        }
+        // The guide's viewing angle: side on at the start of a demonstration,
+        // turning to three-quarter (55°) as it raises the arm; facing the
+        // patient (25°) to show "in front of you" when they go out to the side.
+        const sinceReady = (now - ghostReadyStartRef.current) / 1000;
+        const clockNow = infPhase === "ready" ? demoClock(repsDone === 0 ? sinceReady : sinceReady - BETWEEN_REPS_REST_S) : null;
+        const yawTarget = wrongPlaneNow ? 25
+          : clockNow ? 90 - 35 * Math.min(1, clockNow.t / 2)
+          : 55;
+        guideYawRef.current += (yawTarget - guideYawRef.current) * 0.08;
+        // Seated or standing like the patient (kept when the legs are hidden).
+        const featsNow = inferenceLoop.getFeatures();
+        if (featsNow?.isSeated) guideSeatedRef.current = true;
+        else if (featsNow?.isStanding) guideSeatedRef.current = false;
+        const seatedNow = guideSeatedRef.current ?? (ghostPrescriptionRef.current?.posture !== "standing");
         const caption =
-          activeRep && plane !== null && plane !== undefined && plane > MAX_PLANE_DEG_FLEXION ? "Arm in front of you"
+          wrongArm ? `Use your ${sideNow} arm`
+          : wrongPlaneNow ? "Arm in front of you"
           : activeRep && bent && infPhase !== "lowering" ? "Keep your arm straight"
           : infPhase === "holding" || infPhase === "top"
             ? (holdLeft !== null ? `Hold… ${Math.max(1, Math.ceil(holdLeft / 1000))}` : "Hold it there")
@@ -1840,7 +1891,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           ctx, W, H,
           armDeg: activeRep && metricNow !== null ? Math.max(0, Math.min(180, metricNow)) : anim.ghostT * target,
           targetDeg: target,
-          seated: !!inferenceLoop.getFeatures()?.isSeated,
+          seated: seatedNow,
+          side: (ghostPrescriptionRef.current?.side ?? "right") as "right" | "left" | "both",
+          yawDeg: guideYawRef.current,
           caption,
           rgb: { r: 96, g: 190, b: 250 },
           corner: config.sides.includes("right") ? "bottom-left" : "bottom-right",
