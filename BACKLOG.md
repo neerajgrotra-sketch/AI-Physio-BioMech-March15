@@ -58,6 +58,25 @@ Set per exercise when a protocol is assigned to a patient (admin, Patients → A
   above expected; expected not below what the camera can tell apart), how they show on the patient's screen, and
   how the front-view measurement's accuracy near overhead (±6-10°) affects targets above about 150°.
 
+## Multi-camera 3D (kiosk and validation rig) (owner's question 2026-11-26)
+
+Two or three ordinary cameras can give true 3D by triangulation (each sees a joint from a different angle), with fewer
+blind spots than a single depth camera.
+
+- **What it takes:** cameras fixed in place, calibrated once (e.g. a checkerboard), time-synchronised; pose detection
+  per camera (2-3x the work per frame). Two webcams can run in one browser tab, so a test rig needs no native app.
+- **Layout:** two cameras about 45° either side of the front see both arms and legs better than front + side; a
+  third mainly helps with occlusion.
+- **Evidence:** research systems (e.g. Stanford's OpenCap, two phones) report joint angles within a few degrees of lab
+  marker capture: the accuracy range the clinician's 95% bar needs.
+- **Where it fits:** not the home product (patients won't calibrate cameras); a clinic kiosk with two pre-calibrated
+  cameras (possible premium tier; likely better than a depth camera: cheaper, sees around the body, works in the
+  browser); and, soonest, the **reference measurement for the validation study**: record each rep from two angles
+  while the single-webcam app runs, giving a true 3D angle per rep (more objective than a goniometer, which varies
+  5-10° between physios).
+- **Order:** finish the single-webcam 3D check (90° / 180° holds) first; then trial a two-camera rig as the validation
+  reference; decide kiosk hardware (two cameras vs depth camera) from what validation shows.
+
 ## 3D depth camera for front-facing measurement
 
 - **Why:** the product mockups have the patient facing the screen (kiosk, desk monitor). A forward arm raise and a
