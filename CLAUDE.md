@@ -125,6 +125,12 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again". The wrong-arm
   call is a correction: it interrupts other speech, fires on every new wrong lift (at most every 2 s) and repeats while the
   arm stays up; and the guide doesn't re-demonstrate while the patient is moving (`lastActivityMs`).
+- Layout (`SessionRunner`, row 2, the 10-foot layout from the owner's mockup, v0.6.0): the guide in its own panel
+  on the left (`guideCanvasRef`, `drawExampleCard({ full: true })`, shown for forward raises facing the camera;
+  otherwise the panel shows the exercise and its instruction, or the positioning message), the camera large on the
+  right with a big rep count and one instruction band (the coaching line, or "Hold it there… n"; coloured by tone).
+  Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
+  to be read from 2-3 m. Parked details: BACKLOG.md "Session screen layout".
 - `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
   and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check
   run says whether it or the 2D angle is closer. Code outside React renders (the ghost loop) must read

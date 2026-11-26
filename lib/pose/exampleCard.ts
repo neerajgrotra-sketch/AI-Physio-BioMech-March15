@@ -29,6 +29,8 @@ export type ExampleCardParams = {
   caption: string;
   rgb: { r: number; g: number; b: number };
   corner?: "bottom-left" | "bottom-right";
+  /** Fill the whole canvas (the guide's own panel) instead of a corner card. */
+  full?: boolean;
 };
 
 type P3 = { x: number; y: number; z: number }; // x: patient's right (mirrored: screen right), y: down, z: forward
@@ -37,16 +39,20 @@ const rad = (d: number) => (d * Math.PI) / 180;
 
 export function drawExampleCard(p: ExampleCardParams): void {
   const { ctx, W, H, armDeg, targetDeg, seated, side, caption, rgb } = p;
-  const cw = Math.round(W * 0.25), ch = Math.round(H * 0.44);
+  const full = p.full === true;
+  const cw = full ? W : Math.round(W * 0.25), ch = full ? H : Math.round(H * 0.44);
   const pad = 10;
-  const x0 = p.corner === "bottom-right" ? W - cw - pad : pad;
-  const y0 = H - ch - pad;
+  const x0 = full ? 0 : p.corner === "bottom-right" ? W - cw - pad : pad;
+  const y0 = full ? 0 : H - ch - pad;
+  // Text sizes: big in the panel, to be read from across the room.
+  const titlePx = full ? Math.round(H * 0.032) : 12;
+  const captionPx = full ? Math.round(H * 0.058) : 13;
   const col = (a: number) => `rgba(${rgb.r},${rgb.g},${rgb.b},${a})`;
 
   // Turn so the moving arm is on the near side when seen side on.
   const turn = side === "left" ? 1 : -1;
   const yaw = rad(p.yawDeg) * turn;
-  const u = ch / 4.9;                                   // pixels per torso length
+  const u = full ? ch / 4.4 : ch / 4.9;                                   // pixels per torso length
   const cx = x0 + cw / 2, topY = y0 + ch * 0.12;
   // Offsets that centre the figure in the card (set below, once its extent
   // is known: a seated figure is shorter and used to sit at the top).
@@ -113,26 +119,26 @@ export function drawExampleCard(p: ExampleCardParams): void {
     const pts = segs.flatMap((sg) => [project(sg.a), project(sg.b)]).concat([project({ ...head, y: head.y - 0.3 })]);
     const minX = Math.min(...pts.map((q) => q.x)), maxX = Math.max(...pts.map((q) => q.x));
     const minY = Math.min(...pts.map((q) => q.y)), maxY = Math.max(...pts.map((q) => q.y));
-    const areaTop = y0 + 26, areaBottom = y0 + ch - 26;
+    const areaTop = y0 + (full ? titlePx * 2.4 : 26), areaBottom = y0 + ch - (full ? captionPx * 2.2 : 26);
     oy = (areaTop + areaBottom) / 2 - (minY + maxY) / 2;
     ox = (x0 + cw / 2) - (minX + maxX) / 2;
   }
 
   ctx.save();
-  // Card.
-  ctx.fillStyle = "rgba(10,14,30,0.8)";
+  // Card (in the panel: the panel's own colour, no border).
+  ctx.fillStyle = full ? "#141A2E" : "rgba(10,14,30,0.8)";
   ctx.strokeStyle = "rgba(255,255,255,0.18)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   (ctx as any).roundRect ? (ctx as any).roundRect(x0, y0, cw, ch, 12) : ctx.rect(x0, y0, cw, ch);
   ctx.fill();
-  ctx.stroke();
+  if (!full) ctx.stroke();
   ctx.save();
   ctx.beginPath(); ctx.rect(x0, y0, cw, ch); ctx.clip();
   ctx.fillStyle = "rgba(255,255,255,0.75)";
-  ctx.font = "600 12px Inter, system-ui, sans-serif";
+  ctx.font = `700 ${titlePx}px Inter, system-ui, sans-serif`;
   ctx.textAlign = "left";
-  ctx.fillText("YOUR GUIDE", x0 + 10, y0 + 18);
+  ctx.fillText("YOUR GUIDE", x0 + (full ? titlePx * 1.2 : 10), y0 + (full ? titlePx * 1.8 : 18));
 
   // Target: dashed line from the moving shoulder at the target angle (forward).
   const reached = armDeg >= targetDeg - 1;
@@ -183,8 +189,8 @@ export function drawExampleCard(p: ExampleCardParams): void {
 
   // Caption.
   ctx.fillStyle = "rgba(255,255,255,0.95)";
-  ctx.font = "600 13px Inter, system-ui, sans-serif";
+  ctx.font = `${full ? 800 : 600} ${captionPx}px Inter, system-ui, sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText(caption, x0 + cw / 2, y0 + ch - 10);
+  ctx.fillText(caption, x0 + cw / 2, y0 + ch - (full ? captionPx * 0.8 : 10), cw - 20);
   ctx.restore();
 }

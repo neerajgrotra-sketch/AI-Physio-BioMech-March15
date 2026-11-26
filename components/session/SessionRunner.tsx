@@ -498,6 +498,11 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const sessionStartedAtMsRef = useRef<number | null>(null);
   // Ghost silhouette refs
   const ghostCanvasRef  = useRef<HTMLCanvasElement | null>(null);
+  // The guide's own panel, left of the camera (the 10-foot layout): the
+  // guide figure is drawn here for forward raises facing the camera.
+  const guideCanvasRef  = useRef<HTMLCanvasElement | null>(null);
+  const [guideInPanel, setGuideInPanel] = useState(false);
+  const guideInPanelRef = useRef(false);
   // Refs hold latest values for rAF ghost loop - avoids stale closures
   const ghostFrameRef   = useRef<import("@/lib/types/pose").PoseFrame | null>(null);
   const ghostSlugRef    = useRef<string>("");
@@ -1734,6 +1739,10 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       // ghost would sweep the arm sideways (the wrong movement), so step 12
       // draws the front-view ghost arm and a "Reach here" line instead.
       const frontFlexion = slug.startsWith("shoulder_flexion") && inferenceLoop.getFacingView() === "front";
+      if (frontFlexion !== guideInPanelRef.current) {
+        guideInPanelRef.current = frontFlexion;
+        setGuideInPanel(frontFlexion);
+      }
 
       // Phase timing for the ghost (when "ready" and "lowering" began).
       {
@@ -1912,8 +1921,13 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           : infPhase === "lowering" ? "Lower slowly"
           : infPhase === "lifting" ? (metricNow !== null && metricNow < target ? "Higher…" : "That's it")
           : `Raise to ${Math.round(target)}° — arm straight`;
-        drawExampleCard({
-          ctx, W, H,
+        const gc = guideCanvasRef.current;
+        const gctx = gc?.getContext("2d") ?? null;
+        const GW = 600, GH = 660;
+        if (gc && (gc.width !== GW || gc.height !== GH)) { gc.width = GW; gc.height = GH; }
+        gctx?.clearRect(0, 0, GW, GH);
+        if (gctx) drawExampleCard({
+          ctx: gctx, W: GW, H: GH, full: true,
           armDeg: activeRep && metricNow !== null ? Math.max(0, Math.min(180, metricNow)) : anim.ghostT * target,
           targetDeg: target,
           seated: seatedNow,
@@ -2291,16 +2305,51 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         </div>
       </div>
 
-      {/* ── ROW 2: MAIN GRID ── */}
+      {/* ── ROW 2: THE EXERCISE SCREEN (read from 2-3 m) ──
+          The guide in its own panel on the left, the camera large on the
+          right (the owner's request: at home, once placed far enough back to
+          be measured, patients could not see the small camera view). The
+          coaching, Camera Sees, session details and logs stay underneath for
+          now (the owner, 2026-11-26). */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.1fr) minmax(0,0.9fr)",
+        gridTemplateColumns: isMobile ? "1fr" : "minmax(300px,2fr) minmax(0,3fr)",
         gap: 16,
-        alignItems: "start",
+        alignItems: "stretch",
         marginBottom: 16,
       }}>
 
-        {/* LEFT: Framing Intelligence Bar + Camera */}
+        {/* LEFT: the guide */}
+        <section aria-label="Your guide" style={{
+          background: "#141A2E", borderRadius: 16, border: "1px solid rgba(255,255,255,0.06)",
+          padding: 12, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: isMobile ? 0 : 360,
+          order: isMobile ? 0 : undefined,
+        }}>
+          <canvas
+            ref={guideCanvasRef}
+            width={600} height={660}
+            aria-label="Your guide showing the movement"
+            style={{
+              width: "100%", height: isMobile ? "38vh" : "auto", maxHeight: isMobile ? "38vh" : "calc(100vh - 160px)",
+              objectFit: "contain", display: guideInPanel && exerciseOnScreen ? "block" : "none",
+            }}
+          />
+          {!(guideInPanel && exerciseOnScreen) && (
+            <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>
+                {positioningOnScreen ? "LET'S GET YOU IN PLACE" : "YOUR EXERCISE"}
+              </div>
+              <div style={{ fontSize: isMobile ? 24 : 34, fontWeight: 800, lineHeight: 1.15, color: "white" }}>
+                {(currentQueueItem?.prescription as any)?.clinicalName ?? currentQueueItem?.displayName ?? "Your session"}
+              </div>
+              <div style={{ fontSize: isMobile ? 17 : 22, color: "#C9D2EE", lineHeight: 1.4 }}>
+                {positioningOnScreen ? framingPanelState.message : instructionBody}
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* RIGHT: Framing Intelligence Bar + Camera */}
         <div>
 
           {/* ── FRAMING INTELLIGENCE BAR ── */}
@@ -2434,6 +2483,43 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                 />
                 {/* Positioning coach: until the patient is placed and still (before the first rep) */}
                 {positioningOnScreen && <PositionGuideOverlay guide={framingIntelligence.positionGuide!} />}
+                {/* Big rep count and one instruction line, readable from across the room. */}
+                {exerciseOnScreen && currentPrescription && (
+                  <div style={{
+                    position: "absolute", top: 12, right: 12, pointerEvents: "none",
+                    background: "rgba(11,16,32,0.82)", borderRadius: 16, padding: isMobile ? "6px 12px" : "10px 20px",
+                    display: "flex", flexDirection: "column", alignItems: "flex-end",
+                  }}>
+                    <span style={{ fontSize: isMobile ? 11 : 15, fontWeight: 700, letterSpacing: "0.08em", color: "#AEB8D6" }}>REPS</span>
+                    <span style={{ fontSize: isMobile ? 40 : "clamp(48px, 5vw, 88px)", fontWeight: 800, lineHeight: 1, color: "white" }}>
+                      {inferenceLoop.repCount}
+                      <span style={{ fontSize: "0.5em", color: "#AEB8D6" }}> / {currentPrescription.repTarget}</span>
+                    </span>
+                  </div>
+                )}
+                {exerciseOnScreen && (() => {
+                  const holding = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null;
+                  const text = holding
+                    ? `Hold it there… ${Math.max(1, Math.ceil(inferenceLoop.holdRemainingMs! / 1000))}`
+                    : coachingPanelState.isThinking ? null : coachingPanelState.message;
+                  if (!text) return null;
+                  const tone = holding ? "encouraging" : coachingPanelState.tone;
+                  const look =
+                    tone === "encouraging" ? { bg: "#3FB950", fg: "#08240F" }
+                    : tone === "corrective" ? { bg: "#F5A524", fg: "#1A1200" }
+                    : tone === "urgent" ? { bg: "#F85149", fg: "#FFFFFF" }
+                    : { bg: "#E7ECFA", fg: "#0B1020" };
+                  return (
+                    <div aria-live="polite" style={{
+                      position: "absolute", left: 12, right: 12, bottom: 12, pointerEvents: "none",
+                      background: look.bg, color: look.fg, borderRadius: 16,
+                      padding: isMobile ? "10px 14px" : "16px 24px",
+                      fontSize: isMobile ? 20 : "clamp(24px, 2.8vw, 46px)", fontWeight: 800, lineHeight: 1.15,
+                    }}>
+                      {text}
+                    </div>
+                  );
+                })()}
               </div>
               {inferenceLoop.engineError && (
                 <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(255,100,100,0.1)", color: "#ff8f8f", fontSize: 13 }}>
@@ -2444,8 +2530,10 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           </div>
         </div>
 
-        {/* RIGHT: Coaching + Camera Sees */}
-        <div style={{ display: "grid", gap: 12 }}>
+      </div>
+
+      {/* ── ROW 2b: coaching, progress and Camera Sees, under the exercise screen ── */}
+        <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(320px, 1fr))", alignItems: "start", marginBottom: 16 }}>
 
           {/* ── LIVE COACHING CARD ── */}
           <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -2654,7 +2742,6 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             </div>
           </div>
         </div>
-      </div>
 
       {/* ── ROW 3: SESSION DETAILS TABLE ── */}
       {combinedQueue.length > 0 && (
