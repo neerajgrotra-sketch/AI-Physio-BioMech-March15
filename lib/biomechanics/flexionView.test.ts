@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { elevationFromDrop, FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
-import { flexionFront, flexionSide, frameFromPixels, place, type PixelBody } from "@/lib/testing/poses";
+import { flexionFront, flexionSide, frameFromPixels, place, standingFront, type PixelBody } from "@/lib/testing/poses";
 import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 
 /** Runs bodies through extract -> smoothing -> estimator, as the loop does. */
@@ -181,5 +181,40 @@ describe("a close laptop camera (strong perspective)", () => {
       const r = readAt(deg, near);
       expect(Math.abs(r.f.rightArmElevationDeg! - deg), `at ${deg}°`).toBeLessThanOrEqual(12);
     }
+  });
+});
+
+describe("form facing the camera: forward or out to the side, straight or bent", () => {
+  it("a forward raise reads as in front (plane near 0°)", () => {
+    for (const deg of [70, 100, 120]) {
+      const r = readAt(deg);
+      expect(r.f.rightArmPlaneDeg!, `at ${deg}°`).toBeLessThan(25);
+    }
+  });
+
+  it("drifting 20° outward is still a forward raise", () => {
+    expect(readAt(100, { outDeg: 20 }).f.rightArmPlaneDeg!).toBeLessThan(40);
+  });
+
+  it("the same height raised out to the side (abduction) reads as sideways (plane near 90°)", () => {
+    // standingFront raises the arm out in the image plane: a sideways raise.
+    const side = (deg: number) => standingFront({ rightArmDeg: deg, leftArmDeg: 3 });
+    const out = run([...repeat(side(3), 60), ...repeat(side(100), 30)]);
+    const f = out[out.length - 1].f;
+    expect(Math.abs(f.rightArmElevationDeg! - 100)).toBeLessThan(12); // the height alone can't tell...
+    expect(f.rightArmPlaneDeg!).toBeGreaterThan(60);                  // ...but the plane can
+  });
+
+  it("a straight arm is not bent; a bent elbow (hand up, upper arm low) is", () => {
+    expect(readAt(80).f.rightElbowBent).toBe(false);
+    const bent = (deg: number) => {
+      const b = flexionFront(deg);
+      // Forearm pointing straight up from the elbow.
+      b.right_wrist = { x: b.right_elbow!.x, y: b.right_elbow!.y - 120 };
+      return b;
+    };
+    const out = run([...repeat(flexionFront(3), 60), ...repeat(bent(60), 30)]);
+    expect(out[out.length - 1].f.rightElbowBent).toBe(true);
+    expect(out[out.length - 1].f.rightArmElevationDeg!).toBeLessThan(75); // and the angle is still the upper arm's
   });
 });

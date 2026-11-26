@@ -169,6 +169,18 @@ export function emptyMovementFeatures(): MovementFeatures {
     rightUpperArmReachSw: null,
     leftUpperArmDropSw: null,
     leftUpperArmReachSw: null,
+    rightWristDrop: null,
+    leftWristDrop: null,
+    rightElbowOut: null,
+    leftElbowOut: null,
+    rightWristDropSw: null,
+    leftWristDropSw: null,
+    rightElbowOutSw: null,
+    leftElbowOutSw: null,
+    rightArmPlaneDeg: null,
+    leftArmPlaneDeg: null,
+    rightElbowBent: null,
+    leftElbowBent: null,
     rightShoulderAbductionDeg: null,
     leftShoulderAbductionDeg: null,
     bilateralShoulderAbductionDeg: null,
@@ -234,6 +246,14 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
   const rightUpperArmReachSw = rSh && rEl ? perSw(dist(rSh, rEl)) : null;
   const leftUpperArmDropSw = lSh && lEl ? perSw(lEl.y - lSh.y) : null;
   const leftUpperArmReachSw = lSh && lEl ? perSw(dist(lSh, lEl)) : null;
+  const rightWristDrop = rSh && rWr ? perTorso(rWr.y - rSh.y) : null;
+  const leftWristDrop = lSh && lWr ? perTorso(lWr.y - lSh.y) : null;
+  const rightElbowOut = rSh && rEl ? perTorso(Math.abs(rEl.x - rSh.x)) : null;
+  const leftElbowOut = lSh && lEl ? perTorso(Math.abs(lEl.x - lSh.x)) : null;
+  const rightWristDropSw = rSh && rWr ? perSw(rWr.y - rSh.y) : null;
+  const leftWristDropSw = lSh && lWr ? perSw(lWr.y - lSh.y) : null;
+  const rightElbowOutSw = rSh && rEl ? perSw(Math.abs(rEl.x - rSh.x)) : null;
+  const leftElbowOutSw = lSh && lEl ? perSw(Math.abs(lEl.x - lSh.x)) : null;
 
   const rightShoulderAbductionDeg = rSh ? shoulderAbductionDeg(rSh, rWr, rEl) : null;
   const leftShoulderAbductionDeg = lSh ? shoulderAbductionDeg(lSh, lWr, lEl) : null;
@@ -300,6 +320,9 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     rightUpperArmReachSw,
     leftUpperArmDropSw,
     leftUpperArmReachSw,
+    rightWristDrop, leftWristDrop, rightElbowOut, leftElbowOut,
+    rightWristDropSw, leftWristDropSw, rightElbowOutSw, leftElbowOutSw,
+    rightArmPlaneDeg: null, leftArmPlaneDeg: null, rightElbowBent: null, leftElbowBent: null,
     rightShoulderAbductionDeg,
     leftShoulderAbductionDeg,
     bilateralShoulderAbductionDeg,

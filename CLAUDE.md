@@ -49,7 +49,9 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    only waits for the arm to come back: below finish, or half way down and rising again (`REARM_*`), which starts the
    next rep. A hold dropped early fails at once (`failed_hold`). Isolation: the other arm may not rise more than
    `maxOppositeArmElevationDeg` above where it rested while ready (`oppositeRest`), not an absolute 35° (a seated
-   patient's resting arm reads 40-60°).
+   patient's resting arm reads 40-60°). Form: a forward raise facing the camera that goes out to the side (plane over
+   `MAX_PLANE_DEG_FLEXION` 45°, from `armForm` in flexionView.ts: the elbow's sideways offset against the forward
+   part left over) fails as `failed_form`; a bent elbow is coached, not failed.
    A missing reading (`null`) pauses the rep; it must never be treated as 0°.
 6. Coaching (`lib/coaching/*`, `lib/engine/*`) and framing (`lib/framing/*`) sit on top.
 
@@ -104,8 +106,13 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   like a physio (`demoCycle`: rise, pause at the target, lower, pause), holds at the target with the patient, lowers
   back to rest with them after the rep, and 1.5 s later shows the next one. Facing the camera, forward raises show
   that timing on an "Example" card in a corner (`lib/pose/exampleCard.ts`: a side-view figure with the target angle;
-  the owner found a ghost painted over the patient odd) and a short target marker beside the raised arm, never across
-  the face (`lib/pose/reachGuide.ts`). Voice: the rep-completed line ends "Now lower your
+  the owner found a ghost painted over the patient odd; it demonstrates once, then waits, `demoOnceThenWait`, and during
+  a rep mirrors the patient's own arm) and a short marker beside the raised arm at the height the ELBOW must reach,
+  with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`). `lib/coaching/repCoach.ts`
+  coaches through the rep: "A little higher" on a stall, "Keep your arm straight", "Bring your arm in front of you",
+  "And again".
+- EXPERIMENT: `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the
+  webcam); logged on the TRACE line (`3d: elev plane`) next to the 2D method, not yet scored. Voice: the rep-completed line ends "Now lower your
   arm slowly"; holds of 3 s or more count the last seconds aloud.
 - Test logs: the debug log is saved to `session_debug_logs` every 30 s while running, when the tab is hidden, and at
   the end (read the newest row per session). It starts with an `APP` entry (version, commit) and has a `TRACE` line

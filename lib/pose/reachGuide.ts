@@ -1,25 +1,23 @@
 // ============================================================
 // lib/pose/reachGuide.ts
 // ============================================================
-// The front-view guide for a forward arm raise. Facing the camera the
-// ghost can't show a forward raise (it would sweep the arm sideways, a
-// different exercise), so instead a "Reach here" line marks the height the
-// hand must reach for the target angle, and turns green when it is reached.
-//
-// Height of the hand at elevation θ (straight elbow): shoulder.y + arm·cos θ
-// (image y grows downward), with the arm's length from the learned upper-
-// arm length (lib/biomechanics/flexionView.ts, in torso lengths) and a
-// forearm about 0.9 of it. Pure: reachLineY is tested; drawReachGuide only
-// draws.
+// The front-view target marker for a forward arm raise: a short bar beside
+// the raised arm at the height the ELBOW must reach for the target angle
+// (shoulder.y + upperArm·cos θ, image y growing downward; the upper arm's
+// length is the learned one from lib/biomechanics/flexionView.ts, in torso
+// lengths), with a dot on the patient's own elbow. Green when reached.
+// Pure: reachLineY is tested; drawReachGuide only draws.
 // ============================================================
 
 import type { PoseFrame } from "@/lib/types/pose";
 
-const FOREARM_SHARE = 0.9;
 
 /**
- * Where the hand should reach, as a fraction of the frame height (0 top,
- * 1 bottom), or null if the shoulder, hips or arm length are not known.
+ * Where the ELBOW must reach for the target angle, as a fraction of the
+ * frame height (0 top, 1 bottom), or null if not known. The elbow, not the
+ * hand: the angle measured is the upper arm's, and with a bent elbow the
+ * hand reached a hand-height line while the upper arm was far short (the
+ * owner's test). elbow.y = shoulder.y + upperArm * cos(target).
  */
 export function reachLineY(
   frame: PoseFrame,
@@ -29,13 +27,10 @@ export function reachLineY(
 ): number | null {
   if (!upperArmTorsos) return null;
   const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
-  const A = frame.sourceWidth && frame.sourceHeight ? frame.sourceWidth / frame.sourceHeight : 16 / 9;
-  const seen = (k: string) => (lm[k] && (lm[k]!.score ?? 1) >= 0.35 ? { x: lm[k]!.x * A, y: lm[k]!.y } : null);
-  const sh = seen(`${side}_shoulder`);
+  const sh = lm[`${side}_shoulder`];
   const torso = torsoLength(frame);
-  if (!sh || torso === null) return null;
-  const arm = upperArmTorsos * torso * (1 + FOREARM_SHARE);
-  return sh.y + arm * Math.cos((targetDeg * Math.PI) / 180);
+  if (!sh || (sh.score ?? 1) < 0.35 || torso === null) return null;
+  return sh.y + upperArmTorsos * torso * Math.cos((targetDeg * Math.PI) / 180);
 }
 
 // Shoulder width is about 0.8 of the torso length facing the camera.
@@ -91,7 +86,7 @@ export function drawReachGuide(
   ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
   ctx.setLineDash([]);
   // Label just above the bar, anchored at its outer end.
-  const label = reached ? "✓ Target" : `Reach ${Math.round(targetDeg)}°`;
+  const label = reached ? "✓ Elbow at target" : "Lift your elbow to here";
   ctx.font = "700 16px Inter, system-ui, sans-serif";
   const tw = ctx.measureText(label).width;
   const lx = out > 0 ? Math.min(x2 - tw, W - tw - 8) : Math.max(x2, 8);
@@ -102,5 +97,14 @@ export function drawReachGuide(
   ctx.fillStyle = `rgba(${col},1)`;
   ctx.textAlign = "left";
   ctx.fillText(label, lx, y - 12);
+  // A dot on the patient's own elbow, so they can see it travel to the line.
+  const el = lm[`${side}_elbow`];
+  if (el) {
+    const ex = (1 - el.x) * W, ey = el.y * H;
+    ctx.fillStyle = `rgba(${col},0.95)`;
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(ex, ey, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
   ctx.restore();
 }

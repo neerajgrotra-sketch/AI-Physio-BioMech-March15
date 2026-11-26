@@ -6,6 +6,8 @@ export type RepFailureReason =
   | "failed_balance"
   | "failed_isolation"
   | "failed_bilateral_participation"
+  // Raised the wrong way, e.g. out to the side in a forward raise.
+  | "failed_form"
   | null;
 
 export type RepEvaluation = {
@@ -38,6 +40,8 @@ export type RuntimeRepState = {
   attemptPeak?: number | null;
   /** Where the opposite arm rests (updated while ready), for the isolation check. */
   oppositeRest?: number | null;
+  /** The arm went the wrong way (e.g. out to the side) during this rep. */
+  everBadForm?: boolean;
 
   lastRepEvaluation: RepEvaluation;
 };
