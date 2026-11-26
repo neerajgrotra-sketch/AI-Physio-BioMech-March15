@@ -156,6 +156,14 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   bill. They need a check, such as a valid session id and a rate limit.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
 
+## Assignment IDs
+
+- Assigning a protocol to a patient creates a `sessions` row; its id is the assignment. `lib/app/assignment.ts`
+  `assignmentCode(id)` is its readable form, `A-` + the first 8 hex characters (e.g. `A-C3CD9D46`), shown on the admin
+  session card (click copies the full id), on the session screen, and in the APP entry at the top of every saved debug
+  log. Look one up with `replace(sessions.id::text,'-','') ilike '<8 chars>%'`; each run is a `session_results` row
+  (`prescription_id`), logs are `session_debug_logs.session_id`, the protocol is `sessions.source_protocol_id`.
+
 ## Versions
 
 - The version is `package.json`'s `version` plus the commit Vercel built: `next.config.mjs` puts them in

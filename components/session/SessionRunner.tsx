@@ -18,6 +18,7 @@ import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
+import { assignmentCode } from "@/lib/app/assignment";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -1285,7 +1286,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
       const supabase = getSupabaseClient();
       // globalDebugLog is newest-first — reverse to get chronological order for Supabase
       const allEntries = [
-        { level: "info", category: "APP", message: `app ${versionLabel()}`, app_version: APP_VERSION, app_commit: APP_COMMIT, app_branch: APP_BRANCH, timestamp: new Date().toISOString() },
+        { level: "info", category: "APP", message: `app ${versionLabel()} · assignment ${assignmentCode(prescriptionId)}`, app_version: APP_VERSION, app_commit: APP_COMMIT, app_branch: APP_BRANCH, assignment: assignmentCode(prescriptionId), timestamp: new Date().toISOString() },
         ...[...globalDebugLog].reverse(),
       ];
       const framingOnly = allEntries.filter(e => e.category === "FRAMING" || e.level === "FRAMING_VOICE" || e.level === "FRAMING_SNAP");
@@ -2089,11 +2090,11 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             {/* Session ID chip — monospace, copy on click */}
             {prescriptionId && (
               <div
-                title="Click to copy session ID"
+                title="Assignment ID — click to copy the full ID"
                 onClick={() => copyToClipboard(prescriptionId)}
                 style={{ fontSize: 10, fontFamily: "monospace", color: "#484f58", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 5, padding: "2px 7px", cursor: "pointer", letterSpacing: 0.5, userSelect: "none" }}
               >
-                {prescriptionId.slice(0, 8)}
+                {assignmentCode(prescriptionId)}
               </div>
             )}
             {/* Which build is running */}
