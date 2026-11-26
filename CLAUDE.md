@@ -124,12 +124,16 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   `lib/coaching/repCoach.ts` coaches through the rep: "A little higher", "Keep your arm straight", "Bring your arm in
   front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again". The wrong-arm
   call is a correction: it interrupts other speech, fires on every new wrong lift (at most every 2 s) and repeats while the
-  arm stays up; and the guide doesn't re-demonstrate while the patient is moving (`lastActivityMs`).
+  arm stays up; and the guide doesn't re-demonstrate while the patient is moving (`lastActivityMs`). Where the other arm
+  rests is learned only from small, slow changes (it follows the arm down quickly, drifts up over seconds, ignores
+  anything 10° above it), in RepCoach and in the isolation check alike: a plain average chased a lifted arm, so
+  the wrong arm was never called (v0.6.0 run).
 - Layout (`SessionRunner`, row 2, the 10-foot layout from the owner's mockup, v0.6.0): the guide in its own panel
   on the left (`guideCanvasRef`, `drawExampleCard({ full: true })`, shown for forward raises facing the camera;
   otherwise the panel shows the exercise and its instruction, or the positioning message), the camera large on the
   right with a big rep count and one instruction band (the coaching line, or "Hold it there… n"; coloured by tone).
-  Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
+  On a screen taller than wide (`isPortrait`, a monitor turned upright) or a phone, the guide stacks above a
+  full-width camera. Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
   to be read from 2-3 m. Parked details: BACKLOG.md "Session screen layout".
 - `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
   and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check

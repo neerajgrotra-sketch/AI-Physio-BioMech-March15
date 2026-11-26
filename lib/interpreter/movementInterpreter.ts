@@ -290,11 +290,18 @@ function interpretRaiseHoldLower(
     features.torsoLeanDeg === null ||
     features.torsoLeanDeg <= maxTorsoLeanDeg;
 
-  // Track where the other arm rests while waiting for a rep (smoothed).
+  // Track where the other arm rests while waiting for a rep: down quickly,
+  // up only slowly and only for small changes (within 10°). A plain average
+  // followed an arm being lifted, so lifting it slowly was never caught
+  // (the same flaw as RepCoach's, seen in the owner's v0.6.0 run).
   const opp = oppositeArm(features, prescription);
   let oppositeRest = currentRepState.oppositeRest ?? null;
-  if (currentRepState.phase === "ready" && opp !== null) {
-    oppositeRest = oppositeRest === null ? opp : oppositeRest + (opp - oppositeRest) * 0.1;
+  if (opp !== null) {
+    if (oppositeRest === null) oppositeRest = opp;
+    else if (opp < oppositeRest) oppositeRest += (opp - oppositeRest) * 0.2; // quickly, but a one-frame glitch can't drag it down
+    else if (currentRepState.phase === "ready" && opp - oppositeRest <= 10) {
+      oppositeRest += (opp - oppositeRest) * 0.02;
+    }
   }
   const isolationOk = getIsolationOk(features, prescription, oppositeRest);
   const bilateralParticipationOk = getBilateralParticipationOk(

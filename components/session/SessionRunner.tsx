@@ -587,6 +587,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [voiceEnabled, setVoiceEnabledState] = useState(true);
   const [selectorCollapsed, setSelectorCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  // A screen taller than it is wide (a monitor turned upright, a tablet on a
+  // stand): the guide goes above the camera so both use the full width.
+  const [isPortrait, setIsPortrait] = useState(false);
   // Soft pause state — inference stops, camera stays on, timer freezes
   const [isPaused, setIsPaused] = useState(false);
 
@@ -620,7 +623,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   }, []);
 
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
+    const check = () => {
+      setIsMobile(window.innerWidth < 768);
+      setIsPortrait(window.innerHeight > window.innerWidth * 1.1);
+    };
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
@@ -2313,7 +2319,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           now (the owner, 2026-11-26). */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: isMobile ? "1fr" : "minmax(300px,2fr) minmax(0,3fr)",
+        gridTemplateColumns: isMobile || isPortrait ? "1fr" : "minmax(300px,2fr) minmax(0,3fr)",
         gap: 16,
         alignItems: "stretch",
         marginBottom: 16,
@@ -2322,15 +2328,14 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         {/* LEFT: the guide */}
         <section aria-label="Your guide" style={{
           background: "#141A2E", borderRadius: 16, border: "1px solid rgba(255,255,255,0.06)",
-          padding: 12, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: isMobile ? 0 : 360,
-          order: isMobile ? 0 : undefined,
+          padding: 12, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: isMobile || isPortrait ? 0 : 360,
         }}>
           <canvas
             ref={guideCanvasRef}
             width={600} height={660}
             aria-label="Your guide showing the movement"
             style={{
-              width: "100%", height: isMobile ? "38vh" : "auto", maxHeight: isMobile ? "38vh" : "calc(100vh - 160px)",
+              width: "100%", height: isMobile || isPortrait ? "34vh" : "auto", maxHeight: isMobile || isPortrait ? "34vh" : "calc(100vh - 160px)",
               objectFit: "contain", display: guideInPanel && exerciseOnScreen ? "block" : "none",
             }}
           />
