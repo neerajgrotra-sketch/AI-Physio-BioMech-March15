@@ -102,3 +102,30 @@ describe("RepCoach: the wrong arm", () => {
     expect(said.map((s) => s[1]).some((t) => t.includes("your left arm"))).toBe(false);
   });
 });
+
+describe("RepCoach: the wrong arm, tried again and again", () => {
+  const right = { side: "right" as const, startThreshold: 50 };
+  it("each new wrong lift is called out (not just the first)", () => {
+    const c = new RepCoach();
+    const lift = [
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 100, ...right }, 8),  // up 0.8 s
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 17),  // down 1.7 s
+    ];
+    const said = run(c, [...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20), ...lift, ...lift, ...lift]);
+    expect(said.filter((s) => s[1].includes("left arm")).length).toBe(3);
+  });
+
+  it("held up, the call repeats", () => {
+    const c = new RepCoach();
+    const said = run(c, [...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20), ...repeat({ phase: "ready", metric: 20, oppositeMetric: 100, ...right }, 100)]);
+    expect(said.filter((s) => s[1].includes("left arm")).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("marks its line as a correction", () => {
+    const c = new RepCoach();
+    run(c, repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20));
+    let kind: string | null = null;
+    for (let k = 0; k < 10; k++) { if (c.update({ ...base, ...right, phase: "ready", metric: 20, oppositeMetric: 100, nowMs: 2000 + k * 100 })) kind = c.lastKind; }
+    expect(kind).toBe("wrongArm");
+  });
+});

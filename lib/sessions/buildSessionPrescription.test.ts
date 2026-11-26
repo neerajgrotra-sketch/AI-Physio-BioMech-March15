@@ -445,3 +445,36 @@ describe("lifting the wrong arm (left, in a right-arm exercise)", () => {
     expect(r.repCount).toBe(1);
   });
 });
+
+describe("lifting only the upper arm, forearm hanging (the owner's test)", () => {
+  const slug = "shoulder_flexion_right";
+  const p = (() => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+  })();
+  const elbowOnly = (v: number) => {
+    const b = flexionFront(v);
+    if (v > 40) b.right_wrist = { x: b.right_elbow!.x, y: b.right_elbow!.y + 120 }; // forearm hangs straight down
+    return b;
+  };
+
+  it("never holds, and fails as 'keep your arm straight' when lowered", () => {
+    const pts = oneRep(5, 120, p.hold.durationMs);
+    const r = replay(p, pts.map(({ t, v }) => frameFromPixels(elbowOnly(v), 1280, 720, { timestamp: t })));
+    expect(r.events.some((e) => e.kind === "hold")).toBe(false);
+    expect(r.repCount).toBe(0);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_straight_arm");
+  });
+
+  it("straightening the arm at the top starts the hold, and the rep counts", () => {
+    const pts = timeline([
+      [3500, hold(5)], [1000, ramp(5, 120)],
+      [1000, hold(120)],                       // bent at the top: waits
+      [p.hold.durationMs + 600, hold(121)],    // straightened (marked by 121)
+      [1000, ramp(121, 5)], [800, hold(5)],
+    ]);
+    const fr = pts.map(({ t, v }) => frameFromPixels(v === 120 ? elbowOnly(v) : flexionFront(v), 1280, 720, { timestamp: t }));
+    const r = replay(p, fr);
+    expect(r.repCount).toBe(1);
+  });
+});

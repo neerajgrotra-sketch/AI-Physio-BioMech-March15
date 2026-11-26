@@ -72,8 +72,9 @@ export function updateRepState(
   balanceOk: boolean,
   isolationOk: boolean,
   bilateralParticipationOk: boolean,
-  formOk = true
+  formIssue: "plane" | "elbow" | null = null
 ): RuntimeRepState {
+  const formOk = formIssue === null;
   // No reading this frame (the joint was not seen, or tracking dropped out):
   // keep the rep exactly where it is. It used to count as 0°, which dropped
   // a hold into "lowering" and failed the rep on a single lost frame.
@@ -105,6 +106,7 @@ export function updateRepState(
   let everHadBilateralParticipationGap = currentState.everHadBilateralParticipationGap;
   let everBadForm = currentState.everBadForm ?? false;
   let formBadSinceMs = currentState.formBadSinceMs ?? null;
+  let badFormKind = currentState.badFormKind ?? null;
 
   let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
   let dipStartedAtMs = currentState.dipStartedAtMs ?? null;
@@ -177,7 +179,8 @@ export function updateRepState(
           justFailedRep = true;
           lastRepEvaluation =
             everBadForm
-              ? buildRepEvaluation("failed", "failed_form") // reached the height, but never held it the right way
+              // reached the height, but never held it the right way
+              ? buildRepEvaluation("failed", badFormKind === "elbow" ? "failed_straight_arm" : "failed_form")
               : prescription.side === "both" && everHadBilateralParticipationGap
               ? buildRepEvaluation("failed", "failed_bilateral_participation")
               : buildRepEvaluation("failed", "failed_height");
@@ -208,6 +211,7 @@ export function updateRepState(
         // then brought in front while up — that is now a good rep).
         enteredTopAtMs = nowMs;
         everBadForm = true;
+        badFormKind = formIssue;
       } else if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
         // No hold: the rep is done the moment the target is reached.
         lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
@@ -228,9 +232,10 @@ export function updateRepState(
       if (!formOk && value >= prescription.targetThreshold - tolerance) {
         if (formBadSinceMs === null) formBadSinceMs = nowMs;
         if (nowMs - formBadSinceMs >= HOLD_DIP_GRACE_MS) {
-          phase = "top";           // the hold restarts once the arm is back in front
+          phase = "top";           // the hold restarts once the form is right again
           enteredTopAtMs = nowMs;
           everBadForm = true;
+          badFormKind = formIssue;
           formBadSinceMs = null;
           break;
         }
@@ -323,6 +328,7 @@ export function updateRepState(
 
     everBadForm,
     formBadSinceMs: phase === "holding" ? formBadSinceMs : null,
+    badFormKind: everBadForm ? badFormKind : null,
     dipStartedAtMs: phase === "holding" ? dipStartedAtMs : null,
     attemptPeak: phase === "lifting" || phase === "lowering" ? attemptPeak : null,
 

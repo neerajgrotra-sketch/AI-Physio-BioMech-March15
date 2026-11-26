@@ -166,16 +166,25 @@ function getIsolationOk(
 // (45 wrongly failed two forward reps).
 export const MAX_PLANE_DEG_FLEXION = 60;
 
-/** Forward raises facing the camera: the arm must go forward, not out to the side. */
-function getFormOk(features: MovementFeatures, prescription: ExercisePrescription): boolean {
+/**
+ * Forward raises facing the camera: what is wrong with the arm's form now,
+ * if anything. "plane": going out to the side, not forward. "elbow": the
+ * elbow is bent (the owner's test: lifting only the upper arm to the marker
+ * with the forearm hanging down was accepted). The hold only runs while
+ * there is no issue (repStateMachine).
+ */
+export type FormIssue = "plane" | "elbow" | null;
+function getFormIssue(features: MovementFeatures, prescription: ExercisePrescription): FormIssue {
   const m = prescription.target.metric;
   const flexion = m === "rightArmElevationDeg" || m === "leftArmElevationDeg" || m === "bilateralArmElevationDeg";
-  if (!flexion) return true;
-  const planes =
-    prescription.side === "right" ? [features.rightArmPlaneDeg]
-    : prescription.side === "left" ? [features.leftArmPlaneDeg]
-    : [features.rightArmPlaneDeg, features.leftArmPlaneDeg];
-  return planes.every((p) => p === null || p === undefined || p <= MAX_PLANE_DEG_FLEXION);
+  if (!flexion) return null;
+  const sides =
+    prescription.side === "right" ? ["right"] : prescription.side === "left" ? ["left"] : ["right", "left"];
+  const plane = (s: string) => (s === "right" ? features.rightArmPlaneDeg : features.leftArmPlaneDeg);
+  const bent = (s: string) => (s === "right" ? features.rightElbowBent : features.leftElbowBent);
+  if (sides.some((s) => { const p = plane(s); return p !== null && p !== undefined && p > MAX_PLANE_DEG_FLEXION; })) return "plane";
+  if (sides.some((s) => bent(s) === true)) return "elbow";
+  return null;
 }
 
 function getBilateralParticipationOk(
@@ -301,7 +310,7 @@ function interpretRaiseHoldLower(
     balanceOk,
     isolationOk,
     bilateralParticipationOk,
-    getFormOk(features, prescription)
+    getFormIssue(features, prescription)
   );
   const repState = { ...updated, oppositeRest };
 

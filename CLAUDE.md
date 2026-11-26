@@ -53,7 +53,10 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    60° = out to the side) is judged AT THE TARGET: on the way up it is only coached; the hold runs only while the arm
    is in front (it waits at `top`, and a slip of more than `HOLD_DIP_GRACE_MS` mid-hold restarts it), so raising
    sideways and then bringing the arm in front while up is a good rep (the owner's case); lowering without ever
-   holding it in front fails as `failed_form`. A bent elbow is coached, not failed. The plane and bent elbow
+   holding it in front fails as `failed_form`. A straight arm is required the same way (`FormIssue` "elbow"): the hold
+   only runs with the elbow straight (3D elbow angle under `STRAIGHT_ELBOW_DEG` 135 = bent; 2D: the hand far above OR
+   below where a straight arm puts it), so lifting the upper arm alone with the forearm hanging no longer counts; it
+   fails as `failed_straight_arm` ("Keep your arm straight, and lift it from the shoulder."). The plane and bent elbow
    come from BlazePose's 3D estimate when it has one (`applyWorld3DForm`, lib/biomechanics/world3d.ts, applied in the
    loop after flexionView), else from the 2D `armForm`; the replay has no 3D input, so tests cover the 2D path.
    A missing reading (`null`) pauses the rep; it must never be treated as 0°.
@@ -110,8 +113,8 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   like a physio (`demoCycle`: rise, pause at the target, lower, pause), holds at the target with the patient, lowers
   back to rest with them after the rep, and 1.5 s later shows the next one (one clock, `demoClock`, for the movement
   and the narration). Facing the camera, forward raises show the guide figure, "the physio" (`lib/pose/exampleCard.ts`):
-  a small 3D figure drawn as a mirror image, seated or standing like the patient (last posture seen, else the
-  prescription's), using the exercise's arm; seen side on at the start of a demonstration and turning to three-quarter
+  a small 3D figure drawn as a mirror image, centred in its card, seated or standing like the patient (steadied by
+  `lib/pose/postureLatch.ts`: it switches only after the other posture is seen for 2.5 s; it used to flip every frame), using the exercise's arm; seen side on at the start of a demonstration and turning to three-quarter
   (55°; 35° made the arm look as if it crossed the chest) as it raises the arm, facing the patient (25°) to show "in
   front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep
   mirrors the patient's own arm. `lib/coaching/demoNarrator.ts` narrates the demonstration in step with it ("Watch me
@@ -119,7 +122,9 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   where the ELBOW must reach, with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`), and
   `drawArmLabel` labels the arm to use ("RIGHT ARM") before the first rep and, red, on the wrong arm.
   `lib/coaching/repCoach.ts` coaches through the rep: "A little higher", "Keep your arm straight", "Bring your arm in
-  front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again".
+  front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again". The wrong-arm
+  call is a correction: it interrupts other speech, fires on every new wrong lift (at most every 2 s) and repeats while the
+  arm stays up; and the guide doesn't re-demonstrate while the patient is moving (`lastActivityMs`).
 - `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
   and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check
   run says whether it or the 2D angle is closer. Code outside React renders (the ghost loop) must read

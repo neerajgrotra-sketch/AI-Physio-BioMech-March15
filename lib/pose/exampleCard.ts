@@ -48,9 +48,12 @@ export function drawExampleCard(p: ExampleCardParams): void {
   const yaw = rad(p.yawDeg) * turn;
   const u = ch / 4.9;                                   // pixels per torso length
   const cx = x0 + cw / 2, topY = y0 + ch * 0.12;
+  // Offsets that centre the figure in the card (set below, once its extent
+  // is known: a seated figure is shorter and used to sit at the top).
+  let ox = 0, oy = 0;
   const project = (q: P3) => ({
-    x: cx + (q.x * Math.cos(yaw) + q.z * Math.sin(yaw)) * u,
-    y: topY + q.y * u,
+    x: cx + ox + (q.x * Math.cos(yaw) + q.z * Math.sin(yaw)) * u,
+    y: topY + oy + q.y * u,
     depth: -q.x * Math.sin(yaw) + q.z * Math.cos(yaw),  // larger = nearer the viewer
   });
 
@@ -102,6 +105,17 @@ export function drawExampleCard(p: ExampleCardParams): void {
     const s = sh[a.k];
     segs.push({ a: s, b: a.el, w: 0.14, style: a.moving ? "move" : "body" });
     segs.push({ a: a.el, b: a.wr, w: 0.12, style: a.moving ? "move" : "body" });
+  }
+
+  // Centre the figure (body and chair, raised arm included) between the
+  // title and the caption.
+  {
+    const pts = segs.flatMap((sg) => [project(sg.a), project(sg.b)]).concat([project({ ...head, y: head.y - 0.3 })]);
+    const minX = Math.min(...pts.map((q) => q.x)), maxX = Math.max(...pts.map((q) => q.x));
+    const minY = Math.min(...pts.map((q) => q.y)), maxY = Math.max(...pts.map((q) => q.y));
+    const areaTop = y0 + 26, areaBottom = y0 + ch - 26;
+    oy = (areaTop + areaBottom) / 2 - (minY + maxY) / 2;
+    ox = (x0 + cw / 2) - (minX + maxX) / 2;
   }
 
   ctx.save();

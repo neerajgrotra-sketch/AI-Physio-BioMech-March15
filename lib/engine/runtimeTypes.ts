@@ -8,6 +8,8 @@ export type RepFailureReason =
   | "failed_bilateral_participation"
   // Raised the wrong way, e.g. out to the side in a forward raise.
   | "failed_form"
+  // Bent elbow at the target in a straight-arm exercise.
+  | "failed_straight_arm"
   | null;
 
 export type RepEvaluation = {
@@ -44,6 +46,8 @@ export type RuntimeRepState = {
   everBadForm?: boolean;
   /** When the form went wrong during a hold (a short slip is forgiven). */
   formBadSinceMs?: number | null;
+  /** Which form problem kept the hold from running: out to the side, or a bent elbow. */
+  badFormKind?: "plane" | "elbow" | null;
 
   lastRepEvaluation: RepEvaluation;
 };

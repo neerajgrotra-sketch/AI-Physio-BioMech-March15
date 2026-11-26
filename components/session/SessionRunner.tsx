@@ -17,7 +17,8 @@ import { drawArmLabel, drawReachGuide, reachLineY } from "@/lib/pose/reachGuide"
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
-import { demoClock, BETWEEN_REPS_REST_S } from "@/lib/pose/ghostAnimator";
+import { PostureLatch } from "@/lib/pose/postureLatch";
+import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
 import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
@@ -534,7 +535,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const repCoachRef = useRef(new RepCoach());  // coaching through the rep
   const narratorRef = useRef(new DemoNarrator()); // the guide talks while demonstrating
   const guideYawRef = useRef(90);                 // the guide figure's current viewing angle
-  const guideSeatedRef = useRef<boolean | null>(null); // last posture seen
+  const postureLatchRef = useRef<PostureLatch | null>(null); // steady seated / standing for the guide
   const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
   const ghostLowerStartRef = useRef<number>(0);   // when lowering began  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
@@ -1036,6 +1037,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           ghostPhaseSeenRef.current = "";
     repCoachRef.current.reset();
     narratorRef.current.reset();
+    postureLatchRef.current = null;
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
@@ -1480,6 +1482,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     ghostPhaseSeenRef.current = "";
     repCoachRef.current.reset();
     narratorRef.current.reset();
+    postureLatchRef.current = null;
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1649,7 +1652,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           // Form (2D, facing the camera) and the 3D experiment, for comparison.
           `plane2d=${fmt(inferenceLoop.getFeatures()?.[side === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"])} ` +
           `bent=${inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] ?? "?"} | ` +
-          `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)} elbow=${fmt(w3?.elbowDeg)}`);
+          `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)} elbow=${fmt(w3?.elbowDeg)} | ` +
+          `opp=${fmt(inferenceLoop.getFeatures()?.[side === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"])} ` +
+          `wrongArm=${repCoachRef.current.wrongArmNow} guide=${postureLatchRef.current?.get() ?? "?"}`);
       }
 
       // ── 3c. Coaching through the rep (lib/coaching/repCoach.ts) ─────────
@@ -1672,6 +1677,10 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           oppositeMetric: flexion ? (feats?.[sd === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"] ?? null) : null,
           startThreshold: p?.startThreshold,
         });
+        // A correction ("that's your left arm") is said over anything else;
+        // other lines wait for silence.
+        const urgent = repCoachRef.current.lastKind === "wrongArm";
+        if (line && urgent && typeof window !== "undefined" && window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
         if (line && typeof window !== "undefined" && window.speechSynthesis && !window.speechSynthesis.speaking) {
           const u = new SpeechSynthesisUtterance(line);
           u.rate = 0.95;
@@ -1685,6 +1694,18 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // reps, which "And again" covers).
         if (ghostPhaseInfRef.current === "ready" && typeof window !== "undefined" && window.speechSynthesis) {
           const reps = ghostRepCountRef.current;
+          // Don't re-demonstrate while the patient is moving (e.g. trying the
+          // wrong arm): hold the demo clock at the start of its wait. It used
+          // to re-demonstrate every ~14 s regardless, talking over corrections.
+          {
+            const lead = (reps === 0 ? 0 : BETWEEN_REPS_REST_S) + DEMO_CYCLE_S;
+            const s0 = (performance.now() - ghostReadyStartRef.current) / 1000;
+            const recentlyActive = snapNow - repCoachRef.current.lastActivityMs < 3000;
+            const firstShowing = s0 < lead;
+            if ((recentlyActive && !firstShowing) || repCoachRef.current.wrongArmNow) {
+              ghostReadyStartRef.current = performance.now() - lead * 1000;
+            }
+          }
           const sinceReady = (performance.now() - ghostReadyStartRef.current) / 1000;
           const clock = demoClock(reps === 0 ? sinceReady : sinceReady - BETWEEN_REPS_REST_S);
           const narrate = clock && (reps === 0 || clock.cycle >= 1) ? clock : null;
@@ -1875,10 +1896,13 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           : 55;
         guideYawRef.current += (yawTarget - guideYawRef.current) * 0.08;
         // Seated or standing like the patient (kept when the legs are hidden).
+        // Steady, not per frame: the reading flickers when the legs are half
+        // hidden (lib/pose/postureLatch.ts).
         const featsNow = inferenceLoop.getFeatures();
-        if (featsNow?.isSeated) guideSeatedRef.current = true;
-        else if (featsNow?.isStanding) guideSeatedRef.current = false;
-        const seatedNow = guideSeatedRef.current ?? (ghostPrescriptionRef.current?.posture !== "standing");
+        postureLatchRef.current ??= new PostureLatch(ghostPrescriptionRef.current?.posture === "standing" ? "standing" : "seated");
+        const seatedNow = postureLatchRef.current.update(
+          featsNow?.isSeated ? "seated" : featsNow?.isStanding ? "standing" : "unknown", snapNow
+        ) === "seated";
         const caption =
           wrongArm ? `Use your ${sideNow} arm`
           : wrongPlaneNow ? "Arm in front of you"
