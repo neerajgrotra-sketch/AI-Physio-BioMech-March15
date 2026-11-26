@@ -93,9 +93,29 @@ describe("facing the camera, an arm raised forward", () => {
     expect(Math.abs(out[out.length - 1].f.rightArmElevationDeg! - 110)).toBeLessThanOrEqual(6);
   });
 
-  it("gives no reading until it has seen the arm for a moment", () => {
-    const out = run(repeat(flexionFront(3), 5));
-    expect(out[4].f.rightArmElevationDeg).toBeNull();
+  it("reads straight away (a typical arm length until the patient's is learned)", () => {
+    const out = run(repeat(flexionFront(3), 3));
+    expect(out[2].f.rightArmElevationDeg).not.toBeNull();
+  });
+
+  it("a hand resting on the desk the whole time (arm never hangs): still reads, and roughly right", () => {
+    // The owner's test: no angle for a minute because the arm never hung down.
+    const desk = 35;
+    const out = run([...repeat(flexionFront(desk, { seated: true }), 120), ...repeat(flexionFront(110, { seated: true }), 30)]);
+    expect(out[119].f.rightArmElevationDeg).not.toBeNull();
+    expect(Math.abs(out[out.length - 1].f.rightArmElevationDeg! - 110)).toBeLessThanOrEqual(15);
+  });
+
+  it("hips hidden behind a desk: keeps reading from the shoulder width", () => {
+    const noHips = (deg: number) => {
+      const b = flexionFront(deg, { seated: true });
+      delete b.left_hip; delete b.right_hip; delete b.left_knee; delete b.right_knee; delete b.left_ankle; delete b.right_ankle;
+      return b;
+    };
+    const out = run([...repeat(flexionFront(3, { seated: true }), 60), ...repeat(noHips(3), 20), ...repeat(noHips(110), 30)]);
+    const last = out[out.length - 1];
+    expect(last.view).toBe("front");
+    expect(Math.abs(last.f.rightArmElevationDeg! - 110)).toBeLessThanOrEqual(8);
   });
 });
 

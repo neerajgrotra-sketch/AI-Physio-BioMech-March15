@@ -257,3 +257,38 @@ describe("at a desk: the owner's test (front view, hand resting on the desk betw
     expect(r.repCount).toBe(3);
   });
 });
+
+describe("the owner's session log of 2026-11-26, replayed", () => {
+  // From session_debug_logs: hold at ~125°, back to ~33° (never below the
+  // old 20° finish), raise again to ~114° with a long hold, back to ~30°.
+  // 0 reps counted then; the rep now counts when the hold is done.
+  const slug = "shoulder_flexion_right";
+  const p = (() => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 6, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+  })();
+  const pts = timeline([
+    [4000, hold(33)],
+    [900, ramp(33, 125)], [2400, hold(124)], [1500, ramp(124, 33)], [2500, hold(33)],
+    [700, ramp(33, 114)], [8000, hold(112)], [1200, ramp(112, 30)], [3000, hold(30)],
+  ]);
+  const fr = pts.map(({ t, v }) => frameFromPixels(flexionFront(v, { seated: true }), 1280, 720, { timestamp: t }));
+
+  it("counts both reps, each when its hold is done", () => {
+    const r = replay(p, fr);
+    expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(2);
+    // Counted during the hold (before the arm came down), not at rest.
+    const firstRep = r.events.find((e) => e.kind === "rep")!;
+    expect(firstRep.t).toBeLessThan(4000 + 900 + 2400 + 300);
+  });
+
+  it("raising again before resting fully still starts the next rep", () => {
+    const pts2 = timeline([
+      [4000, hold(33)],
+      [900, ramp(33, 125)], [2400, hold(124)], [1200, ramp(124, 60)], [900, ramp(60, 125)], [2400, hold(124)], [1500, ramp(124, 33)], [1000, hold(33)],
+    ]);
+    const r = replay(p, pts2.map(({ t, v }) => frameFromPixels(flexionFront(v, { seated: true }), 1280, 720, { timestamp: t })));
+    expect(r.repCount).toBe(2);
+  });
+});

@@ -16,9 +16,10 @@
 //     θ = acos(drop / L)
 //
 // where drop is how far the elbow is below the shoulder (negative when
-// above). L is learned from the patient while the arm hangs at rest,
-// where it looks its full length: a high percentile of the upper arm's
-// seen length in those frames. Both are measured in torso lengths, so stepping nearer or
+// above). L starts at a typical arm length (TYPICAL_ARM) and is then
+// learned from the patient: facing the camera an arm only looks shorter
+// than it is, so L is a high percentile of its seen length while it is in
+// its lower half. If the hips are hidden, shoulder width is the scale. Both are measured in torso lengths, so stepping nearer or
 // further from the camera changes nothing.
 //
 // Accuracy: best in the middle of the range (60°-130°), where the elbow's
@@ -38,36 +39,47 @@ export type FacingView = "front" | "side";
 export const SIDE_BELOW = 0.35;
 export const FRONT_ABOVE = 0.5;
 
-const WINDOW = 600;       // seen-length samples kept (about 20 s at 30 fps)
-const MIN_SAMPLES = 10;   // before this, the arm length is not known yet
-const PERCENTILE = 0.8;
-const HANGING = 0.9;      // drop / seen length above this = arm hanging down
+const WINDOW = 900;       // seen-length samples kept (about 30 s at 30 fps)
+const MIN_SAMPLES = 30;   // before this, the typical arm length is used
+const PERCENTILE = 0.95;
+const LOWER_HALF = 0.5;   // learn only while drop / seen length is above this
+// A typical upper arm is about 0.6 torso lengths (shoulder centre to hip
+// centre). Used until the patient's own is learned, so the angle is never
+// blank at the start (it used to be null until learned, and with a hand
+// resting on a desk it was never learned: no angle for the first minute).
+export const TYPICAL_ARM = 0.6;
+// A learned length is not trusted below this share of the typical one (an
+// arm that never hangs straight down only ever looks shortened).
+const MIN_SHARE_OF_TYPICAL = 0.9;
 
 class ArmLength {
   private seen: number[] = [];
-  private length: number | null = null;
+  private learned: number | null = null;
 
   /**
-   * Learns from a frame only while the arm hangs roughly straight down
-   * (the elbow's drop is most of its seen length), where the arm is
-   * square to the camera. A raised arm is nearer the lens and can look
-   * longer than it is (perspective, or a tracking glitch), which would
-   * make the resting arm read too high.
+   * Learns from frames where the arm is in its lower half. Facing the
+   * camera a forward arm only looks shorter than it is, so the longest it
+   * is seen (a high percentile, to skip glitches) is its length: reached
+   * whenever it hangs straight down.
    */
   observe(reach: number | null, drop: number | null): void {
     if (reach === null || drop === null || !(reach > 0)) return;
-    if (drop < HANGING * reach) return;
+    if (drop < LOWER_HALF * reach) return;
     this.seen.push(reach);
     if (this.seen.length > WINDOW) this.seen.shift();
     if (this.seen.length < MIN_SAMPLES) return;
     const sorted = [...this.seen].sort((a, b) => a - b);
     const p = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * PERCENTILE))];
-    // Only grows: an arm cannot get shorter, it only looks shorter.
-    this.length = this.length === null ? p : Math.max(this.length, p);
+    this.learned = this.learned === null ? p : Math.max(this.learned, p);
   }
 
-  get(): number | null {
-    return this.length;
+  /** The arm length to use: the learned one, else the typical one. */
+  get(): number {
+    return this.learned === null ? TYPICAL_ARM : Math.max(this.learned, MIN_SHARE_OF_TYPICAL * TYPICAL_ARM);
+  }
+
+  isLearned(): boolean {
+    return this.learned !== null;
   }
 }
 
@@ -81,16 +93,25 @@ export class FlexionViewEstimator {
   private right = new ArmLength();
   private left = new ArmLength();
   private view: FacingView | null = null;
+  // Shoulder width / torso length while both are seen, to convert the
+  // per-shoulder-width readings when the hips are hidden.
+  private swPerTorso: number | null = null;
 
   reset(): void {
     this.right = new ArmLength();
     this.left = new ArmLength();
     this.view = null;
+    this.swPerTorso = null;
   }
 
-  /** The learned upper-arm length (torso lengths), or null until known. */
-  armLength(side: "right" | "left"): number | null {
+  /** The upper-arm length in use (torso lengths): learned, else typical. */
+  armLength(side: "right" | "left"): number {
     return (side === "right" ? this.right : this.left).get();
+  }
+
+  /** Whether the patient's own arm length has been learned yet. */
+  armLearned(side: "right" | "left"): boolean {
+    return (side === "right" ? this.right : this.left).isLearned();
   }
 
   /** The view the last frame was judged to be in. */
@@ -104,13 +125,28 @@ export class FlexionViewEstimator {
    * elevation fields on `f` with the drop-based estimate. In place.
    */
   apply(f: MovementFeatures): void {
-    this.right.observe(f.rightUpperArmReach, f.rightUpperArmDrop);
-    this.left.observe(f.leftUpperArmReach, f.leftUpperArmDrop);
-
     const w = f.shoulderWidthRatio;
+    // Hips hidden (behind a desk): convert the per-shoulder-width readings
+    // to torso lengths with the ratio seen while both were visible.
+    if (w !== null && this.view !== "side") {
+      this.swPerTorso = this.swPerTorso === null ? w : this.swPerTorso + (w - this.swPerTorso) * 0.05;
+    }
+    const k = this.swPerTorso;
+    const pick = (t: number | null, sw: number | null) => (t !== null ? t : sw !== null && k !== null ? Math.round(sw * k * 1000) / 1000 : null);
+    const rDrop = pick(f.rightUpperArmDrop, f.rightUpperArmDropSw);
+    const rReach = pick(f.rightUpperArmReach, f.rightUpperArmReachSw);
+    const lDrop = pick(f.leftUpperArmDrop, f.leftUpperArmDropSw);
+    const lReach = pick(f.leftUpperArmReach, f.leftUpperArmReachSw);
+
     if (w === null) {
-      // One shoulder hidden: the other is behind the body, so side on.
-      if (f.rightUpperArmReach !== null || f.leftUpperArmReach !== null) this.view = "side";
+      const bothShoulders = f.rightUpperArmDropSw !== null || f.leftUpperArmDropSw !== null;
+      if (bothShoulders) {
+        // Both shoulders seen but no hips: keep the view, or assume facing.
+        this.view ??= "front";
+      } else if (f.rightUpperArmReach !== null || f.leftUpperArmReach !== null) {
+        // One shoulder hidden: the other is behind the body, so side on.
+        this.view = "side";
+      }
     } else if (this.view === null) {
       this.view = w < (SIDE_BELOW + FRONT_ABOVE) / 2 ? "side" : "front";
     } else if (this.view === "front" && w < SIDE_BELOW) {
@@ -121,12 +157,12 @@ export class FlexionViewEstimator {
 
     if (this.view !== "front") return; // side on: the plain angle is right
 
-    const est = (drop: number | null, arm: ArmLength): number | null => {
-      const L = arm.get();
-      return drop === null || L === null ? null : elevationFromDrop(drop, L);
-    };
-    f.rightArmElevationDeg = est(f.rightUpperArmDrop, this.right);
-    f.leftArmElevationDeg = est(f.leftUpperArmDrop, this.left);
+    this.right.observe(rReach, rDrop);
+    this.left.observe(lReach, lDrop);
+    const est = (drop: number | null, arm: ArmLength): number | null =>
+      drop === null ? null : elevationFromDrop(drop, arm.get());
+    f.rightArmElevationDeg = est(rDrop, this.right);
+    f.leftArmElevationDeg = est(lDrop, this.left);
     const both = [f.rightArmElevationDeg, f.leftArmElevationDeg].filter((v): v is number => v !== null);
     f.bilateralArmElevationDeg = both.length
       ? Math.round((both.reduce((a, b) => a + b, 0) / both.length) * 10) / 10

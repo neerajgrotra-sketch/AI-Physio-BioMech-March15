@@ -34,8 +34,9 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    16:9 that turns 45° into 29°. Landmarks under `MIN_LANDMARK_SCORE` (0.35) are treated as not seen.
 3. `lib/biomechanics/smoothMovementFeatures.ts`: average of the last 5 frames. Then
    `lib/biomechanics/flexionView.ts` (`FlexionViewEstimator`): when the patient faces the camera, arm elevation is
-   replaced by `acos(elbow drop / arm length)` (drop and the seen upper-arm length in torso lengths; the arm length is
-   learned as a high percentile of the seen length in frames where the arm hangs down). Side on, the plain
+   replaced by `acos(elbow drop / arm length)` (drop and the seen upper-arm length in torso lengths, or per shoulder
+   width when the hips are hidden; the arm length starts at `TYPICAL_ARM` 0.6 and is learned as a high percentile of
+   the seen length while the arm is in its lower half, so the angle is never blank). Side on, the plain
    2D angle is kept. Which way they face: shoulder width / torso, side under 0.35, front over 0.5.
 4. `lib/engine/calibration.ts`: for arm exercises, a 3 s resting baseline, taken once the patient is placed (the
    positioning lock), sets start / target / finish (`calibrateThresholds`; the target is never shifted by the baseline;
@@ -44,6 +45,9 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    glitches on the fields the exercise reads.
 5. `lib/interpreter/movementInterpreter.ts` + `repStateMachine.ts`: the rep state machine (ready -> lifting -> top ->
    holding -> lowering), pass or fail with a reason (height, hold, balance, isolation, bilateral participation).
+   **A rep is judged and counted the moment its hold is done** (or the target is reached, with no hold); lowering
+   only waits for the arm to come back: below finish, or half way down and rising again (`REARM_*`), which starts the
+   next rep. A hold dropped early fails at once (`failed_hold`).
    A missing reading (`null`) pauses the rep; it must never be treated as 0°.
 6. Coaching (`lib/coaching/*`, `lib/engine/*`) and framing (`lib/framing/*`) sit on top.
 
@@ -94,8 +98,12 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrow, instruction and hold ring.
 - One thing at a time on the camera panel (`SessionRunner`: `positioningOnScreen`, `exerciseOnScreen`): while being
   positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
-  patient is placed, and the ghost's demo timer starts then. Facing the camera, forward raises get a "Reach here" line
-  instead of the ghost (`lib/pose/reachGuide.ts`; the ghost would sweep the arm sideways, the wrong movement).
+  patient is placed, and the ghost's demo timer starts then. The ghost (`lib/pose/ghostAnimator.ts`) demonstrates a rep
+  like a physio (`demoCycle`: rise, pause at the target, lower, pause), holds at the target with the patient, lowers
+  back to rest with them after the rep, and 1.5 s later shows the next one. Facing the camera, forward raises use the
+  front-view ghost arm (`drawFrontGhost`: the hand's height for the angle, growing as it comes toward the camera) and
+  a "Reach here" line at the target (`lib/pose/reachGuide.ts`). Voice: the rep-completed line ends "Now lower your
+  arm slowly"; holds of 3 s or more count the last seconds aloud.
 - Test logs: the debug log is saved to `session_debug_logs` every 30 s while running, when the tab is hidden, and at
   the end (read the newest row per session). It starts with an `APP` entry (version, commit) and has a `TRACE` line
   each second: phase, metric, start / target / finish, view, learned arm length, placed, reps, baseline.
