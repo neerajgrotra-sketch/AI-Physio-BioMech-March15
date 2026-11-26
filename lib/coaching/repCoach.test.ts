@@ -129,3 +129,40 @@ describe("RepCoach: the wrong arm, tried again and again", () => {
     expect(kind).toBe("wrongArm");
   });
 });
+
+describe("RepCoach: the wrong arm lifted at normal speed (owner's v0.6.0 run)", () => {
+  const right = { side: "right" as const, startThreshold: 68.8 };
+  it("the other arm rising smoothly from 55 to 116 over a second, at 30 frames a second, is called out", () => {
+    const c = new RepCoach();
+    const said: string[] = [];
+    let t = 0;
+    const step = (opp: number) => { const out = c.update({ ...base, ...right, phase: "ready", metric: 55, oppositeMetric: opp, nowMs: t }); t += 33; if (out) said.push(out); };
+    for (let k = 0; k < 90; k++) step(55);                 // 3 s resting on the lap
+    for (let k = 0; k <= 30; k++) step(55 + (61 * k) / 30); // up over 1 s
+    for (let k = 0; k < 30; k++) step(116);                // held 1 s
+    expect(said.filter((x) => x.includes("left arm")).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("a slow lift over three seconds is called out too", () => {
+    const c = new RepCoach();
+    const said: string[] = [];
+    let t = 0;
+    const step = (opp: number) => { const out = c.update({ ...base, ...right, phase: "ready", metric: 55, oppositeMetric: opp, nowMs: t }); t += 33; if (out) said.push(out); };
+    for (let k = 0; k < 90; k++) step(55);
+    for (let k = 0; k <= 90; k++) step(55 + (60 * k) / 90);
+    for (let k = 0; k < 20; k++) step(115);
+    expect(said.some((x) => x.includes("left arm"))).toBe(true);
+  });
+
+  it("small shifts of the resting arm (a few degrees) are not called out", () => {
+    const c = new RepCoach();
+    const said: string[] = [];
+    let t = 0;
+    for (let k = 0; k < 600; k++) {
+      const opp = 55 + 6 * Math.sin(k / 20) + (k > 300 ? 8 : 0); // fidgeting, then settles 8° higher
+      const out = c.update({ ...base, ...right, phase: "ready", metric: 55, oppositeMetric: opp, nowMs: t }); t += 33;
+      if (out) said.push(out);
+    }
+    expect(said.some((x) => x.includes("left arm"))).toBe(false);
+  });
+});

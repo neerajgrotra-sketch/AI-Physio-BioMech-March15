@@ -45,6 +45,14 @@ export const AGAIN_AFTER_MS = 1500;    // after the rep, at rest this long -> "A
 export const WRONG_ARM_RISE_DEG = 30;  // the other arm this far above its rest = it's being lifted
 export const WRONG_ARM_PERSIST_MS = 400; // quicker than other form cues: it's an obvious mistake
 export const WRONG_ARM_MIN_GAP_MS = 2000;
+// Where the other arm rests is learned only from small, slow changes: it
+// follows the arm down at once, drifts up over a few seconds, and ignores
+// anything more than REST_TRACK_DEG above it. (It used to move 10% of the way
+// every frame, so a lift at normal speed dragged the "rest" up behind the arm
+// and it never got WRONG_ARM_RISE_DEG above it: the owner's v0.6.0 run lifted
+// the left arm to 116° three times with no call.)
+export const REST_TRACK_DEG = 10;
+export const REST_RISE_TAU_MS = 3000;
 const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 4000 };
 
 export class RepCoach {
@@ -67,6 +75,7 @@ export class RepCoach {
   private wrongArmEpisode = false; // this wrong lift has been called out
   private lastOpp: number | null = null;
   private lastMetric: number | null = null;
+  private lastNow: number | null = null;
 
   reset(): void {
     this.phase = "";
@@ -85,6 +94,7 @@ export class RepCoach {
     this.wrongArmEpisode = false;
     this.lastOpp = null;
     this.lastMetric = null;
+    this.lastNow = null;
   }
 
   private can(kind: string, now: number): boolean {
@@ -100,6 +110,8 @@ export class RepCoach {
 
   update(i: RepCoachInput): string | null {
     const now = i.nowMs;
+    const dt = this.lastNow === null ? 0 : Math.max(0, Math.min(500, now - this.lastNow));
+    this.lastNow = now;
     this.lastKind = null;
     // Any noticeable arm movement (either arm) counts as activity.
     const moved = (a: number | null | undefined, b: number | null) => a !== null && a !== undefined && b !== null && Math.abs(a - b) > 1.5;
@@ -122,8 +134,12 @@ export class RepCoach {
     const exerciseArmDown = i.metric === null || i.metric < (i.startThreshold ?? 40);
     if (oneArm && opp !== null) {
       const lifted = this.oppRest !== null && opp > this.oppRest + WRONG_ARM_RISE_DEG;
-      if (!lifted && i.phase === "ready") {
-        this.oppRest = this.oppRest === null ? opp : this.oppRest + (opp - this.oppRest) * 0.1;
+      if (this.oppRest === null) {
+        this.oppRest = opp;
+      } else if (opp < this.oppRest) {
+        this.oppRest += (opp - this.oppRest) * Math.min(1, dt / 150); // lower: follow quickly (not a one-frame glitch)
+      } else if (i.phase === "ready" && opp - this.oppRest <= REST_TRACK_DEG) {
+        this.oppRest += (opp - this.oppRest) * Math.min(1, dt / REST_RISE_TAU_MS); // settling a little higher
       }
       this.wrongArmSince = lifted && exerciseArmDown ? (this.wrongArmSince ?? now) : null;
     } else {
