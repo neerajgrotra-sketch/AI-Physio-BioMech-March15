@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arm3D, type V3 } from "@/lib/biomechanics/world3d";
+import { applyWorld3DForm, arm3D, type V3 } from "@/lib/biomechanics/world3d";
 
 // A body in BlazePose world coordinates (metres, y down, smaller z nearer
 // the camera), facing the camera, right arm at `elev` from down, swung
@@ -43,5 +43,35 @@ describe("arm3D (BlazePose keypoints3D experiment)", () => {
     const kp = body(90, 0);
     kp[14] = { ...kp[14], score: 0.1 };
     expect(arm3D(kp, "right")).toBeNull();
+  });
+});
+
+describe("3D form: elbow angle and applying it to the features", () => {
+  const withWrist = (elev: number, elbowBendDeg: number) => {
+    const kp = body(elev, 0);
+    // Forearm continues the upper arm, bent by elbowBendDeg upward/forward.
+    const sh = kp[12], el = kp[14];
+    const ux = (el.x - sh.x) / 0.3, uy = (el.y - sh.y) / 0.3, uz = (el.z - sh.z) / 0.3;
+    const b = (elbowBendDeg * Math.PI) / 180;
+    // Rotate the upper-arm direction toward "up" (−y) by the bend.
+    const fx = ux, fy = uy * Math.cos(b) - Math.sin(b), fz = uz * Math.cos(b);
+    const m = Math.hypot(fx, fy, fz);
+    kp[16] = { x: el.x + (fx / m) * 0.27, y: el.y + (fy / m) * 0.27, z: el.z + (fz / m) * 0.27, score: 1 };
+    return kp;
+  };
+
+  it("reads a straight elbow as about 180°, a bent one much less", () => {
+    expect(arm3D(withWrist(90, 0), "right")!.elbowDeg!).toBeGreaterThan(170);
+    expect(arm3D(withWrist(90, 80), "right")!.elbowDeg!).toBeLessThan(140);
+  });
+
+  it("applyWorld3DForm overrides the 2D form only facing the camera", () => {
+    const f = { rightArmPlaneDeg: 70, leftArmPlaneDeg: null, rightElbowBent: false, leftElbowBent: null } as any;
+    const w = { right: arm3D(withWrist(100, 80), "right"), left: null };
+    applyWorld3DForm(f, w, "side");
+    expect(f.rightArmPlaneDeg).toBe(70);       // side on: untouched
+    applyWorld3DForm(f, w, "front");
+    expect(f.rightArmPlaneDeg).toBeLessThan(10); // 3D says forward
+    expect(f.rightElbowBent).toBe(true);         // and bent
   });
 });

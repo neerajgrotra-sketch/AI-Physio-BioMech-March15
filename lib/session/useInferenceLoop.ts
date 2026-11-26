@@ -32,7 +32,7 @@ import { FeatureHistory } from "@/lib/pose/poseFrameHistory";
 import { extractMovementFeatures, emptyMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { smoothMovementFeatures } from "@/lib/biomechanics/smoothMovementFeatures";
 import { FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
-import { arm3D, type Arm3D, type V3 } from "@/lib/biomechanics/world3d";
+import { applyWorld3DForm, arm3D, type Arm3D, type V3 } from "@/lib/biomechanics/world3d";
 import { createInitialRepState } from "@/lib/interpreter/repStateMachine";
 import { interpretMovement, getEffectiveActiveMetricValue } from "@/lib/interpreter/movementInterpreter";
 import { calibrationKindFor, calibrateThresholds, applyThresholds, FeatureSpikeFilter } from "@/lib/engine/calibration";
@@ -287,6 +287,9 @@ export function useInferenceLoop() {
   // EXPERIMENT: the arm read from BlazePose's own 3D estimate (keypoints3D),
   // logged next to the 2D method for comparison (lib/biomechanics/world3d.ts).
   const world3dRef = useRef<{ right: Arm3D | null; left: Arm3D | null }>({ right: null, left: null });
+  // The latest features, for code that runs outside React renders (the ghost
+  // loop): reading the `features` state there gave a copy frozen at start.
+  const featuresRef = useRef<MovementFeatures | null>(null);
   // Peak metric reached during current rep (reset on READY→LIFTING, updated each LIFTING/HOLDING frame)
   // Passed to onRepCompleted so session results can store the actual achieved ROM
   const peakMetricThisRepRef = useRef<number | null>(null);
@@ -486,8 +489,15 @@ export function useInferenceLoop() {
             // ── Facing the camera or side on (lib/biomechanics/flexionView.ts) ──
             // Facing the camera, arm elevation comes from the elbow's height
             // and the patient's learned arm length instead of the 2D angle.
-            if (normalized.personDetected) flexionViewRef.current.apply(smoothedFeatures);
+            if (normalized.personDetected) {
+              flexionViewRef.current.apply(smoothedFeatures);
+              // Form checks from BlazePose's 3D estimate where it has one
+              // (lib/biomechanics/world3d.ts). The replay has no 3D input,
+              // so the tests exercise the 2D form path.
+              applyWorld3DForm(smoothedFeatures, world3dRef.current, flexionViewRef.current.currentView());
+            }
 
+            featuresRef.current = smoothedFeatures;
             setFeatures(smoothedFeatures);
 
             // ── Resting-baseline calibration (lib/engine/calibration.ts) ──
@@ -913,6 +923,8 @@ export function useInferenceLoop() {
     getFacingView: () => flexionViewRef.current.currentView(),
     /** EXPERIMENT: the arm from BlazePose keypoints3D (logged only). */
     getWorld3D: () => world3dRef.current,
+    /** The latest features (use this outside renders, not `features`). */
+    getFeatures: () => featuresRef.current,
     /** The learned upper-arm length in torso lengths (front-view flexion), or null. */
     getArmLength: (side: "right" | "left") => flexionViewRef.current.armLength(side),
     // State
