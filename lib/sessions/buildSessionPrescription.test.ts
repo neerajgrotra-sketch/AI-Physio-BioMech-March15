@@ -4,6 +4,8 @@
 // for the right reason.
 import { describe, expect, it } from "vitest";
 import { buildPrescription } from "@/lib/sessions/buildSessionPrescription";
+import { FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
+import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { frameFromPixels, flexionFront, flexionSide, seatedSide, standingFront, standingSide, type PixelBody } from "@/lib/testing/poses";
 import { hold, ramp, replay, timeline } from "@/lib/testing/replay";
 import type { PoseFrame } from "@/lib/types/pose";
@@ -290,5 +292,51 @@ describe("the owner's session log of 2026-11-26, replayed", () => {
     ]);
     const r = replay(p, pts2.map(({ t, v }) => frameFromPixels(flexionFront(v, { seated: true }), 1280, 720, { timestamp: t })));
     expect(r.repCount).toBe(2);
+  });
+});
+
+describe("the owner's session of 2026-11-26 (v0.3.0): hands resting on the lap", () => {
+  // Log: every rep held 2 s at 110-125° and then failed "keep the other arm
+  // still", because the resting left arm read 40-60° (> an absolute 35°).
+  const slug = "shoulder_flexion_right";
+  const p = (() => {
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    return buildPrescription(slug, slug, 6, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+  })();
+  const lap = { seated: true, restDeg: 48 }; // the other arm rests ~48° forward
+  const rep: Array<[number, (u: number) => number]> = [[900, ramp(48, 120)], [2600, hold(120)], [1000, ramp(120, 48)], [1500, hold(48)]];
+
+  // Settling in first with both arms hanging (as in the real run: the app
+  // learns the true arm length), then hands on the lap.
+  const settle = (t: number) => t < 3000;
+  const body = (t: number, v: number, extra = {}) =>
+    settle(t) ? flexionFront(3, { seated: true, restDeg: 3 }) : flexionFront(v, { ...lap, ...extra });
+
+  it("the resting other arm really reads above the old 35° limit (as in the log)", () => {
+    const pts = timeline([[3000, hold(3)], [3000, hold(48)]]);
+    const est = new FlexionViewEstimator();
+    let left = 0;
+    for (const { t, v } of pts) {
+      const f = extractMovementFeatures(frameFromPixels(body(t, v), 1280, 720, { timestamp: t }));
+      est.apply(f);
+      left = f.leftArmElevationDeg ?? 0;
+    }
+    expect(left).toBeGreaterThan(35);
+  });
+
+  it("each held rep counts", () => {
+    const pts = timeline([[3000, hold(3)], [4000, hold(48)], ...rep, ...rep, ...rep]);
+    const r = replay(p, pts.map(({ t, v }) => frameFromPixels(body(t, v), 1280, 720, { timestamp: t })), { positioned: (i) => pts[i].t >= 3000 });
+    expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(3);
+  });
+
+  it("but lifting the other arm well above its rest still fails", () => {
+    const pts = timeline([[3000, hold(3)], [4000, hold(48)], ...rep]);
+    // Both arms go up together.
+    const fr = pts.map(({ t, v }) => frameFromPixels(body(t, v, { side: "both" }), 1280, 720, { timestamp: t }));
+    const r = replay(p, fr, { positioned: (i) => pts[i].t >= 3000 });
+    expect(r.repCount).toBe(0);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_isolation");
   });
 });

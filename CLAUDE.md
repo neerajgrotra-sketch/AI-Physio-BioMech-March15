@@ -47,7 +47,9 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    holding -> lowering), pass or fail with a reason (height, hold, balance, isolation, bilateral participation).
    **A rep is judged and counted the moment its hold is done** (or the target is reached, with no hold); lowering
    only waits for the arm to come back: below finish, or half way down and rising again (`REARM_*`), which starts the
-   next rep. A hold dropped early fails at once (`failed_hold`).
+   next rep. A hold dropped early fails at once (`failed_hold`). Isolation: the other arm may not rise more than
+   `maxOppositeArmElevationDeg` above where it rested while ready (`oppositeRest`), not an absolute 35° (a seated
+   patient's resting arm reads 40-60°).
    A missing reading (`null`) pauses the rep; it must never be treated as 0°.
 6. Coaching (`lib/coaching/*`, `lib/engine/*`) and framing (`lib/framing/*`) sit on top.
 
@@ -100,9 +102,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
   patient is placed, and the ghost's demo timer starts then. The ghost (`lib/pose/ghostAnimator.ts`) demonstrates a rep
   like a physio (`demoCycle`: rise, pause at the target, lower, pause), holds at the target with the patient, lowers
-  back to rest with them after the rep, and 1.5 s later shows the next one. Facing the camera, forward raises use the
-  front-view ghost arm (`drawFrontGhost`: the hand's height for the angle, growing as it comes toward the camera) and
-  a "Reach here" line at the target (`lib/pose/reachGuide.ts`). Voice: the rep-completed line ends "Now lower your
+  back to rest with them after the rep, and 1.5 s later shows the next one. Facing the camera, forward raises show
+  that timing on an "Example" card in a corner (`lib/pose/exampleCard.ts`: a side-view figure with the target angle;
+  the owner found a ghost painted over the patient odd) and a short target marker beside the raised arm, never across
+  the face (`lib/pose/reachGuide.ts`). Voice: the rep-completed line ends "Now lower your
   arm slowly"; holds of 3 s or more count the last seconds aloud.
 - Test logs: the debug log is saved to `session_debug_logs` every 30 s while running, when the tab is hidden, and at
   the end (read the newest row per session). It starts with an `APP` entry (version, commit) and has a `TRACE` line

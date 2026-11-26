@@ -53,61 +53,11 @@ export function torsoLength(frame: PoseFrame): number | null {
 }
 
 /**
- * The ghost arm seen from the front: the arm raised forward to `deg`
- * (0 down, 90 pointing at the camera, 180 overhead). Its elbow and hand
- * sit at their heights for that angle (shoulder.y + length·cos θ), and the
- * hand grows as it comes toward the camera, so the arm reads as reaching
- * out toward you rather than sweeping sideways.
+ * Draws the target marker on the ghost canvas (W x H, mirrored like the
+ * preview): a short bar at the hand's target height, on the OUTER side of
+ * the raised arm with its label pointing away from the body, so it never
+ * crosses the patient's face (it used to be centred on the shoulder).
  */
-export function drawFrontGhost(
-  ctx: CanvasRenderingContext2D,
-  frame: PoseFrame,
-  side: "right" | "left",
-  upperArmTorsos: number,
-  deg: number,
-  opacity: number,
-  rgb: { r: number; g: number; b: number },
-  W: number,
-  H: number
-): void {
-  const lm = frame.landmarks as Record<string, { x: number; y: number } | undefined>;
-  const sh = lm[`${side}_shoulder`];
-  const torso = torsoLength(frame);
-  if (!sh || torso === null) return;
-  const th = (deg * Math.PI) / 180;
-  const up = upperArmTorsos * torso;          // frame heights
-  const fore = up * FOREARM_SHARE;
-  const sx = (1 - sh.x) * W, sy = sh.y * H;   // mirrored, like the preview
-  // A slight outward lean so the arm stays visible even when pointing at the lens.
-  // In the mirrored preview the patient's right arm is on the screen's right.
-  const out = side === "right" ? 1 : -1;
-  const lean = 0.06 * torso * H * Math.sin(th) * out;
-  const ex = sx + lean * 0.6, ey = sy + up * Math.cos(th) * H;
-  const wx = sx + lean, wy = sy + (up + fore) * Math.cos(th) * H;
-  const near = 1 + 0.9 * Math.sin(th);        // nearer the camera: bigger
-  const thick = torso * H * 0.16;
-  const col = (a: number) => `rgba(${rgb.r},${rgb.g},${rgb.b},${a * opacity})`;
-
-  ctx.save();
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  // Soft halo, then the limb.
-  ctx.strokeStyle = col(0.25);
-  ctx.lineWidth = thick * 1.9 * near;
-  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
-  ctx.strokeStyle = col(0.8);
-  ctx.lineWidth = thick * near;
-  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
-  // The hand.
-  ctx.fillStyle = col(0.9);
-  ctx.beginPath(); ctx.arc(wx, wy, thick * 0.75 * near, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = `rgba(255,255,255,${0.6 * opacity})`;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.restore();
-}
-
-/** Draws the guide on the ghost canvas (W x H, mirrored like the preview). */
 export function drawReachGuide(
   ctx: CanvasRenderingContext2D,
   frame: PoseFrame,
@@ -122,34 +72,35 @@ export function drawReachGuide(
   const lm = frame.landmarks as Record<string, { x: number; y: number } | undefined>;
   const sh = lm[`${side}_shoulder`];
   if (!sh) return;
-  const cx = (1 - sh.x) * W; // the preview is mirrored
-  const y = Math.max(8, Math.min(H - 8, lineY * H));
-  const half = W * 0.14;
+  const out = side === "right" ? 1 : -1;     // mirrored: the right arm is on the screen's right
+  const cx = (1 - sh.x) * W;
+  const y = Math.max(14, Math.min(H - 8, lineY * H));
+  const x1 = Math.max(6, Math.min(W - 6, cx + out * W * 0.05));
+  const x2 = Math.max(6, Math.min(W - 6, cx + out * W * 0.2));
   const pulse = reached ? 1 : 0.65 + 0.35 * Math.sin(nowMs / 260);
   const col = reached ? "63,185,80" : "255,190,60";
 
   ctx.save();
   ctx.lineCap = "round";
-  // Soft glow, then the bar.
   ctx.strokeStyle = `rgba(${col},${0.25 * pulse})`;
-  ctx.lineWidth = 16;
-  ctx.beginPath(); ctx.moveTo(cx - half, y); ctx.lineTo(cx + half, y); ctx.stroke();
-  ctx.strokeStyle = `rgba(${col},${0.95})`;
+  ctx.lineWidth = 12;
+  ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
+  ctx.strokeStyle = `rgba(${col},0.95)`;
   ctx.lineWidth = 4;
-  ctx.setLineDash(reached ? [] : [14, 9]);
-  ctx.beginPath(); ctx.moveTo(cx - half, y); ctx.lineTo(cx + half, y); ctx.stroke();
+  ctx.setLineDash(reached ? [] : [10, 7]);
+  ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
   ctx.setLineDash([]);
-  // Label above the bar.
-  const label = reached ? "✓ Target reached" : `Reach here  ↑  ${Math.round(targetDeg)}°`;
-  ctx.font = "700 22px Inter, system-ui, sans-serif";
+  // Label just above the bar, anchored at its outer end.
+  const label = reached ? "✓ Target" : `Reach ${Math.round(targetDeg)}°`;
+  ctx.font = "700 16px Inter, system-ui, sans-serif";
   const tw = ctx.measureText(label).width;
-  const ly = y - 14;
+  const lx = out > 0 ? Math.min(x2 - tw, W - tw - 8) : Math.max(x2, 8);
   ctx.fillStyle = "rgba(10,14,30,0.72)";
   ctx.beginPath();
-  (ctx as any).roundRect?.(cx - tw / 2 - 12, ly - 25, tw + 24, 34, 9) ?? ctx.rect(cx - tw / 2 - 12, ly - 25, tw + 24, 34);
+  (ctx as any).roundRect ? (ctx as any).roundRect(lx - 7, y - 30, tw + 14, 24, 7) : ctx.rect(lx - 7, y - 30, tw + 14, 24);
   ctx.fill();
   ctx.fillStyle = `rgba(${col},1)`;
-  ctx.textAlign = "center";
-  ctx.fillText(label, cx, ly);
+  ctx.textAlign = "left";
+  ctx.fillText(label, lx, y - 12);
   ctx.restore();
 }
