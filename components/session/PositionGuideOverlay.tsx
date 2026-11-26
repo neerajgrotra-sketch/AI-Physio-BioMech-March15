@@ -75,7 +75,16 @@ const ICON: Record<Exclude<Arrow, null>, string> = {
 
 const COLOR = { adjusting: "#f0b429", hold_still: "#58a6ff", locked: "#3fb950" } as const;
 
-export default function PositionGuideOverlay({ guide }: { guide: PositionGuide }) {
+export const POSITION_ICON = ICON;
+export const POSITION_COLOR = COLOR;
+
+/**
+ * `textInPanel`: the instruction is shown in the coach panel beside the
+ * camera (the owner's request: keep the camera clear while the patient
+ * places themselves), so the camera shows only the outline, the side arrows,
+ * the hold ring and a small arrow badge, no text.
+ */
+export default function PositionGuideOverlay({ guide, textInPanel = false }: { guide: PositionGuide; textInPanel?: boolean }) {
   const { videoWidth: W, videoHeight: H } = guide;
   const fig = FIGURES[guide.silhouette];
   const boxH = (fig.bottom - fig.top) * H;
@@ -139,8 +148,17 @@ export default function PositionGuideOverlay({ guide }: { guide: PositionGuide }
         )}
       </svg>
 
+      {/* Direction badge (icon only) when the words are in the coach panel. */}
+      {textInPanel && arrow && arrow !== "left" && arrow !== "right" && (
+        <div aria-hidden="true" style={{
+          position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
+          width: 64, height: 64, borderRadius: 32, background: "rgba(8,17,31,0.72)", border: `3px solid ${color}`,
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, color,
+        }}>{ICON[arrow]}</div>
+      )}
+
       {/* Instruction: HTML so it is never mirrored */}
-      <div style={{
+      {!textInPanel && <div style={{
         position: "absolute", left: 12, right: 12, top: 12, display: "flex", alignItems: "center", gap: 12,
         padding: "10px 14px", borderRadius: 14, background: "rgba(8,17,31,0.72)",
         border: `2px solid ${color}`, color: "#fff",
@@ -152,7 +170,7 @@ export default function PositionGuideOverlay({ guide }: { guide: PositionGuide }
           </div>
           <div style={{ fontSize: 13, color: "#c9d1d9", marginTop: 4 }}>{guide.setupLine}</div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

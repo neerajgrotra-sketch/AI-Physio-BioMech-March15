@@ -12,7 +12,8 @@ import React, {
   useCallback
 } from "react";
 
-import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
+import PositionGuideOverlay, { POSITION_ICON, POSITION_COLOR } from "@/components/session/PositionGuideOverlay";
+import { positioningSteps } from "@/lib/positioning/positioningSteps";
 import { drawArmLabel, drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
@@ -2372,7 +2373,73 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               <div style={{ fontSize: isMobile ? 15 : 18, color: "#AEB8D6" }}>{formatDurationRange(combinedDurationSeconds)} in all</div>
             </div>
           )}
-          {!welcomeOnScreen && !(guideInPanel && exerciseOnScreen) && (
+          {/* The coach, while the patient gets into place: the ONE instruction
+              (big, coloured by state), the setup line, a checklist of what is
+              already right, and what comes next. The camera keeps only the
+              outline and an arrow (the owner's request: the same words were
+              shown in three places). */}
+          {!welcomeOnScreen && positioningOnScreen && framingIntelligence.positionGuide && (() => {
+            const g = framingIntelligence.positionGuide;
+            const col = POSITION_COLOR[g.state];
+            const ink = g.state === "adjusting" ? "#1A1200" : g.state === "hold_still" ? "#04162E" : "#08240F";
+            const arrow = g.issue?.arrow ?? null;
+            const steps = positioningSteps(g.issue?.id ?? null, g.state === "locked");
+            const first = combinedQueue[sessionQueue.queueIndex] ?? combinedQueue[0];
+            return (
+              <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: isMobile ? 12 : 20 }}>
+                <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>
+                  YOUR COACH · GETTING YOU IN PLACE
+                </div>
+                <div aria-live="polite" style={{
+                  background: col, color: ink, borderRadius: 20, padding: isMobile ? "14px 16px" : "22px 24px",
+                  display: "flex", alignItems: "center", gap: 18,
+                }}>
+                  {arrow && (
+                    <span aria-hidden="true" style={{
+                      flexShrink: 0, width: isMobile ? 48 : 68, height: isMobile ? 48 : 68, borderRadius: 40,
+                      background: "rgba(0,0,0,0.14)", display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: isMobile ? 28 : 40,
+                    }}>{POSITION_ICON[arrow]}</span>
+                  )}
+                  <span style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: isMobile ? 22 : "clamp(26px, 2.4vw, 38px)", fontWeight: 800, lineHeight: 1.15 }}>
+                      {g.issue?.say ?? (g.state === "locked" ? "Perfect. Stay just like that." : "Fit yourself inside the outline.")}
+                    </span>
+                    {g.state === "hold_still" && (
+                      <span style={{ height: 10, borderRadius: 5, background: "rgba(0,0,0,0.18)", overflow: "hidden" }}>
+                        <span style={{ display: "block", height: "100%", width: `${Math.round(g.progress * 100)}%`, background: ink, transition: "width 0.3s linear" }} />
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div style={{ fontSize: isMobile ? 16 : 20, color: "#C9D2EE", lineHeight: 1.35 }}>{g.setupLine}</div>
+                <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: isMobile ? 8 : 12 }}>
+                  {steps.map((st) => (
+                    <li key={st.key} style={{
+                      display: "flex", alignItems: "center", gap: 14,
+                      fontSize: isMobile ? 16 : 21, fontWeight: st.status === "now" ? 800 : 600,
+                      color: st.status === "done" ? "#9be7b0" : st.status === "now" ? "#FFFFFF" : "#6B7598",
+                    }}>
+                      <span aria-hidden="true" style={{
+                        flexShrink: 0, width: 30, height: 30, borderRadius: 15, boxSizing: "border-box",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 900,
+                        background: st.status === "done" ? "#3FB950" : "transparent",
+                        color: "#08240F",
+                        border: st.status === "done" ? "none" : `3px solid ${st.status === "now" ? col : "#3A4466"}`,
+                      }}>{st.status === "done" ? "✓" : ""}</span>
+                      <span>{st.label}<span style={{ position: "absolute", left: -9999 }}>{st.status === "done" ? " (done)" : st.status === "now" ? " (now)" : ""}</span></span>
+                    </li>
+                  ))}
+                </ul>
+                {first && (
+                  <div style={{ fontSize: isMobile ? 14 : 17, color: "#8892B4" }}>
+                    Next: {(first.prescription as any)?.clinicalName ?? first.displayName}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          {!welcomeOnScreen && !positioningOnScreen && !(guideInPanel && exerciseOnScreen) && (
             <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>
                 {positioningOnScreen ? "LET'S GET YOU IN PLACE" : "YOUR EXERCISE"}
@@ -2392,7 +2459,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
           {/* ── FRAMING INTELLIGENCE BAR ── (not on the welcome screen) */}
           <div style={{
-            display: welcomeOnScreen ? "none" : "flex",
+            // Hidden on the welcome screen, while positioning (the coach panel
+            // says it) and during the exercise (the instruction band does).
+            display: welcomeOnScreen || positioningOnScreen || exerciseOnScreen ? "none" : "flex",
             marginBottom: 8,
             padding: "9px 14px",
             borderRadius: 9,
@@ -2521,7 +2590,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                   style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", display: "block", opacity: exerciseOnScreen ? 1 : 0, transition: "opacity 0.5s ease" }}
                 />
                 {/* Positioning coach: until the patient is placed and still (before the first rep) */}
-                {positioningOnScreen && <PositionGuideOverlay guide={framingIntelligence.positionGuide!} />}
+                {positioningOnScreen && <PositionGuideOverlay guide={framingIntelligence.positionGuide!} textInPanel />}
                 {welcomeOnScreen && (
                   <div style={{
                     position: "absolute", inset: 0, borderRadius: 18, background: "#141A2E", overflowY: "auto",

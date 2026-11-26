@@ -106,7 +106,12 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 - Wiring: `useFramingIntelligence.evaluateFraming` runs the tracker every ready-phase frame and turns it into the
   `PrerequisiteResult` that the inference loop and `SessionRunner` already use (met = locked). The loop's gate stops the
   rep state machine before the first rep until it is met, and the voice repeats the short instruction every 8 s while a
-  problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrow, instruction and hold ring.
+  problem lasts. `components/session/PositionGuideOverlay.tsx` draws the silhouette, arrows and hold ring; with
+  `textInPanel` (the session screen) it shows no text, only an arrow badge, and the coach panel on the left carries
+  the one instruction (big, coloured by state: amber adjusting, blue holding still), the setup line, a checklist
+  (`lib/positioning/positioningSteps.ts`: seen, facing, fits, posture, still; done / now / to do) and the next
+  exercise. The amber framing bar above the camera is hidden while positioning and exercising (the owner: the same
+  words were shown three times).
 - One thing at a time on the camera panel (`SessionRunner`: `positioningOnScreen`, `exerciseOnScreen`): while being
   positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
   patient is placed, and the ghost's demo timer starts then. The ghost (`lib/pose/ghostAnimator.ts`) demonstrates a rep
