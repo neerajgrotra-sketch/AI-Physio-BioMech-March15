@@ -58,6 +58,25 @@ Set per exercise when a protocol is assigned to a patient (admin, Patients → A
   above expected; expected not below what the camera can tell apart), how they show on the patient's screen, and
   how the front-view measurement's accuracy near overhead (±6-10°) affects targets above about 150°.
 
+## Gamification: pop the balloon (owner's idea 2026-11-26)
+
+Raise the arm to pop a balloon instead of reaching a line. Goal: motivation and adherence (home exercise is boring).
+
+- **Rule:** the game is a skin over the rep logic, never a replacement. The balloon pops when the rep COUNTS, not
+  when a hand touches it; otherwise patients lean, shrug, bend the elbow, use the wrong arm or reach to win.
+- **Mapping:** correct lift to the target -> balloon inflates; held -> keeps inflating with the countdown, pops at the
+  end of the hold (= rep counted); dropped early -> deflates, with the coach's reason; bent elbow / out to the side /
+  wrong arm -> no reaction (or a wobble) plus the usual cue; slow controlled lowering -> bonus. Reward control, never
+  speed. The balloon sits where the hand is with a STRAIGHT arm at the target.
+- **Clinical fit:** a golden bonus balloon at the physio's Encourage-to ROM (gives that setting a purpose; see the ROM
+  entry); never above what the physio set; on/off per patient (some adults find games patronising); a session summary
+  ("6 balloons, 2 golden, best hold 3.2 s") next to the unchanged clinical numbers.
+- **Later themes on the same mechanics:** paint a rainbow arc (ROM), catch stars (reps), a plant that grows over the
+  week (adherence).
+- **Effort / timing:** a layer over existing events (target reached, hold countdown, rep counted / failed); about a
+  week for a polished balloon version with tests that it can't be won with bad form. Build with the portrait patient
+  screen, after the measurement and validation work.
+
 ## Multi-camera 3D (kiosk and validation rig) (owner's question 2026-11-26)
 
 Two or three ordinary cameras can give true 3D by triangulation (each sees a joint from a different angle), with fewer
