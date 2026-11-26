@@ -10,6 +10,8 @@
 //   elbow bent while raising / holding   -> "Keep your arm straight."
 //   arm going out to the side (forward
 //   raise)                               -> "Bring your arm in front of you."
+//   corrected that while still going up  -> "That's better."
+//     (corrected at the target, the hold starts and "Hold it there" plays)
 //   back at rest after a rep             -> "And again."
 //
 // The other moments already have their lines elsewhere: the exercise
@@ -34,7 +36,7 @@ export const STALL_PROGRESS_DEG = 3;
 export const NEAR_TARGET_DEG = 5;      // within this of the target, don't say "higher"
 export const FORM_PERSIST_MS = 700;    // a form problem must last this long
 export const AGAIN_AFTER_MS = 1500;    // after the rep, at rest this long -> "And again."
-const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000 };
+const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000 };
 
 export class RepCoach {
   private phase = "";
@@ -44,6 +46,7 @@ export class RepCoach {
   private planeSince: number | null = null;
   private lastSaid: Record<string, number> = {};
   private againForRep = -1;
+  private planeCued = false; // "in front of you" was said during this lift
 
   reset(): void {
     this.phase = "";
@@ -53,6 +56,7 @@ export class RepCoach {
     this.planeSince = null;
     this.lastSaid = {};
     this.againForRep = -1;
+    this.planeCued = false;
   }
 
   private can(kind: string, now: number): boolean {
@@ -71,13 +75,20 @@ export class RepCoach {
       this.phase = i.phase;
       this.phaseSince = now;
       if (i.phase === "lifting") this.best = null;
+      if (i.phase === "ready") this.planeCued = false;
     }
     const active = i.phase === "lifting" || i.phase === "top" || i.phase === "holding";
 
     // Form first: it matters more than height.
     this.planeSince = active && i.wrongPlane ? (this.planeSince ?? now) : null;
     if (this.planeSince !== null && now - this.planeSince >= FORM_PERSIST_MS && this.can("plane", now)) {
+      this.planeCued = true;
       return this.say("plane", now, "Bring your arm in front of you.");
+    }
+    // Acknowledge the correction on the way up.
+    if (this.planeCued && i.phase === "lifting" && i.wrongPlane === false && this.can("better", now)) {
+      this.planeCued = false;
+      return this.say("better", now, "That's better.");
     }
     this.bentSince = active && i.elbowBent ? (this.bentSince ?? now) : null;
     if (this.bentSince !== null && now - this.bentSince >= FORM_PERSIST_MS && this.can("straight", now)) {

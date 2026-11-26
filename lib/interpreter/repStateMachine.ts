@@ -48,10 +48,8 @@ function judgeRep(
   balanceOk: boolean,
   isolationOk: boolean,
   everViolatedIsolation: boolean,
-  everHadBilateralParticipationGap: boolean,
-  everBadForm = false
+  everHadBilateralParticipationGap: boolean
 ): RepEvaluation {
-  if (everBadForm) return buildRepEvaluation("failed", "failed_form");
   if (prescription.side === "both" && everHadBilateralParticipationGap) {
     return buildRepEvaluation("failed", "failed_bilateral_participation");
   }
@@ -106,6 +104,7 @@ export function updateRepState(
   let everViolatedIsolation = currentState.everViolatedIsolation;
   let everHadBilateralParticipationGap = currentState.everHadBilateralParticipationGap;
   let everBadForm = currentState.everBadForm ?? false;
+  let formBadSinceMs = currentState.formBadSinceMs ?? null;
 
   let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
   let dipStartedAtMs = currentState.dipStartedAtMs ?? null;
@@ -138,9 +137,7 @@ export function updateRepState(
       everHadBilateralParticipationGap = true;
     }
 
-    if (!formOk) {
-      everBadForm = true;
-    }
+
   }
 
   switch (currentState.phase) {
@@ -179,7 +176,9 @@ export function updateRepState(
         if (attemptPeak !== null && attemptPeak >= prescription.startThreshold + SHORT_ATTEMPT_DEG) {
           justFailedRep = true;
           lastRepEvaluation =
-            prescription.side === "both" && everHadBilateralParticipationGap
+            everBadForm
+              ? buildRepEvaluation("failed", "failed_form") // reached the height, but never held it the right way
+              : prescription.side === "both" && everHadBilateralParticipationGap
               ? buildRepEvaluation("failed", "failed_bilateral_participation")
               : buildRepEvaluation("failed", "failed_height");
         }
@@ -201,9 +200,17 @@ export function updateRepState(
       if (value < prescription.targetThreshold - tolerance) {
         phase = "lifting";
         enteredTopAtMs = null;
+      } else if (!formOk) {
+        // At the height but the wrong way (e.g. out to the side in a forward
+        // raise): the hold waits, timed from when the form is right. Going
+        // the wrong way on the way UP is only coached; what counts is how
+        // the arm is held at the target (the owner's case: raised sideways,
+        // then brought in front while up — that is now a good rep).
+        enteredTopAtMs = nowMs;
+        everBadForm = true;
       } else if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
         // No hold: the rep is done the moment the target is reached.
-        lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap, everBadForm);
+        lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
         if (lastRepEvaluation.outcome === "success") { repCount += 1; justCompletedRep = true; } else { justFailedRep = true; }
         holdSatisfied = true;
         phase = "lowering";
@@ -217,6 +224,19 @@ export function updateRepState(
 
     case "holding": {
       const tolerance = prescription.target.tolerance ?? 0;
+
+      if (!formOk && value >= prescription.targetThreshold - tolerance) {
+        if (formBadSinceMs === null) formBadSinceMs = nowMs;
+        if (nowMs - formBadSinceMs >= HOLD_DIP_GRACE_MS) {
+          phase = "top";           // the hold restarts once the arm is back in front
+          enteredTopAtMs = nowMs;
+          everBadForm = true;
+          formBadSinceMs = null;
+          break;
+        }
+      } else {
+        formBadSinceMs = null;
+      }
 
       if (value < prescription.targetThreshold - tolerance) {
         // A brief wobble below the hold floor is forgiven; only a dip that
@@ -239,7 +259,7 @@ export function updateRepState(
         if (!holdSatisfied && heldForMs >= prescription.hold.durationMs) {
           holdSatisfied = true;
           justCompletedHold = true;
-          lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap, everBadForm);
+          lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
           if (lastRepEvaluation.outcome === "success") { repCount += 1; justCompletedRep = true; } else { justFailedRep = true; }
           phase = "lowering";
           enteredLoweringAtMs = nowMs;
@@ -302,6 +322,7 @@ export function updateRepState(
     everHadBilateralParticipationGap,
 
     everBadForm,
+    formBadSinceMs: phase === "holding" ? formBadSinceMs : null,
     dipStartedAtMs: phase === "holding" ? dipStartedAtMs : null,
     attemptPeak: phase === "lifting" || phase === "lowering" ? attemptPeak : null,
 

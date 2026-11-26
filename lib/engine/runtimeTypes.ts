@@ -40,8 +40,10 @@ export type RuntimeRepState = {
   attemptPeak?: number | null;
   /** Where the opposite arm rests (updated while ready), for the isolation check. */
   oppositeRest?: number | null;
-  /** The arm went the wrong way (e.g. out to the side) during this rep. */
+  /** The arm was at the target height but the wrong way (e.g. out to the side) during this rep. */
   everBadForm?: boolean;
+  /** When the form went wrong during a hold (a short slip is forgiven). */
+  formBadSinceMs?: number | null;
 
   lastRepEvaluation: RepEvaluation;
 };

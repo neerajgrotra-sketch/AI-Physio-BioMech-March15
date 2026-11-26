@@ -64,3 +64,14 @@ describe("RepCoach", () => {
     expect(run(c, repeat({ phase: "ready", metric: 40, repCount: 6 }, 50))).toEqual([]);
   });
 });
+
+describe("RepCoach: correcting the direction", () => {
+  it("out to the side, then brought in front on the way up: 'That's better'", () => {
+    const c = new RepCoach();
+    const said = run(c, [
+      ...repeat({ phase: "lifting", metric: 70, wrongPlane: true }, 10),
+      ...repeat({ phase: "lifting", metric: 80, wrongPlane: false }, 5),
+    ]);
+    expect(said.map((s) => s[1])).toEqual(["Bring your arm in front of you.", "That's better."]);
+  });
+});

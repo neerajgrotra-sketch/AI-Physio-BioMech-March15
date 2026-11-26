@@ -49,8 +49,11 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    only waits for the arm to come back: below finish, or half way down and rising again (`REARM_*`), which starts the
    next rep. A hold dropped early fails at once (`failed_hold`). Isolation: the other arm may not rise more than
    `maxOppositeArmElevationDeg` above where it rested while ready (`oppositeRest`), not an absolute 35° (a seated
-   patient's resting arm reads 40-60°). Form: a forward raise facing the camera that goes out to the side (plane over
-   `MAX_PLANE_DEG_FLEXION` 60°) fails as `failed_form`; a bent elbow is coached, not failed. The plane and bent elbow
+   patient's resting arm reads 40-60°). Form (forward raises facing the camera, plane over `MAX_PLANE_DEG_FLEXION`
+   60° = out to the side) is judged AT THE TARGET: on the way up it is only coached; the hold runs only while the arm
+   is in front (it waits at `top`, and a slip of more than `HOLD_DIP_GRACE_MS` mid-hold restarts it), so raising
+   sideways and then bringing the arm in front while up is a good rep (the owner's case); lowering without ever
+   holding it in front fails as `failed_form`. A bent elbow is coached, not failed. The plane and bent elbow
    come from BlazePose's 3D estimate when it has one (`applyWorld3DForm`, lib/biomechanics/world3d.ts, applied in the
    loop after flexionView), else from the 2D `armForm`; the replay has no 3D input, so tests cover the 2D path.
    A missing reading (`null`) pauses the rep; it must never be treated as 0°.
