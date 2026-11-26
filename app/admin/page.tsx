@@ -11,6 +11,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { ExerciseTemplate, CoachingStrings } from "@/lib/supabase/types";
 import { BRAND, BrandLogo } from "@/components/brand/brand";
 import { versionLabel, APP_BUILT_AT } from "@/lib/app/version";
+import { assignmentCode } from "@/lib/app/assignment";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -830,6 +831,12 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{s.title}</div>
                             <div style={{ fontSize: 11, color: C.textDim }}>{s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · {s.estimated_duration_mins} min · Created {formatDate(s.created_at)}</div>
+                            <button
+                              title="Assignment ID — click to copy the full ID"
+                              onClick={() => { try { navigator.clipboard?.writeText(s.id); } catch {} }}
+                              style={{ marginTop: 6, fontSize: 11, fontFamily: "ui-monospace, monospace", fontWeight: 600, color: C.textMuted, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>
+                              {assignmentCode(s.id)} ⧉
+                            </button>
                           </div>
                           <Badge label={s.status === "completed" ? "Completed" : s.status === "pending" ? "Pending" : s.status} color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : C.textMuted} />
                         </div>
