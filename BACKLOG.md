@@ -2,6 +2,25 @@
 
 Parked ideas and decisions waiting on something. Newest first.
 
+## A natural voice (owner's request 2026-11-26)
+
+The voice sounds mechanical: everything is spoken by the browser's built-in voice (`speechSynthesis`, about 20 places
+across `SessionRunner`, `useCoachingBrain` and `useFramingIntelligence`), so it sounds different on every computer.
+
+- Found while looking: `app/api/tts/route.ts` is a copy of `/api/coach` (it calls Claude, not a speech service), and
+  `lib/coaching/useRealVoiceCoaching.ts` (an OpenAI voice, "marin") is not used anywhere. So no real TTS is wired up.
+- Plan (a hybrid, so instructions stay instant):
+  1. **Fixed lines as recorded clips.** Positioning instructions, "Perfect, I can see you", each exercise's intro,
+     hold, lower, rep counts, well done. Generate them once with a neural voice (OpenAI TTS, ElevenLabs or Azure
+     Neural), keep them in Supabase Storage, play them at once. No delay, no cost per session.
+  2. **AI coaching lines spoken live** through a real `/api/tts` (stream the audio, about half a second's delay).
+  3. **Browser voice as the fallback**, picking the best voice the device has (Edge's "Natural" voices, Google's).
+  4. **One speech queue** for all of it, so lines don't cut each other off (today each place cancels the others).
+- The words matter as much as the voice: warmer, shorter lines, a few variants of each, the patient's first name.
+- Decide with the owner: which voice (try 3-4 samples), and the cost of live TTS per session. Protect `/api/tts`
+  first (it is open to anyone; see Known gaps in CLAUDE.md).
+- Quick win to try first: pick the device's best voice (Edge "Natural" / Google) everywhere, in one helper.
+
 ## Test runs logged to Supabase (owner's idea 2026-11-25)
 
 Agile testing: the owner makes a numbered test protocol (a test case), runs it, and every run's whole interaction is
