@@ -108,13 +108,18 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
   patient is placed, and the ghost's demo timer starts then. The ghost (`lib/pose/ghostAnimator.ts`) demonstrates a rep
   like a physio (`demoCycle`: rise, pause at the target, lower, pause), holds at the target with the patient, lowers
-  back to rest with them after the rep, and 1.5 s later shows the next one. Facing the camera, forward raises show
-  that timing on an "Example" card in a corner (`lib/pose/exampleCard.ts`: a side-view figure with the target angle;
-  the owner found a ghost painted over the patient odd; it demonstrates once, then waits, `demoOnceThenWait`, and during
-  a rep mirrors the patient's own arm) and a short marker beside the raised arm at the height the ELBOW must reach,
-  with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`). `lib/coaching/repCoach.ts`
-  coaches through the rep: "A little higher" on a stall, "Keep your arm straight", "Bring your arm in front of you",
-  "And again".
+  back to rest with them after the rep, and 1.5 s later shows the next one (one clock, `demoClock`, for the movement
+  and the narration). Facing the camera, forward raises show the guide figure, "the physio" (`lib/pose/exampleCard.ts`):
+  a small 3D figure drawn as a mirror image, seated or standing like the patient (last posture seen, else the
+  prescription's), using the exercise's arm; seen side on at the start of a demonstration and turning to three-quarter
+  (55°; 35° made the arm look as if it crossed the chest) as it raises the arm, facing the patient (25°) to show "in
+  front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep
+  mirrors the patient's own arm. `lib/coaching/demoNarrator.ts` narrates the demonstration in step with it ("Watch me
+  first… up to here… and slowly down… your turn"; shorter on repeats). A short marker beside the raised arm marks
+  where the ELBOW must reach, with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`), and
+  `drawArmLabel` labels the arm to use ("RIGHT ARM") before the first rep and, red, on the wrong arm.
+  `lib/coaching/repCoach.ts` coaches through the rep: "A little higher", "Keep your arm straight", "Bring your arm in
+  front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again".
 - `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
   and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check
   run says whether it or the 2D angle is closer. Code outside React renders (the ghost loop) must read
@@ -155,6 +160,14 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 - `/api/coach` and `/api/tts` are open to anyone (patients use them without logging in), so they can run up the OpenAI
   bill. They need a check, such as a valid session id and a rate limit.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
+
+## Assignment IDs
+
+- Assigning a protocol to a patient creates a `sessions` row; its id is the assignment. `lib/app/assignment.ts`
+  `assignmentCode(id)` is its readable form, `A-` + the first 8 hex characters (e.g. `A-C3CD9D46`), shown on the admin
+  session card (click copies the full id), on the session screen, and in the APP entry at the top of every saved debug
+  log. Look one up with `replace(sessions.id::text,'-','') ilike '<8 chars>%'`; each run is a `session_results` row
+  (`prescription_id`), logs are `session_debug_logs.session_id`, the protocol is `sessions.source_protocol_id`.
 
 ## Versions
 

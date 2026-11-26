@@ -111,3 +111,44 @@ export function drawReachGuide(
   }
   ctx.restore();
 }
+
+/**
+ * Labels the arm the exercise uses ("RIGHT ARM") at that shoulder, in the
+ * mirrored preview, so the patient needn't work out left and right in a
+ * mirror. Shown before the first rep, and highlighted (red, pulsing) when
+ * they lift the wrong arm.
+ */
+export function drawArmLabel(
+  ctx: CanvasRenderingContext2D,
+  frame: PoseFrame,
+  side: "right" | "left",
+  W: number,
+  H: number,
+  urgent: boolean,
+  nowMs: number
+): void {
+  const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
+  const sh = lm[`${side}_shoulder`];
+  if (!sh || (sh.score ?? 1) < 0.35) return;
+  const x = (1 - sh.x) * W, y = sh.y * H;
+  const pulse = urgent ? 0.6 + 0.4 * Math.sin(nowMs / 160) : 1;
+  const col = urgent ? "255,90,90" : "96,190,250";
+  ctx.save();
+  // Ring on the shoulder.
+  ctx.strokeStyle = `rgba(${col},${0.9 * pulse})`;
+  ctx.lineWidth = urgent ? 5 : 3;
+  ctx.beginPath(); ctx.arc(x, y, urgent ? 22 : 16, 0, Math.PI * 2); ctx.stroke();
+  // Pill above it.
+  const label = `${side.toUpperCase()} ARM`;
+  ctx.font = "800 15px Inter, system-ui, sans-serif";
+  const tw = ctx.measureText(label).width;
+  const px = Math.max(6, Math.min(W - tw - 22, x - tw / 2 - 8)), py = Math.max(6, y - 56);
+  ctx.fillStyle = `rgba(${col},${0.92 * pulse})`;
+  ctx.beginPath();
+  (ctx as any).roundRect ? (ctx as any).roundRect(px, py, tw + 16, 24, 12) : ctx.rect(px, py, tw + 16, 24);
+  ctx.fill();
+  ctx.fillStyle = "rgba(10,14,30,0.95)";
+  ctx.textAlign = "left";
+  ctx.fillText(label, px + 8, py + 17);
+  ctx.restore();
+}

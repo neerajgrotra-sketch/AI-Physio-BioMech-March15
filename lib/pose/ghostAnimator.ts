@@ -60,13 +60,26 @@ export const BETWEEN_REPS_REST_S = 1.5;
 // after this long does it show it again (it used to loop non-stop).
 export const IDLE_BEFORE_REPEAT_S = 8;
 
+/**
+ * Where the demonstration is at, `s` seconds after it could start: which
+ * showing it is (0 = the first, 1+ = repeats after a long pause) and how
+ * far into that showing, or null while the figure waits. One clock for the
+ * figure's movement and the narration (lib/coaching/demoNarrator.ts), so
+ * the voice says "up to here" exactly when the figure gets there.
+ */
+export function demoClock(s: number): { cycle: number; t: number } | null {
+  if (s < 0) return null;
+  if (s < DEMO_CYCLE_S) return { cycle: 0, t: s };
+  const period = IDLE_BEFORE_REPEAT_S + DEMO_CYCLE_S;
+  const k = Math.floor((s - DEMO_CYCLE_S) / period);
+  const t = (s - DEMO_CYCLE_S) % period;
+  return t < IDLE_BEFORE_REPEAT_S ? null : { cycle: k + 1, t: t - IDLE_BEFORE_REPEAT_S };
+}
+
 /** Demonstrate once, then wait; again only after a long pause. `s` = seconds since the demo could start. */
 export function demoOnceThenWait(s: number): number {
-  if (s < 0) return 0;
-  if (s < DEMO_CYCLE_S) return demoCycle(s);
-  const period = IDLE_BEFORE_REPEAT_S + DEMO_CYCLE_S;
-  const t = (s - DEMO_CYCLE_S) % period;
-  return t < IDLE_BEFORE_REPEAT_S ? 0 : demoCycle(t - IDLE_BEFORE_REPEAT_S);
+  const c = demoClock(s);
+  return c ? demoCycle(c.t) : 0;
 }
 
 export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {

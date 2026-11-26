@@ -13,6 +13,8 @@
 //   corrected that while still going up  -> "That's better."
 //     (corrected at the target, the hold starts and "Hold it there" plays)
 //   back at rest after a rep             -> "And again."
+//   the OTHER arm lifted, exercise arm
+//   still down (the mirror confuses)     -> "That's your left arm. Rest it down and lift your right arm."
 //
 // The other moments already have their lines elsewhere: the exercise
 // intro, "Hold it there" and the countdown, the rep-completed praise with
@@ -29,6 +31,10 @@ export type RepCoachInput = {
   repTarget: number;
   elbowBent: boolean | null;  // facing the camera only, else null
   wrongPlane: boolean | null; // forward raise going out to the side, else null
+  /** One-arm exercises: which arm it is, and the OTHER arm's elevation now. */
+  side?: "right" | "left" | "both";
+  oppositeMetric?: number | null;
+  startThreshold?: number;     // the exercise arm counts as down below this
 };
 
 export const STALL_MS = 1500;          // no real progress for this long while lifting
@@ -36,7 +42,8 @@ export const STALL_PROGRESS_DEG = 3;
 export const NEAR_TARGET_DEG = 5;      // within this of the target, don't say "higher"
 export const FORM_PERSIST_MS = 700;    // a form problem must last this long
 export const AGAIN_AFTER_MS = 1500;    // after the rep, at rest this long -> "And again."
-const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000 };
+export const WRONG_ARM_RISE_DEG = 30;  // the other arm this far above its rest = it's being lifted
+const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 5000 };
 
 export class RepCoach {
   private phase = "";
@@ -47,6 +54,10 @@ export class RepCoach {
   private lastSaid: Record<string, number> = {};
   private againForRep = -1;
   private planeCued = false; // "in front of you" was said during this lift
+  private oppRest: number | null = null;  // where the other arm rests
+  private wrongArmSince: number | null = null;
+  /** True while the patient is lifting the wrong arm (for the on-screen highlight). */
+  wrongArmNow = false;
 
   reset(): void {
     this.phase = "";
@@ -57,6 +68,9 @@ export class RepCoach {
     this.lastSaid = {};
     this.againForRep = -1;
     this.planeCued = false;
+    this.oppRest = null;
+    this.wrongArmSince = null;
+    this.wrongArmNow = false;
   }
 
   private can(kind: string, now: number): boolean {
@@ -78,6 +92,27 @@ export class RepCoach {
       if (i.phase === "ready") this.planeCued = false;
     }
     const active = i.phase === "lifting" || i.phase === "top" || i.phase === "holding";
+
+    // The wrong arm: the other arm well above where it rests while the
+    // exercise arm is still down. (Both up is "keep the other arm still",
+    // judged by the rep logic.)
+    const opp = i.oppositeMetric ?? null;
+    const oneArm = i.side === "right" || i.side === "left";
+    const exerciseArmDown = i.metric === null || i.metric < (i.startThreshold ?? 40);
+    if (oneArm && opp !== null) {
+      const lifted = this.oppRest !== null && opp > this.oppRest + WRONG_ARM_RISE_DEG;
+      if (!lifted && i.phase === "ready") {
+        this.oppRest = this.oppRest === null ? opp : this.oppRest + (opp - this.oppRest) * 0.1;
+      }
+      this.wrongArmSince = lifted && exerciseArmDown ? (this.wrongArmSince ?? now) : null;
+    } else {
+      this.wrongArmSince = null;
+    }
+    this.wrongArmNow = this.wrongArmSince !== null && now - this.wrongArmSince >= FORM_PERSIST_MS;
+    if (this.wrongArmNow && this.can("wrongArm", now)) {
+      const other = i.side === "right" ? "left" : "right";
+      return this.say("wrongArm", now, `That's your ${other} arm. Rest it down and lift your ${i.side} arm.`);
+    }
 
     // Form first: it matters more than height.
     this.planeSince = active && i.wrongPlane ? (this.planeSince ?? now) : null;

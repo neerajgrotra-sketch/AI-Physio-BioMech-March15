@@ -75,3 +75,30 @@ describe("RepCoach: correcting the direction", () => {
     expect(said.map((s) => s[1])).toEqual(["Bring your arm in front of you.", "That's better."]);
   });
 });
+
+describe("RepCoach: the wrong arm", () => {
+  const right = { side: "right" as const, startThreshold: 50 };
+  it("lifting the left arm in a right-arm exercise: told which arm, and highlighted", () => {
+    const c = new RepCoach();
+    const said = run(c, [
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20), // both resting
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 100, ...right }, 12), // left arm up
+    ]);
+    expect(said.map((s) => s[1])).toEqual(["That's your left arm. Rest it down and lift your right arm."]);
+    expect(c.wrongArmNow).toBe(true);
+  });
+
+  it("the other arm resting on the lap (already 50°) is not 'wrong'", () => {
+    const c = new RepCoach();
+    expect(run(c, repeat({ phase: "ready", metric: 45, oppositeMetric: 52, ...right }, 40))).toEqual([]);
+  });
+
+  it("both arms up is not called the wrong arm (the rep logic fails it as isolation)", () => {
+    const c = new RepCoach();
+    const said = run(c, [
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20),
+      ...repeat({ phase: "lifting", metric: 100, oppositeMetric: 100, ...right }, 12),
+    ]);
+    expect(said.map((s) => s[1]).some((t) => t.includes("your left arm"))).toBe(false);
+  });
+});

@@ -427,3 +427,21 @@ describe("raised out to the side, then brought in front while up (the owner's ca
     expect(rep.t).toBeGreaterThan(3500 + 1000 + 1200 + 800 + p.hold.durationMs - 100); // not after the first 1.2 s
   });
 });
+
+describe("lifting the wrong arm (left, in a right-arm exercise)", () => {
+  it("is neither a rep nor a failed rep; the right arm then counts normally", () => {
+    const slug = "shoulder_flexion_right";
+    const [start, norm, min, holdMs] = TEMPLATES[slug];
+    const p = buildPrescription(slug, slug, 3, holdMs, {}, start, norm, min, null, null, { cameraPosition: "either", patientPosition: "either" })!;
+    const wrong = timeline([[3500, hold(5)], [1000, ramp(5, 130)], [holdMs + 600, hold(130)], [1000, ramp(130, 5)], [800, hold(5)]]);
+    const right = timeline([[1000, ramp(5, 130)], [holdMs + 600, hold(130)], [1000, ramp(130, 5)], [800, hold(5)]]);
+    const t0 = wrong[wrong.length - 1].t + 33;
+    const fr = [
+      ...wrong.map(({ t, v }) => frameFromPixels(flexionFront(v, { side: "left" }), 1280, 720, { timestamp: t })),
+      ...right.map(({ t, v }) => frameFromPixels(flexionFront(v), 1280, 720, { timestamp: t0 + t })),
+    ];
+    const r = replay(p, fr);
+    expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(1);
+  });
+});
