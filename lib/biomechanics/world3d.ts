@@ -75,7 +75,9 @@ export function arm3D(kp: V3[] | undefined | null, side: "right" | "left", minSc
 }
 
 // A straight arm's elbow reads above this (interior angle).
-export const STRAIGHT_ELBOW_DEG = 140;
+// (135: a natural, relaxed arm reads 160-175; the forearm hanging from a
+// lifted elbow reads well under 120.)
+export const STRAIGHT_ELBOW_DEG = 135;
 
 /**
  * Overwrites the form fields (plane, bent elbow) on the features with the

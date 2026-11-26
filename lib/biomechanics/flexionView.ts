@@ -114,7 +114,9 @@ export function armForm(
   }
   let elbowBent: boolean | null = null;
   if (wristDrop !== null && elev >= 30 && elev <= 150) {
-    elbowBent = drop * (1 + FOREARM) - wristDrop > BENT_MARGIN * length;
+    // Either way: the hand well above (forearm up) or well below (forearm
+    // hanging, the upper arm lifted alone) where a straight arm puts it.
+    elbowBent = Math.abs(drop * (1 + FOREARM) - wristDrop) > BENT_MARGIN * length;
   }
   return { planeDeg, elbowBent };
 }

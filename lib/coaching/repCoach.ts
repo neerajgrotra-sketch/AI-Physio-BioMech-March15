@@ -43,7 +43,9 @@ export const NEAR_TARGET_DEG = 5;      // within this of the target, don't say "
 export const FORM_PERSIST_MS = 700;    // a form problem must last this long
 export const AGAIN_AFTER_MS = 1500;    // after the rep, at rest this long -> "And again."
 export const WRONG_ARM_RISE_DEG = 30;  // the other arm this far above its rest = it's being lifted
-const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 5000 };
+export const WRONG_ARM_PERSIST_MS = 400; // quicker than other form cues: it's an obvious mistake
+export const WRONG_ARM_MIN_GAP_MS = 2000;
+const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 4000 };
 
 export class RepCoach {
   private phase = "";
@@ -58,6 +60,13 @@ export class RepCoach {
   private wrongArmSince: number | null = null;
   /** True while the patient is lifting the wrong arm (for the on-screen highlight). */
   wrongArmNow = false;
+  /** When the patient last moved either arm noticeably (to hold back re-demonstrations). */
+  lastActivityMs = -Infinity;
+  /** The kind of the line just returned ("wrongArm" is a correction: say it over anything else). */
+  lastKind: string | null = null;
+  private wrongArmEpisode = false; // this wrong lift has been called out
+  private lastOpp: number | null = null;
+  private lastMetric: number | null = null;
 
   reset(): void {
     this.phase = "";
@@ -71,6 +80,11 @@ export class RepCoach {
     this.oppRest = null;
     this.wrongArmSince = null;
     this.wrongArmNow = false;
+    this.lastActivityMs = -Infinity;
+    this.lastKind = null;
+    this.wrongArmEpisode = false;
+    this.lastOpp = null;
+    this.lastMetric = null;
   }
 
   private can(kind: string, now: number): boolean {
@@ -80,11 +94,18 @@ export class RepCoach {
 
   private say(kind: string, now: number, text: string): string {
     this.lastSaid[kind] = now;
+    this.lastKind = kind;
     return text;
   }
 
   update(i: RepCoachInput): string | null {
     const now = i.nowMs;
+    this.lastKind = null;
+    // Any noticeable arm movement (either arm) counts as activity.
+    const moved = (a: number | null | undefined, b: number | null) => a !== null && a !== undefined && b !== null && Math.abs(a - b) > 1.5;
+    if (moved(i.metric, this.lastMetric) || moved(i.oppositeMetric, this.lastOpp)) this.lastActivityMs = now;
+    this.lastMetric = i.metric ?? null;
+    this.lastOpp = i.oppositeMetric ?? null;
     if (i.phase !== this.phase) {
       this.phase = i.phase;
       this.phaseSince = now;
@@ -108,8 +129,16 @@ export class RepCoach {
     } else {
       this.wrongArmSince = null;
     }
-    this.wrongArmNow = this.wrongArmSince !== null && now - this.wrongArmSince >= FORM_PERSIST_MS;
-    if (this.wrongArmNow && this.can("wrongArm", now)) {
+    this.wrongArmNow = this.wrongArmSince !== null && now - this.wrongArmSince >= WRONG_ARM_PERSIST_MS;
+    if (!this.wrongArmNow) this.wrongArmEpisode = false;
+    // Every new wrong lift is called out (at most every WRONG_ARM_MIN_GAP_MS),
+    // and while the arm stays up the call repeats on the cooldown. (It used to
+    // be said once: the guide's narration kept the voice busy, and each
+    // further try fell inside a 5 s cooldown.)
+    const last = this.lastSaid["wrongArm"];
+    const newEpisode = this.wrongArmNow && !this.wrongArmEpisode && (last === undefined || now - last >= WRONG_ARM_MIN_GAP_MS);
+    if (this.wrongArmNow && (newEpisode || this.can("wrongArm", now))) {
+      this.wrongArmEpisode = true;
       const other = i.side === "right" ? "left" : "right";
       return this.say("wrongArm", now, `That's your ${other} arm. Rest it down and lift your ${i.side} arm.`);
     }
