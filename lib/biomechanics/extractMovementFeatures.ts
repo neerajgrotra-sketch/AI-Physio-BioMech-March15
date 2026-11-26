@@ -165,6 +165,10 @@ export function emptyMovementFeatures(): MovementFeatures {
     leftUpperArmDrop: null,
     leftUpperArmReach: null,
     shoulderWidthRatio: null,
+    rightUpperArmDropSw: null,
+    rightUpperArmReachSw: null,
+    leftUpperArmDropSw: null,
+    leftUpperArmReachSw: null,
     rightShoulderAbductionDeg: null,
     leftShoulderAbductionDeg: null,
     bilateralShoulderAbductionDeg: null,
@@ -223,6 +227,13 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
   const leftUpperArmDrop = lSh && lEl ? perTorso(lEl.y - lSh.y) : null;
   const leftUpperArmReach = lSh && lEl ? perTorso(dist(lSh, lEl)) : null;
   const shoulderWidthRatio = lSh && rSh ? perTorso(Math.abs(lSh.x - rSh.x)) : null;
+  const swLen = lSh && rSh ? Math.abs(lSh.x - rSh.x) : null;
+  const perSw = (v: number | null): number | null =>
+    v === null || swLen === null || swLen < 1e-3 ? null : round3(v / swLen);
+  const rightUpperArmDropSw = rSh && rEl ? perSw(rEl.y - rSh.y) : null;
+  const rightUpperArmReachSw = rSh && rEl ? perSw(dist(rSh, rEl)) : null;
+  const leftUpperArmDropSw = lSh && lEl ? perSw(lEl.y - lSh.y) : null;
+  const leftUpperArmReachSw = lSh && lEl ? perSw(dist(lSh, lEl)) : null;
 
   const rightShoulderAbductionDeg = rSh ? shoulderAbductionDeg(rSh, rWr, rEl) : null;
   const leftShoulderAbductionDeg = lSh ? shoulderAbductionDeg(lSh, lWr, lEl) : null;
@@ -285,6 +296,10 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     leftUpperArmDrop,
     leftUpperArmReach,
     shoulderWidthRatio,
+    rightUpperArmDropSw,
+    rightUpperArmReachSw,
+    leftUpperArmDropSw,
+    leftUpperArmReachSw,
     rightShoulderAbductionDeg,
     leftShoulderAbductionDeg,
     bilateralShoulderAbductionDeg,

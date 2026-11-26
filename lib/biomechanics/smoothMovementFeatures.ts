@@ -69,6 +69,10 @@ export function smoothMovementFeatures(history: MovementFeatures[]): MovementFea
     leftUpperArmDrop: average3(history.map((item) => item.leftUpperArmDrop)),
     leftUpperArmReach: average3(history.map((item) => item.leftUpperArmReach)),
     shoulderWidthRatio: average3(history.map((item) => item.shoulderWidthRatio)),
+    rightUpperArmDropSw: average3(history.map((item) => item.rightUpperArmDropSw)),
+    rightUpperArmReachSw: average3(history.map((item) => item.rightUpperArmReachSw)),
+    leftUpperArmDropSw: average3(history.map((item) => item.leftUpperArmDropSw)),
+    leftUpperArmReachSw: average3(history.map((item) => item.leftUpperArmReachSw)),
 
     rightShoulderAbductionDeg: average(history.map((item) => item.rightShoulderAbductionDeg)),
     leftShoulderAbductionDeg: average(history.map((item) => item.leftShoulderAbductionDeg)),

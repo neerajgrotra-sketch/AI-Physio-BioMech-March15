@@ -9,6 +9,7 @@
 
 import type { CameraPreference, ExercisePosture, ExercisePrescription } from '@/lib/types/exercise';
 import { kneeExtensionThresholds } from '@/lib/exercises/kneeThresholds';
+import { FINISH_SHARE } from '@/lib/engine/calibration';
 
 // ─── Prescription builder ─────────────────────────────────────────────────────
 // Keyed on exercise_templates.slug (snake_case, e.g. shoulder_flexion_right).
@@ -92,10 +93,15 @@ function buildBase(
   const _romStart = romStart ?? 0;
   const _romNorm = romNorm ?? 160;
   const _romMin = romAcceptableMin ?? 110;
-  const startThresh = _romStart + 15;
   // Physio override wins over population-level rom_acceptable_min
   const targetThresh = romTargetDegrees ?? _romMin;
-  const finishThresh = _romStart + 20;
+  // Before the resting calibration runs (and if it never can), use the same
+  // rule as calibrateThresholds: a rep finishes 30% of the way back down
+  // from the target, and the next one starts just above that. (These were
+  // start 15 / finish 20: with a hand resting on a desk, ~35°, no rep ever
+  // finished.) Knee and sit-to-stand cases set their own values below.
+  const finishThresh = Math.round((_romStart + Math.max(10, FINISH_SHARE * (targetThresh - _romStart))) * 10) / 10;
+  const startThresh = Math.max(_romStart + 15, finishThresh + 5);
 
   // Knee extension: the templates store knee ROM as flexion (0 = straight);
   // the app measures the interior knee angle (180 = straight).

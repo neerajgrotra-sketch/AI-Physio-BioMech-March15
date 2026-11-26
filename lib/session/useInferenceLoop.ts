@@ -579,7 +579,9 @@ export function useInferenceLoop() {
             // Cancel any in-flight framing evaluation the moment patient
             // starts moving — prevents stale API responses from interrupting
             // active reps with "step back" instructions mid-hold
-            if (prevPhase === "ready" && currentPhase === "lifting") {
+            // (A rep can also start straight from lowering, when the patient
+            // raises again before resting fully.)
+            if ((prevPhase === "ready" || prevPhase === "lowering") && currentPhase === "lifting") {
               framingCallbacks.cancelPendingEval();
               // Reset peak metric tracker for this new rep
               peakMetricThisRepRef.current = null;

@@ -17,6 +17,12 @@ export type MovementFeatures = {
   leftUpperArmDrop: number | null;
   leftUpperArmReach: number | null;
   shoulderWidthRatio: number | null;
+  // The same drop and seen length per shoulder width: the fallback scale
+  // when the hips are hidden (behind a desk), facing the camera.
+  rightUpperArmDropSw: number | null;
+  rightUpperArmReachSw: number | null;
+  leftUpperArmDropSw: number | null;
+  leftUpperArmReachSw: number | null;
 
   // Shoulder abduction metrics — separate from flexion elevation.
   // The whole arm from straight down, measured from a front camera.

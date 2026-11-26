@@ -30,6 +30,34 @@ export function createInitialRepState(): RuntimeRepState {
   };
 }
 
+// A rep is judged and counted the moment its hold is done (or the target is
+// reached, with no hold): reach the target, hold, rep counted, then lower.
+// It used to be counted only once the arm was back at rest below the finish
+// threshold, so a patient who came back to a hand-on-desk rest never got
+// the rep, and a second raise before reaching rest re-entered a hold that
+// could never complete.
+//
+// While lowering, the next rep starts when the arm is back at rest (below
+// finish), or when it has come at least REARM_SHARE of the way down and
+// starts rising again by REARM_RISE_DEG (a patient who doesn't rest fully).
+export const REARM_SHARE = 0.5;
+export const REARM_RISE_DEG = 12;
+
+function judgeRep(
+  prescription: ExercisePrescription,
+  balanceOk: boolean,
+  isolationOk: boolean,
+  everViolatedIsolation: boolean,
+  everHadBilateralParticipationGap: boolean
+): RepEvaluation {
+  if (prescription.side === "both" && everHadBilateralParticipationGap) {
+    return buildRepEvaluation("failed", "failed_bilateral_participation");
+  }
+  if (!balanceOk) return buildRepEvaluation("failed", "failed_balance");
+  if (!isolationOk || everViolatedIsolation) return buildRepEvaluation("failed", "failed_isolation");
+  return buildRepEvaluation("success", null);
+}
+
 // How long the metric may sit below the hold floor before the hold ends.
 export const HOLD_DIP_GRACE_MS = 300;
 // A lift that peaks at least this far past the start threshold and comes
@@ -164,7 +192,13 @@ export function updateRepState(
         phase = "lifting";
         enteredTopAtMs = null;
       } else if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
+        // No hold: the rep is done the moment the target is reached.
+        lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
+        if (lastRepEvaluation.outcome === "success") { repCount += 1; justCompletedRep = true; } else { justFailedRep = true; }
+        holdSatisfied = true;
         phase = "lowering";
+        enteredLoweringAtMs = nowMs;
+        attemptPeak = value;
       } else {
         phase = "holding";
       }
@@ -179,9 +213,14 @@ export function updateRepState(
         // lasts HOLD_DIP_GRACE_MS ends the hold.
         if (dipStartedAtMs === null) dipStartedAtMs = nowMs;
         if (nowMs - dipStartedAtMs >= HOLD_DIP_GRACE_MS) {
+          // Came down before the hold was done: a failed rep, said now.
+          justFailedRep = true;
+          lastRepEvaluation = buildRepEvaluation("failed", "failed_hold");
+          holdSatisfied = true; // judged; don't judge again while lowering
           phase = "lowering";
           enteredLoweringAtMs = nowMs;
           dipStartedAtMs = null;
+          attemptPeak = value;
         }
       } else if (enteredTopAtMs !== null) {
         dipStartedAtMs = null;
@@ -190,71 +229,34 @@ export function updateRepState(
         if (!holdSatisfied && heldForMs >= prescription.hold.durationMs) {
           holdSatisfied = true;
           justCompletedHold = true;
+          lastRepEvaluation = judgeRep(prescription, balanceOk, isolationOk, everViolatedIsolation, everHadBilateralParticipationGap);
+          if (lastRepEvaluation.outcome === "success") { repCount += 1; justCompletedRep = true; } else { justFailedRep = true; }
           phase = "lowering";
           enteredLoweringAtMs = nowMs;
+          attemptPeak = value;
         }
       }
       break;
     }
 
     case "lowering": {
-      const loweringTolerance = prescription.target.tolerance ?? 0;
+      // The rep was already judged (at hold completion, or when the hold
+      // failed). Here we only wait for the arm to come back so the next
+      // rep can start. attemptPeak tracks the LOWEST point while lowering.
+      const low = attemptPeak === null ? value : Math.min(attemptPeak, value);
+      attemptPeak = low;
+      const range = prescription.targetThreshold - prescription.finishThreshold;
+      const cameDownEnough = low <= prescription.targetThreshold - REARM_SHARE * range;
+      const backAtRest = value <= prescription.finishThreshold;
+      const risingAgain = cameDownEnough && value >= low + REARM_RISE_DEG;
 
-      // Track when the metric first meaningfully drops below target during lowering.
-      // This is the only reliable signal that the patient has actually started lowering.
-      if (!hasDescendedFromPeak && value < prescription.targetThreshold - loweringTolerance) {
-        hasDescendedFromPeak = true;
-      }
-
-      // Re-raise escape: patient lifted back up during lowering phase.
-      // Only fires AFTER they have genuinely started descending (hasDescendedFromPeak).
-      // This prevents phantom re-triggers on the frame immediately after hold completes
-      // when the patient is still at peak height.
-      if (
-        holdSatisfied &&
-        hasDescendedFromPeak &&
-        value >= prescription.targetThreshold - loweringTolerance
-      ) {
-        phase = "holding";
-        enteredTopAtMs = nowMs;
-        enteredLoweringAtMs = null;
-        hasDescendedFromPeak = false;
-        break;
-      }
-
-      if (value <= prescription.finishThreshold) {
-        if (!everReachedTarget) {
-          if (prescription.side === "both" && everHadBilateralParticipationGap) {
-            justFailedRep = true;
-            lastRepEvaluation = buildRepEvaluation(
-              "failed",
-              "failed_bilateral_participation"
-            );
-          } else {
-            justFailedRep = true;
-            lastRepEvaluation = buildRepEvaluation("failed", "failed_height");
-          }
-        } else if (prescription.hold.required && !holdSatisfied) {
-          justFailedRep = true;
-          lastRepEvaluation = buildRepEvaluation("failed", "failed_hold");
-        } else if (!balanceOk) {
-          justFailedRep = true;
-          lastRepEvaluation = buildRepEvaluation("failed", "failed_balance");
-        } else if (!isolationOk || everViolatedIsolation) {
-          justFailedRep = true;
-          lastRepEvaluation = buildRepEvaluation("failed", "failed_isolation");
-        } else {
-          repCount += 1;
-          justCompletedRep = true;
-          lastRepEvaluation = buildRepEvaluation("success", null);
-        }
-
+      if (backAtRest || risingAgain) {
         if (repCount >= prescription.repTarget) {
           phase = "complete";
         } else {
-          phase = "ready";
+          phase = risingAgain && !backAtRest ? "lifting" : "ready";
         }
-
+        attemptPeak = phase === "lifting" ? value : null;
         enteredTopAtMs = null;
         enteredLoweringAtMs = null;
         holdSatisfied = false;
@@ -289,7 +291,7 @@ export function updateRepState(
     everHadBilateralParticipationGap,
 
     dipStartedAtMs: phase === "holding" ? dipStartedAtMs : null,
-    attemptPeak: phase === "lifting" ? attemptPeak : null,
+    attemptPeak: phase === "lifting" || phase === "lowering" ? attemptPeak : null,
 
     lastRepEvaluation
   };

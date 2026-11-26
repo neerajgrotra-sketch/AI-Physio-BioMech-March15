@@ -645,13 +645,9 @@ export function useCoachingBrain() {
         clearPanel();
       }
 
-      // Deterministic voice cue: hold complete → lower
-      // Only fire if hold was satisfied (not an early drop)
-      if (prevPhase === "holding" && phase === "lowering") {
-        if (voiceEnabledRef.current) {
-          setTimeout(() => speakMessage("Lower slowly.", 0.88), 100);
-        }
-      }
+      // "Now lower" is part of the rep-completed line (onRepCompleted): the
+      // rep is counted the moment the hold is done, and two separate cues
+      // 100 ms apart cancelled each other.
     }
 
     lastPhaseFedRef.current = phase;
@@ -779,7 +775,9 @@ export function useCoachingBrain() {
     });
 
     if (voiceEnabledRef.current) {
-      speakMessage(sanitizeForSpeech(immediateCue), 0.95);
+      // Counted when the hold is done: praise, then send the arm back down.
+      const lower = completedRepNumber + 1 < repTarget ? " Now lower your arm slowly." : ""; // repNumber is 0-indexed
+      speakMessage(sanitizeForSpeech(immediateCue + lower), 0.95);
     }
 
     repCountAtLastCompletionRef.current = completedRepNumber;
@@ -849,6 +847,14 @@ export function useCoachingBrain() {
           setTimeout(checkAndSpeak, 200);
         } else {
           setTimeout(() => speakMessage(message, 0.9), 200);
+        }
+        // Count the last seconds of a longer hold aloud ("3, 2, 1"), leaving
+        // the first ~1.5 s for the hold cue itself. Stops if the hold ends.
+        const holdMs = params.holdRequiredMs;
+        for (let k = Math.floor((holdMs - 1500) / 1000); k >= 1; k--) {
+          setTimeout(() => {
+            if (lastPhaseFedRef.current === "holding" && !window.speechSynthesis?.speaking) speakMessage(String(k), 1.0);
+          }, holdMs - k * 1000);
         }
       }
 

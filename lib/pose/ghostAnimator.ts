@@ -35,8 +35,27 @@ export type GhostAnimInput = {
   holdTotalMs: number;       // prescription.hold.durationMs
   repsDone: number;          // inferenceLoop.repCount
   readyElapsedS: number;     // seconds since ready phase started
+  loweringElapsedS?: number; // seconds since lowering started (rep just done)
   nowMs: number;             // performance.now()
 };
+
+/**
+ * One demonstration rep, the way a physio shows it: rise (2 s), pause at
+ * the target (1.2 s), lower (2 s), pause at rest (1 s), repeat. Eased so it
+ * starts and stops gently. `s` is seconds since the demo began.
+ */
+export const DEMO_CYCLE_S = 6.2;
+export function demoCycle(s: number): number {
+  const t = ((s % DEMO_CYCLE_S) + DEMO_CYCLE_S) % DEMO_CYCLE_S;
+  const ease = (u: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.max(0, Math.min(1, u)));
+  if (t < 2) return ease(t / 2);
+  if (t < 3.2) return 1;
+  if (t < 5.2) return 1 - ease((t - 3.2) / 2);
+  return 0;
+}
+
+// After a rep, the ghost rests this long before showing the next one.
+export const BETWEEN_REPS_REST_S = 1.5;
 
 export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {
   const { infPhase, holdRemainingMs, holdTotalMs, repsDone, readyElapsedS, nowMs } = input;
@@ -48,19 +67,18 @@ export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {
 
   if (infPhase === 'ready' || infPhase === 'idle') {
     if (repsDone === 0) {
-      // Teaching animation before first rep: oscillate 0→1→0
-      // so patient can see the full movement range
-      ghostT   = 0.5 + 0.5 * Math.sin(nowMs / 3200);
-      opacity  = 0.65;
+      // Teaching before the first rep: demonstrate the whole movement.
+      ghostT   = demoCycle(readyElapsedS);
+      opacity  = 0.7;
       badgePhase = 'demo';
-    } else if (readyElapsedS < 5) {
-      // Between reps: ghost dims at rest
+    } else if (readyElapsedS < BETWEEN_REPS_REST_S) {
+      // Just lowered: the ghost rests with the patient for a moment.
       ghostT   = 0;
-      opacity  = 0.18 + 0.08 * Math.sin(nowMs / 900);
+      opacity  = 0.35;
       badgePhase = 'attempt';
     } else {
-      // Encouragement ramp after 5s: ghost rises to invite next rep
-      ghostT   = Math.min(1, (readyElapsedS - 5) / 6);
+      // Then it shows the next rep, inviting the patient to go again.
+      ghostT   = demoCycle(readyElapsedS - BETWEEN_REPS_REST_S);
       opacity  = 0.72;
       badgePhase = 'attempt';
     }
@@ -74,10 +92,12 @@ export function computeGhostAnim(input: GhostAnimInput): GhostAnimState {
     isHolding  = true;
     badgePhase = 'holding';
   } else if (infPhase === 'lowering') {
-    // Pulse between 40–75% to signal "come back down slowly"
-    ghostT     = 0.4 + 0.35 * Math.sin(nowMs / 800);
+    // Rep done: the ghost lowers back to rest with the patient (eased over
+    // about 2 s from when lowering began), showing where to come back to.
+    const s = input.loweringElapsedS ?? 2;
+    ghostT     = 0.5 + 0.5 * Math.cos(Math.PI * Math.min(1, s / 2));
     opacity    = 0.72;
-    badgePhase = 'attempt';
+    badgePhase = 'rep_complete';
   } else if (infPhase === 'complete' || infPhase === 'bottom') {
     ghostT     = 1;
     opacity    = 1.0;

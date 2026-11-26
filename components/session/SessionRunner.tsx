@@ -13,7 +13,7 @@ import React, {
 } from "react";
 
 import PositionGuideOverlay from "@/components/session/PositionGuideOverlay";
-import { drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
+import { drawFrontGhost, drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import CameraViewport, {
   type CameraViewportHandle
@@ -524,7 +524,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const ghostRepCountRef   = useRef<number>(0);   // tracks reps to distinguish first-rep ready vs between-rep ready
   const ghostPrevPhaseRef  = useRef<string>("");  // detect phase transitions for debug log
   const ghostReadyStartRef = useRef<number>(0);
-  const lastTraceMsRef = useRef<number>(0);  // when ready phase started, for animation after wait
+  const lastTraceMsRef = useRef<number>(0);
+  const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
+  const ghostLowerStartRef = useRef<number>(0);   // when lowering began  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
   const ghostTransitionRef = useRef<{ active: boolean; startMs: number; fromGhostT: number }>({
     active: false, startMs: 0, fromGhostT: 0,
@@ -1021,6 +1023,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           ghostFrameInitRef.current = false;
           ghostRepCountRef.current = 0;
           ghostPrevPhaseRef.current = "";
+          ghostPhaseSeenRef.current = "";
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
@@ -1462,6 +1465,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     ghostFrameInitRef.current = false;
     ghostRepCountRef.current = 0;
     ghostPrevPhaseRef.current = "";
+    ghostPhaseSeenRef.current = "";
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1637,19 +1641,19 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       // ── 5. Config — loaded once per slug, no branching in tick ───────────
       const config = getGhostConfig(slug);
 
-      // Facing the camera, a forward raise comes toward the lens. The ghost
-      // draws the arm sweeping across the image, which from the front would
-      // demonstrate the wrong movement (a sideways raise), so instead a
-      // "Reach here" line shows how high the hand must go (lib/pose/reachGuide).
-      if (slug.startsWith("shoulder_flexion") && inferenceLoop.getFacingView() === "front") {
-        const target = ghostPrescriptionRef.current?.targetThreshold ?? 110;
-        const metricNow = ghostActiveMetricRef.current;
-        for (const side of config.sides) {
-          const y = reachLineY(frame, side, inferenceLoop.getArmLength(side), target);
-          if (y !== null) drawReachGuide(ctx, frame, side, y, metricNow !== null && metricNow >= target, target, W, H, now);
+      // Facing the camera, a forward raise comes toward the lens: the side-view
+      // ghost would sweep the arm sideways (the wrong movement), so step 12
+      // draws the front-view ghost arm and a "Reach here" line instead.
+      const frontFlexion = slug.startsWith("shoulder_flexion") && inferenceLoop.getFacingView() === "front";
+
+      // Phase timing for the ghost (when "ready" and "lowering" began).
+      {
+        const ph = ghostPhaseInfRef.current;
+        if (ph !== ghostPhaseSeenRef.current) {
+          if (ph === "ready") ghostReadyStartRef.current = now;
+          if (ph === "lowering") ghostLowerStartRef.current = now;
+          ghostPhaseSeenRef.current = ph;
         }
-        ghostAnimRef.current = requestAnimationFrame(tick);
-        return;
       }
 
       // ── 6. Smoothed body frame (anchor + sizing) ──────────────────────────
@@ -1724,6 +1728,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       let anim = computeGhostAnim({
         infPhase, holdRemainingMs: holdRem, holdTotalMs: holdTotal,
         repsDone, readyElapsedS, nowMs: now,
+        loweringElapsedS: (now - ghostLowerStartRef.current) / 1000,
       });
 
       // ── 9. Exercise transition — fade ghostT to 0 over TRANSITION_MS ─────
@@ -1744,7 +1749,6 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
       // ── 10. Phase transition logging ──────────────────────────────────────
       if (infPhase !== ghostPrevPhaseRef.current) {
-        if (infPhase === "ready") ghostReadyStartRef.current = now;
         const entry: GhostLogEntry = {
           id: `${now}-${Math.random().toString(36).slice(2, 5)}`,
           time: new Date().toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 2 }),
@@ -1768,7 +1772,20 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         ?? ghostPrescriptionRef.current?.targetThreshold
         ?? null;
 
-      dispatchGhostDraw({
+      if (frontFlexion) {
+        // Front view: the ghost arm reaching toward the camera, from rest to
+        // the target as ghostT goes 0 -> 1, and the "Reach here" line.
+        const target = ghostPrescriptionRef.current?.targetThreshold ?? 110;
+        const base = inferenceLoop.calibrationBaselineRef.current || 0;
+        const ghostDeg = base + anim.ghostT * (target - base);
+        const metricNow = ghostActiveMetricRef.current;
+        for (const side of config.sides) {
+          const L = inferenceLoop.getArmLength(side);
+          drawFrontGhost(ctx, frame, side, L, ghostDeg, anim.opacity, anim.colorRGB, W, H);
+          const y = reachLineY(frame, side, L, target);
+          if (y !== null) drawReachGuide(ctx, frame, side, y, metricNow !== null && metricNow >= target, target, W, H, now);
+        }
+      } else dispatchGhostDraw({
         ctx,
         config,
         lms: lms as any,
