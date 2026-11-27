@@ -2164,9 +2164,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       });
 
       // ── 13. ROM score ring (top-left) ─────────────────────────────────────
-      // Not when the guide has its own panel: the camera stays clear (the
-      // owner: the hold was shown in three places).
-      if (!frontFlexion) {
+      // Always shown: the owner relies on the percentage to see compliance at a
+      // glance (v0.8.2 hid it with the guide in its own panel; restored v0.8.4).
+      {
         const romPct    = score;
         const romRadius = Math.min(W, H) * 0.13;
         const romStrokeW = romRadius * 0.14;
