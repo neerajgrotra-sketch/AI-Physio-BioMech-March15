@@ -165,7 +165,13 @@ function getIsolationOk(
 // different exercise, abduction). In the owner's first 3D run, forward
 // raises read 30-38° and sideways ones 80-90°; 60 sits clearly between
 // (45 wrongly failed two forward reps).
-export const MAX_PLANE_DEG_FLEXION = 60;
+// 0 = straight in front, 90 = straight out to the side. 75 accepts the slightly
+// outward lift many patients have (was 60: the owner's run had holds wavering
+// at 55-75° on genuine forward raises). Set from the Coach Lab (setMaxPlaneDeg).
+export const MAX_PLANE_DEG_FLEXION = 75;
+let maxPlaneDeg = MAX_PLANE_DEG_FLEXION;
+export function setMaxPlaneDeg(deg: number): void { maxPlaneDeg = Math.max(30, Math.min(90, deg)); }
+export const maxPlaneNow = () => maxPlaneDeg;
 
 /**
  * Forward raises facing the camera: what is wrong with the arm's form now,
@@ -183,7 +189,7 @@ function getFormIssue(features: MovementFeatures, prescription: ExercisePrescrip
     prescription.side === "right" ? ["right"] : prescription.side === "left" ? ["left"] : ["right", "left"];
   const plane = (s: string) => (s === "right" ? features.rightArmPlaneDeg : features.leftArmPlaneDeg);
   const bent = (s: string) => (s === "right" ? features.rightElbowBent : features.leftElbowBent);
-  if (sides.some((s) => { const p = plane(s); return p !== null && p !== undefined && p > MAX_PLANE_DEG_FLEXION; })) return "plane";
+  if (sides.some((s) => { const p = plane(s); return p !== null && p !== undefined && p > maxPlaneDeg; })) return "plane";
   if (sides.some((s) => bent(s) === true)) return "elbow";
   return null;
 }

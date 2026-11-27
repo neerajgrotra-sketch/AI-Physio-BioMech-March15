@@ -411,20 +411,49 @@ describe("raised out to the side, then brought in front while up (the owner's ca
     expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_form");
   });
 
-  it("drifting out mid-hold restarts the hold; back in front, it completes", () => {
+  it("drifting out mid-hold for longer than the slip grace pauses the hold; back in front, it resumes (not from zero)", () => {
     const pts = path([
       [3500, hold(5), hold(0)],
       [1000, ramp(5, 120), hold(0)],
-      [1200, hold(120), hold(0)],               // 1.2 s of a 2 s hold
-      [800, hold(120), hold(90)],               // out to the side: hold restarts
-      [p.hold.durationMs + 600, hold(120), hold(0)], // back in front: full hold
+      [500, hold(120), hold(0)],                // 0.5 s of a 2 s hold
+      [1800, hold(120), hold(90)],              // out to the side for 1.8 s: past the 1 s grace, the hold pauses
+      [p.hold.durationMs + 600, hold(120), hold(0)], // back in front: the rest of the hold
       [1000, ramp(120, 5), hold(0)],
       [800, hold(5), hold(0)],
     ]);
     const r = replay(p, frames(pts));
     expect(r.repCount).toBe(1);
     const rep = r.events.find((e) => e.kind === "rep")!;
-    expect(rep.t).toBeGreaterThan(3500 + 1000 + 1200 + 800 + p.hold.durationMs - 100); // not after the first 1.2 s
+    const back = 3500 + 1000 + 500 + 1800;
+    expect(rep.t).toBeGreaterThan(back);                              // not during the drift
+    expect(rep.t).toBeLessThan(back + p.hold.durationMs - 300);       // resumed: well before a full new hold
+  });
+
+  it("a brief drift out (under the slip grace) doesn't interrupt the hold", () => {
+    const pts = path([
+      [3500, hold(5), hold(0)],
+      [1000, ramp(5, 120), hold(0)],
+      [700, hold(120), hold(0)],
+      [500, hold(120), hold(90)],               // half a second out to the side
+      [p.hold.durationMs, hold(120), hold(0)],
+      [1000, ramp(120, 5), hold(0)],
+      [800, hold(5), hold(0)],
+    ]);
+    const r = replay(p, frames(pts));
+    expect(r.repCount).toBe(1);
+    const rep = r.events.find((e) => e.kind === "rep")!;
+    expect(rep.t).toBeLessThan(3500 + 1000 + p.hold.durationMs + 400); // finished on time
+  });
+
+  it("an arm 70° out (a slightly outward lift) still holds and counts", () => {
+    const pts = path([
+      [3500, hold(5), hold(0)],
+      [1000, ramp(5, 120), hold(0)],
+      [p.hold.durationMs + 600, hold(120), hold(70)],
+      [1000, ramp(120, 5), hold(0)],
+      [800, hold(5), hold(0)],
+    ]);
+    expect(replay(p, frames(pts)).repCount).toBe(1);
   });
 });
 

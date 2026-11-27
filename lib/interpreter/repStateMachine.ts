@@ -60,6 +60,14 @@ function judgeRep(
 
 // How long the metric may sit below the hold floor before the hold ends.
 export const HOLD_DIP_GRACE_MS = 300;
+// A form slip mid-hold (arm drifting out to the side, elbow softening) must
+// last this long before the hold pauses; and a pause keeps the time already
+// held instead of starting again (the owner's run A-57EDFCAD: the sideways
+// reading wavered around the limit and one hold restarted six times). Set
+// from the Coach Lab (setHoldSlipMs).
+export const HOLD_SLIP_GRACE_MS = 1000;
+let holdSlipMs = HOLD_SLIP_GRACE_MS;
+export function setHoldSlipMs(ms: number): void { holdSlipMs = Math.max(100, ms); }
 // A lift that peaks at least this far past the start threshold and comes
 // back without reaching the target counts as a failed (too low) rep.
 export const SHORT_ATTEMPT_DEG = 15;
@@ -106,6 +114,7 @@ export function updateRepState(
   let everHadBilateralParticipationGap = currentState.everHadBilateralParticipationGap;
   let everBadForm = currentState.everBadForm ?? false;
   let formBadSinceMs = currentState.formBadSinceMs ?? null;
+  let heldBeforeSlipMs = currentState.heldBeforeSlipMs ?? null;
   let badFormKind = currentState.badFormKind ?? null;
 
   let lastRepEvaluation: RepEvaluation = buildRepEvaluation("none", null);
@@ -209,7 +218,8 @@ export function updateRepState(
         // the wrong way on the way UP is only coached; what counts is how
         // the arm is held at the target (the owner's case: raised sideways,
         // then brought in front while up — that is now a good rep).
-        enteredTopAtMs = nowMs;
+        // Time held before a mid-hold slip is kept: the hold resumes.
+        enteredTopAtMs = nowMs - (heldBeforeSlipMs ?? 0);
         everBadForm = true;
         badFormKind = formIssue;
       } else if (!prescription.hold.required || prescription.hold.durationMs <= 0) {
@@ -231,9 +241,10 @@ export function updateRepState(
 
       if (!formOk && value >= prescription.targetThreshold - tolerance) {
         if (formBadSinceMs === null) formBadSinceMs = nowMs;
-        if (nowMs - formBadSinceMs >= HOLD_DIP_GRACE_MS) {
-          phase = "top";           // the hold restarts once the form is right again
-          enteredTopAtMs = nowMs;
+        if (nowMs - formBadSinceMs >= holdSlipMs) {
+          phase = "top";           // the hold pauses, and resumes once the form is right again
+          heldBeforeSlipMs = enteredTopAtMs !== null ? Math.max(0, formBadSinceMs - enteredTopAtMs) : 0;
+          enteredTopAtMs = nowMs - heldBeforeSlipMs;
           everBadForm = true;
           badFormKind = formIssue;
           formBadSinceMs = null;
@@ -328,6 +339,7 @@ export function updateRepState(
 
     everBadForm,
     formBadSinceMs: phase === "holding" ? formBadSinceMs : null,
+    heldBeforeSlipMs: phase === "holding" || phase === "top" ? heldBeforeSlipMs : null,
     badFormKind: everBadForm ? badFormKind : null,
     dipStartedAtMs: phase === "holding" ? dipStartedAtMs : null,
     attemptPeak: phase === "lifting" || phase === "lowering" ? attemptPeak : null,

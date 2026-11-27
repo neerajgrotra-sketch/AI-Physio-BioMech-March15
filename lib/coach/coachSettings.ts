@@ -28,6 +28,9 @@ export type CoachSettings = {
   wrongArmSeconds: number;
   otherArmAllowanceDeg: number;
   restSettleSeconds: number;
+  // Holding at the target
+  sidewaysAllowanceDeg: number;
+  holdSlipSeconds: number;
   // Coaching cues
   stallSeconds: number;
   // Walking away
@@ -38,7 +41,7 @@ export type CoachSettings = {
 
 export type SettingDef = {
   key: keyof CoachSettings;
-  group: "Guide figure" | "On the camera" | "Voice" | "Other arm" | "Coaching cues" | "Walking away";
+  group: "Guide figure" | "On the camera" | "Voice" | "Holding at the target" | "Other arm" | "Coaching cues" | "Walking away";
   label: string;
   help: string;
   kind: "number" | "boolean";
@@ -62,6 +65,8 @@ export const COACH_DEFAULTS: CoachSettings = {
   wrongArmSeconds: 0.4,
   otherArmAllowanceDeg: 35,
   restSettleSeconds: 3,
+  sidewaysAllowanceDeg: 75,
+  holdSlipSeconds: 1,
   stallSeconds: 1.5,
   awayPauseSeconds: 10,
   awayCountdownSeconds: 60,
@@ -87,6 +92,10 @@ export const COACH_SETTING_DEFS: SettingDef[] = [
     help: "1 is normal speed; lower is slower and clearer for older patients." },
   { key: "demoNarrationOn", group: "Voice", kind: "boolean", label: "Talk through the demonstration",
     help: "\"Watch me first… up to here… and slowly down… your turn.\"" },
+  { key: "sidewaysAllowanceDeg", group: "Holding at the target", kind: "number", min: 45, max: 90, step: 5, unit: "°", label: "Arm may drift out to the side by",
+    help: "During a forward raise the hold counts while the arm is within this angle of straight in front (90 = straight out to the side). Higher is more forgiving for patients with limited mobility." },
+  { key: "holdSlipSeconds", group: "Holding at the target", kind: "number", min: 0.3, max: 3, step: 0.1, unit: "s", label: "Hold ignores slips shorter than",
+    help: "A brief drift out to the side or a softened elbow during the hold is ignored for this long. Longer slips pause the hold; it carries on (not from zero) when the arm comes back." },
   { key: "wrongArmRiseDeg", group: "Other arm", kind: "number", min: 15, max: 60, step: 1, unit: "°", label: "Wrong-arm call when lifted by",
     help: "How far above its resting place the other arm must rise (with the exercise arm down) before \"That's your left arm\". Lower is more sensitive." },
   { key: "wrongArmSeconds", group: "Other arm", kind: "number", min: 0.1, max: 2, step: 0.1, unit: "s", label: "Wrong-arm call after",

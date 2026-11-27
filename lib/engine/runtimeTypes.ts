@@ -46,6 +46,8 @@ export type RuntimeRepState = {
   everBadForm?: boolean;
   /** When the form went wrong during a hold (a short slip is forgiven). */
   formBadSinceMs?: number | null;
+  /** Hold time banked before a form slip paused it (resumes, doesn't restart). */
+  heldBeforeSlipMs?: number | null;
   /** Which form problem kept the hold from running: out to the side, or a bent elbow. */
   badFormKind?: "plane" | "elbow" | null;
 
