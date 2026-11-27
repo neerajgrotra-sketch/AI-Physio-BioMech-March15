@@ -12,6 +12,7 @@ import { ExerciseTemplate, CoachingStrings } from "@/lib/supabase/types";
 import { BRAND, BrandLogo } from "@/components/brand/brand";
 import { versionLabel, APP_BUILT_AT } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
+import { sessionMinutes } from "@/lib/app/sessionDuration";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,15 @@ function kgToLbs(kg: number) { return Math.round(kg * 2.20462 * 10) / 10; }
 function lbsToKg(lbs: number) { return Math.round(lbs / 2.20462 * 10) / 10; }
 function msToSeconds(ms: number) { return (ms / 1000).toFixed(1); }
 function secondsToMs(s: string) { return Math.round(parseFloat(s) * 1000); }
+function formatDateTime(d: string) { return new Date(d).toLocaleString("en-CA", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+// A protocol's time, worked out from its exercises (lib/app/sessionDuration);
+// the stored estimated_duration_mins was a typed-in 10 for every protocol.
+function protocolMinutes(list: Array<{ default_reps: number | null; default_hold_ms: number | null; exercise_template?: { default_reps?: number; default_hold_ms?: number } | null }>) {
+  return sessionMinutes(list.map((e) => ({
+    reps: e.default_reps ?? e.exercise_template?.default_reps ?? 6,
+    holdMs: e.default_hold_ms ?? e.exercise_template?.default_hold_ms ?? 2000,
+  })));
+}
 function formatDate(d: string) { return new Date(d).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" }); }
 function formatDuration(ms: number) { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}m ${s % 60}s`; }
 function emptyForm(): PatientForm {
@@ -616,7 +626,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
     setSaving(true);
     try {
       const { data: session, error: sErr } = await supabase
-        .from("sessions").insert({ title: selectedTemplate.title, objective: selectedTemplate.objective, patient_id: patient.id, physio_id: null, estimated_duration_mins: selectedTemplate.estimated_duration_mins, status: "pending", source_protocol_id: selectedTemplate.id }).select().single();
+        .from("sessions").insert({ title: selectedTemplate.title, objective: selectedTemplate.objective, patient_id: patient.id, physio_id: null, estimated_duration_mins: protocolMinutes(selectedTemplate.exercises) || 1, status: "pending", source_protocol_id: selectedTemplate.id }).select().single();
       if (sErr) throw sErr;
       const { data: block, error: bErr } = await supabase.from("session_blocks").insert({ session_id: session.id, protocol_id: selectedTemplate.id, sequence_order: 0, rest_before_ms: 0 }).select().single();
       if (bErr) throw bErr;
@@ -652,7 +662,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
             <div key={t.id} onClick={() => selectTemplate(t)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer" }} onMouseEnter={e => (e.currentTarget.style.borderColor = C.borderFocus)} onMouseLeave={e => (e.currentTarget.style.borderColor = C.border)}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.title}</div>
-                <span style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const }}>{t.exercises.length} ex · {t.estimated_duration_mins}min</span>
+                <span style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const }}>{t.exercises.length} ex · about {protocolMinutes(t.exercises)} min</span>
               </div>
               {t.objective && <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>{t.objective}</div>}
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const }}>
@@ -830,7 +840,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{s.title}</div>
-                            <div style={{ fontSize: 11, color: C.textDim }}>{s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · {s.estimated_duration_mins} min · Created {formatDate(s.created_at)}</div>
+                            <div style={{ fontSize: 11, color: C.textDim }}>{s.exercises.length} exercise{s.exercises.length !== 1 ? "s" : ""} · about {sessionMinutes(s.exercises.map(e => ({ reps: e.reps, holdMs: e.hold_ms })))} min · Assigned {formatDateTime(s.created_at)}</div>
                             <button
                               title="Assignment ID — click to copy the full ID"
                               onClick={() => { try { navigator.clipboard?.writeText(s.id); } catch {} }}
@@ -1044,14 +1054,14 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
     setSaving(true);
     try {
       if (editingProtocolId) {
-        const { error: tErr } = await supabase.from("protocols").update({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).eq("id", editingProtocolId);
+        const { error: tErr } = await supabase.from("protocols").update({ title: title.trim(), objective: objective || null, estimated_duration_mins: sessionMinutes(exercises.map(e => ({ reps: e.reps, holdMs: e.hold_ms }))) || 1, tags }).eq("id", editingProtocolId);
         if (tErr) throw tErr;
         await supabase.from("protocol_exercises").delete().eq("protocol_id", editingProtocolId);
         const { error: eErr } = await supabase.from("protocol_exercises").insert(exercises.map((e, i) => ({ protocol_id: editingProtocolId, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms })));
         if (eErr) throw eErr;
         showToast("Protocol updated."); setEditingProtocolId(null); setBuilderOpen(false);
       } else {
-        const { data: tmpl, error: tErr } = await supabase.from("protocols").insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: parseInt(estimatedMins) || 10, tags }).select().single();
+        const { data: tmpl, error: tErr } = await supabase.from("protocols").insert({ title: title.trim(), objective: objective || null, estimated_duration_mins: sessionMinutes(exercises.map(e => ({ reps: e.reps, holdMs: e.hold_ms }))) || 1, tags }).select().single();
         if (tErr) throw tErr;
         const { error: eErr } = await supabase.from("protocol_exercises").insert(exercises.map((e, i) => ({ protocol_id: tmpl.id, exercise_template_id: e.template_id, sequence_order: i, default_reps: e.reps, default_hold_ms: e.hold_ms })));
         if (eErr) throw eErr;
@@ -1115,8 +1125,9 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 2 }}>{t.title}</div>
                     {t.objective && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.4 }}>{t.objective}</div>}
+                    <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }} title="When this protocol was created">Created {formatDateTime(t.created_at)}</div>
                   </div>
-                  <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const, marginTop: 2 }}>{t.estimated_duration_mins}min</div>
+                  <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "nowrap" as const, marginTop: 2 }} title="Worked out from the exercises: set-up, reps and holds">About {protocolMinutes(t.exercises)} min</div>
                 </div>
                 {t.tags.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const }}>{t.tags.map(tag => <span key={tag} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: C.blueDim, color: C.blue, fontWeight: 600 }}>{tag}</span>)}</div>}
                 <div style={{ background: C.bg, borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
@@ -1154,7 +1165,11 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
               <SectionHeader title="Protocol Details" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 14 }}>
                 <Field label="Protocol Title"><Input value={title} onChange={setTitle} placeholder="Shoulder Mobility A" /></Field>
-                <Field label="Duration (mins)"><Input type="number" value={estimatedMins} onChange={setEstimatedMins} min={1} max={120} /></Field>
+                <Field label="Duration">
+                  <div title="Worked out from the exercises: set-up, reps and holds" style={{ height: 40, display: "flex", alignItems: "center", padding: "0 12px", borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 14 }}>
+                    {exercises.length ? `About ${sessionMinutes(exercises.map(e => ({ reps: e.reps, holdMs: e.hold_ms })))} min` : "Add exercises"}
+                  </div>
+                </Field>
               </div>
               <Field label="Objective"><Input value={objective} onChange={setObjective} placeholder="e.g. Build shoulder strength and range of motion" /></Field>
               <div>
