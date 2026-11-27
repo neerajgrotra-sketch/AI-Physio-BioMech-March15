@@ -57,6 +57,18 @@ describe("posture", () => {
     expect(f.posture).toBe("seated");
   });
 
+  it("seated from the front with the ankles out of frame (the usual home set-up): still seated", () => {
+    const body = seatedFront();
+    const noAnkles = { ...body, right_ankle: { x: 585, y: 790 }, left_ankle: { x: 695, y: 790 } }; // below the 720 px frame
+    expect(extractMovementFeatures(frameFromPixels(noAnkles)).posture).toBe("seated");
+  });
+
+  it("from the front, a guessed knee below the frame's edge never reads as standing", () => {
+    const body = seatedFront();
+    const guessed = { ...body, right_knee: { x: 585, y: 730 }, left_knee: { x: 695, y: 730 }, right_ankle: { x: 585, y: 900 }, left_ankle: { x: 695, y: 900 } };
+    expect(extractMovementFeatures(frameFromPixels(guessed)).posture).not.toBe("standing");
+  });
+
   it("works from one leg", () => {
     expect(inferPosture([null, 90], [null, null])).toBe("seated");
     expect(inferPosture([175, null], [1.0, null])).toBe("standing");

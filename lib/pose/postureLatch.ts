@@ -10,7 +10,7 @@
 // ============================================================
 
 export type Posture = "seated" | "standing";
-export const SWITCH_AFTER_MS = 2500;
+export const SWITCH_AFTER_MS = 6000; // was 2500: the guide still stood up and sat down mid-exercise
 
 export class PostureLatch {
   private value: Posture;
