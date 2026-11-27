@@ -1,3 +1,4 @@
+import { nextRest, REST_SHARE_PER_FRAME } from "@/lib/interpreter/restEstimate";
 import { updateRepState } from "@/lib/interpreter/repStateMachine";
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { CoachingCode } from "@/lib/types/coaching";
@@ -290,19 +291,12 @@ function interpretRaiseHoldLower(
     features.torsoLeanDeg === null ||
     features.torsoLeanDeg <= maxTorsoLeanDeg;
 
-  // Track where the other arm rests while waiting for a rep: down quickly,
-  // up only slowly and only for small changes (within 10°). A plain average
-  // followed an arm being lifted, so lifting it slowly was never caught
-  // (the same flaw as RepCoach's, seen in the owner's v0.6.0 run).
+  // Where the other arm rests: learned slowly while waiting for a rep
+  // (lib/interpreter/restEstimate.ts has the rule and its history).
   const opp = oppositeArm(features, prescription);
   let oppositeRest = currentRepState.oppositeRest ?? null;
-  if (opp !== null) {
-    if (oppositeRest === null) oppositeRest = opp;
-    else if (opp < oppositeRest) oppositeRest += (opp - oppositeRest) * 0.2; // quickly, but a one-frame glitch can't drag it down
-    else if (currentRepState.phase === "ready" && opp - oppositeRest <= 10) {
-      oppositeRest += (opp - oppositeRest) * 0.02;
-    }
-  }
+  if (oppositeRest === null) oppositeRest = opp;
+  else if (currentRepState.phase === "ready") oppositeRest = nextRest(oppositeRest, opp, REST_SHARE_PER_FRAME);
   const isolationOk = getIsolationOk(features, prescription, oppositeRest);
   const bilateralParticipationOk = getBilateralParticipationOk(
     features,
