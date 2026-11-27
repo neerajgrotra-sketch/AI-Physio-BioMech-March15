@@ -26,6 +26,8 @@ export interface SessionPageClientProps {
   /** Saved status and progress, to offer resuming (lib/session/resume.ts). */
   savedStatus?: string | null;
   savedProgress?: SessionProgress | null;
+  /** The clinic's saved coach settings (resolved in SessionRunner). */
+  coachSettings?: unknown;
 }
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
@@ -97,6 +99,7 @@ export default function SessionPageClient({
   error,
   savedStatus,
   savedProgress,
+  coachSettings,
 }: SessionPageClientProps) {
   // No prescription param — render SessionRunner in default library mode
   if (!prescriptionId) {
@@ -136,6 +139,7 @@ export default function SessionPageClient({
         previousSession={previousSession}
         savedStatus={savedStatus}
         savedProgress={savedProgress}
+        coachSettings={coachSettings}
       />
     </Suspense>
   );

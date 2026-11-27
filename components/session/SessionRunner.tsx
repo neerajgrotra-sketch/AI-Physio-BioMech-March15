@@ -19,9 +19,6 @@ import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
 import { PostureLatch } from "@/lib/pose/postureLatch";
-// The guide figure walks round the patient over this many seconds (out to
-// three-quarter and back to nearly facing them).
-const GUIDE_ORBIT_S = 14;
 import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
 import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
@@ -29,6 +26,8 @@ import { assignmentCode } from "@/lib/app/assignment";
 import { exerciseSeconds } from "@/lib/app/sessionDuration";
 import { liftCaption, targetPhrase } from "@/lib/coaching/plainHeight";
 import { resumePlan, awayState, type AwayState, type SessionProgress } from "@/lib/session/resume";
+import { resolveCoachSettings, orbitYaw } from "@/lib/coach/coachSettings";
+import { setRestSettleMs } from "@/lib/interpreter/restEstimate";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -489,6 +488,8 @@ interface SessionRunnerProps {
   /** Saved status and progress of this assignment, to offer resuming it. */
   savedStatus?: string | null;
   savedProgress?: SessionProgress | null;
+  /** The clinic's coach settings from the Coach Lab (resolved and clamped here). */
+  coachSettings?: unknown;
 }
 
 // Debug entry types — defined outside component to avoid SWC/Next.js issues
@@ -503,7 +504,7 @@ type RepCycleEntry = {
   encourageThreshold: number | null; repCount: number; detail: string;
 };
 
-export default function SessionRunner({ prescriptionQueue, restBoundaries: fullBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName, previousSession, savedStatus, savedProgress }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, restBoundaries: fullBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName, previousSession, savedStatus, savedProgress, coachSettings: savedCoach }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -553,6 +554,19 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
   const ghostReadyStartRef = useRef<number>(0);
   const lastTraceMsRef = useRef<number>(0);
   const repCoachRef = useRef(new RepCoach());  // coaching through the rep
+  // The clinic's coach settings (Coach Lab in /admin; lib/coach/coachSettings.ts).
+  const coach = useMemo(() => resolveCoachSettings(savedCoach), [savedCoach]);
+  const coachRef = useRef(coach);
+  coachRef.current = coach;
+  useEffect(() => {
+    repCoachRef.current.configure({
+      stallMs: coach.stallSeconds * 1000,
+      wrongArmRiseDeg: coach.wrongArmRiseDeg,
+      wrongArmPersistMs: coach.wrongArmSeconds * 1000,
+      restTauMs: coach.restSettleSeconds * 1000,
+    });
+    setRestSettleMs(coach.restSettleSeconds * 1000);
+  }, [coach]);
   const narratorRef = useRef(new DemoNarrator()); // the guide talks while demonstrating
   // The next exercise's spoken intro waits until the patient is placed (the
   // owner's run: "raise your left arm" played over the positioning voice).
@@ -746,13 +760,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
     return prescriptionQueue.map((p) => ({
       id: p.id,
       displayName: p.name,
-      prescription: p,
+      // The Coach Lab's "other arm may move by" replaces the built-in limit.
+      prescription: p.qualityLimits?.maxOppositeArmElevationDeg !== undefined
+        ? { ...p, qualityLimits: { ...p.qualityLimits, maxOppositeArmElevationDeg: resolveCoachSettings(savedCoach).otherArmAllowanceDeg } }
+        : p,
       seconds: exerciseSeconds({ reps: p.repTarget, holdMs: p.hold?.durationMs ?? 2000 }),
       sessionName: sessionTitle ?? "Session",
     }));
   }
   return buildQueueFromSessions(selectedSessions, exercises);
-}, [selectedSessions, exercises, prescriptionQueue, sessionTitle]);
+}, [selectedSessions, exercises, prescriptionQueue, sessionTitle, savedCoach]);
 
   // ── Resuming (lib/session/resume.ts) ───────────────────────────────────
   // The same day, a session left with exercises to go can be continued
@@ -1068,7 +1085,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
       const utt = new SpeechSynthesisUtterance("Perfect — I can see you clearly. Let's begin.");
-      utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+      utt.rate = coachRef.current.voiceRate; utt.pitch = 1.0; utt.volume = 1.0;
       const voices = window.speechSynthesis.getVoices();
       const pref = voices.find(v => v.lang.startsWith("en") && (
         v.name.includes("Natural") || v.name.includes("Neural") ||
@@ -1475,7 +1492,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     const live = sessionQueue.sessionStarted && sessionPhase === "running" && !isPaused && !sessionSummary && !restScreen;
     if (!live) { setAway((a) => (a.kind === "present" ? a : { kind: "present" })); return; }
     const t = window.setInterval(() => {
-      const next = awayState((Date.now() - lastSeenMsRef.current) / 1000);
+      const c = coachRef.current;
+      const next = awayState((Date.now() - lastSeenMsRef.current) / 1000, { pause: c.awayPauseSeconds, countdown: c.awayCountdownSeconds, end: c.awayEndSeconds });
       setAway((prev) => {
         if (prev.kind === next.kind && (next.kind !== "countdown" || (prev as any).secondsLeft === next.secondsLeft)) return prev;
         return next;
@@ -1492,7 +1510,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
       if (typeof window === "undefined" || !window.speechSynthesis || !voiceOn) return;
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.95;
+      u.rate = coachRef.current.voiceRate;
       window.speechSynthesis.speak(u);
     };
     if (away.kind === "paused" && before === "present") {
@@ -1622,7 +1640,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
       const utt = new SpeechSynthesisUtterance(greetingText);
-      utt.rate = 0.92; utt.pitch = 1.0; utt.volume = 1.0;
+      utt.rate = coachRef.current.voiceRate; utt.pitch = 1.0; utt.volume = 1.0;
       const voices = window.speechSynthesis.getVoices();
       const pref = voices.find(v => v.lang.startsWith("en") && (
         v.name.includes("Natural") || v.name.includes("Neural") ||
@@ -1893,7 +1911,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         if (line && urgent && typeof window !== "undefined" && window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
         if (line && typeof window !== "undefined" && window.speechSynthesis && !window.speechSynthesis.speaking) {
           const u = new SpeechSynthesisUtterance(line);
-          u.rate = 0.95;
+          u.rate = coachRef.current.voiceRate;
           window.speechSynthesis.speak(u);
           writeDebugLog("info", "COACHING", `Rep coach: "${line}"`);
         }
@@ -1920,9 +1938,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           const clock = demoClock(reps === 0 ? sinceReady : sinceReady - BETWEEN_REPS_REST_S);
           const narrate = clock && (reps === 0 || clock.cycle >= 1) ? clock : null;
           const say = narratorRef.current.update(narrate, window.speechSynthesis.speaking);
-          if (say) {
+          if (say && coachRef.current.demoNarrationOn) {
             const u = new SpeechSynthesisUtterance(say);
-            u.rate = 0.95;
+            u.rate = coachRef.current.voiceRate;
             window.speechSynthesis.speak(u);
             writeDebugLog("info", "COACHING", `Guide: "${say}"`);
           }
@@ -2109,7 +2127,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // three-quarter (62°) to nearly facing them (18°) and back over
         // GUIDE_ORBIT_S, like a physio showing the movement from different
         // angles (the owner's testers' request); smoothed, so it never jumps.
-        const orbit = 40 + 22 * Math.sin((now / 1000) * (2 * Math.PI / GUIDE_ORBIT_S));
+        const orbit = orbitYaw(coachRef.current, now / 1000);
         const yawTarget = wrongPlaneNow ? 25
           : clockNow && clockNow.t < 2 ? 90 - (90 - orbit) * (clockNow.t / 2)
           : orbit;
@@ -2118,7 +2136,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // Steady, not per frame: the reading flickers when the legs are half
         // hidden (lib/pose/postureLatch.ts).
         const featsNow = inferenceLoop.getFeatures();
-        postureLatchRef.current ??= new PostureLatch(ghostPrescriptionRef.current?.posture === "standing" ? "standing" : "seated");
+        postureLatchRef.current ??= new PostureLatch(ghostPrescriptionRef.current?.posture === "standing" ? "standing" : "seated", coachRef.current.postureSwitchSeconds * 1000);
         // Only read between reps: mid-rep, a raised arm and a leaning trunk
         // shift the hips, and nobody sits down or stands up during a raise.
         const postureNow = infPhase === "ready"
@@ -2463,7 +2481,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               if (typeof window === "undefined" || !window.speechSynthesis) return;
               window.speechSynthesis.cancel();
               const utt = new SpeechSynthesisUtterance(voiceOn ? "Hello, I'm your coach. If you can hear me, your sound is working." : "Voice is muted. Turn the voice on to hear me.");
-              utt.rate = 0.92;
+              utt.rate = coachRef.current.voiceRate;
               const pref = window.speechSynthesis.getVoices().find(v => v.lang.startsWith("en") && /Natural|Neural|Premium|Samantha|Karen|Daniel/.test(v.name));
               if (pref) utt.voice = pref;
               window.speechSynthesis.speak(utt);

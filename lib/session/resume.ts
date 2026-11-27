@@ -56,9 +56,12 @@ export type AwayState =
   | { kind: "end" };
 
 /** What to do after the patient has not been seen for `unseenS` seconds. */
-export function awayState(unseenS: number): AwayState {
-  if (unseenS < AWAY_PAUSE_S) return { kind: "present" };
-  if (unseenS < AWAY_COUNTDOWN_S) return { kind: "paused", unseenS };
-  if (unseenS < AWAY_END_S) return { kind: "countdown", secondsLeft: Math.ceil(AWAY_END_S - unseenS) };
+export function awayState(
+  unseenS: number,
+  t: { pause: number; countdown: number; end: number } = { pause: AWAY_PAUSE_S, countdown: AWAY_COUNTDOWN_S, end: AWAY_END_S }
+): AwayState {
+  if (unseenS < t.pause) return { kind: "present" };
+  if (unseenS < t.countdown) return { kind: "paused", unseenS };
+  if (unseenS < t.end) return { kind: "countdown", secondsLeft: Math.ceil(t.end - unseenS) };
   return { kind: "end" };
 }
