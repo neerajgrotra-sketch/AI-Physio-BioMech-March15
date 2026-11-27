@@ -543,6 +543,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const lastTraceMsRef = useRef<number>(0);
   const repCoachRef = useRef(new RepCoach());  // coaching through the rep
   const narratorRef = useRef(new DemoNarrator()); // the guide talks while demonstrating
+  // The next exercise's spoken intro waits until the patient is placed (the
+  // owner's run: "raise your left arm" played over the positioning voice).
+  const pendingIntroRef = useRef(false);
   const guideYawRef = useRef(90);                 // the guide figure's current viewing angle
   const postureLatchRef = useRef<PostureLatch | null>(null); // steady seated / standing for the guide
   const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
@@ -950,6 +953,19 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     feedFrame: (params: any) => coachingCallbacksRef.current.feedFrame(params),
   }).current;
 
+  // A later exercise that needed positioning: once placed, restart the
+  // guide's demonstration clock and give the intro.
+  useEffect(() => {
+    if (!pendingIntroRef.current || !framingIntelligence.prerequisiteResult.allMet) return;
+    if (sessionPhaseRef.current !== "running") return;
+    pendingIntroRef.current = false;
+    ghostReadyStartRef.current = performance.now();
+    narratorRef.current.reset();
+    writeDebugLog("info", "COACHING", "Placed: starting the exercise intro");
+    stableCoachingCallbacks.onExerciseStarted(Date.now());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [framingIntelligence.prerequisiteResult]);
+
   const framingCallbacks = useMemo(() => ({
     evaluateFraming: framingIntelligence.evaluateFraming,
     cancelPendingEval: framingIntelligence.cancelPendingEval,
@@ -1039,7 +1055,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         inferenceLoop.resetTrackingState();
 
         const startNextExercise = () => {
-          framingIntelligence.reset("Position yourself for the next exercise.");
+          // Same camera set-up as the last exercise: the patient stays placed.
+          framingIntelligence.reset("Position yourself for the next exercise.", true);
           // ── TRANSITION: capture current ghostT before reset ────────────────
           // The tick loop will lerp ghostT from this value down to 0 over
           // TRANSITION_MS (300ms) before the new exercise teaching anim starts.
@@ -1061,10 +1078,14 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
           framingIntelligence.forcePreExerciseCheck(null, createEmptyFeatures(), nextItem.prescription, Date.now());
-          // forcePreExerciseCheck already opened the window above.
-          // Voice cue inside runFramingCheck uses speakAfterCurrentSpeech
-          // so it waits for coaching intro without blocking the window.
-          stableCoachingCallbacks.onExerciseStarted(Date.now());
+          // The intro (and the guide's demonstration) start once the patient
+          // is placed: now if they still are, else when positioning locks.
+          if (framingIntelligence.prerequisiteResultRef.current.allMet) {
+            stableCoachingCallbacks.onExerciseStarted(Date.now());
+          } else {
+            pendingIntroRef.current = true;
+            writeDebugLog("info", "COACHING", "Exercise intro waits until the patient is placed");
+          }
         };
 
         // If there's a rest period before this next block, show rest screen first
@@ -1678,7 +1699,17 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       }
 
       // ── 3c. Coaching through the rep (lib/coaching/repCoach.ts) ─────────
-      if (sessionPhaseRef.current === "running") {
+      // Only once the patient is placed: while they are being positioned the
+      // positioning coach talks, nothing else (the owner's run).
+      // (Before the first rep only, like the positioning screen: a brief
+      // slip mid-exercise must not silence the coaching.)
+      const placedForCoaching = !pendingIntroRef.current &&
+        (framingIntelligence.prerequisiteResultRef.current.allMet || ghostRepCountRef.current > 0);
+      if (!placedForCoaching) {
+        narratorRef.current.update(null, false);
+        ghostReadyStartRef.current = performance.now(); // the demonstration starts when placed
+      }
+      if (sessionPhaseRef.current === "running" && placedForCoaching) {
         const p = ghostPrescriptionRef.current;
         const sd = p?.side === "left" ? "left" : "right";
         const feats = inferenceLoop.getFeatures();

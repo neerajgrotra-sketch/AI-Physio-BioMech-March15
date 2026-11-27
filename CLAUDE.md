@@ -112,6 +112,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   (`lib/positioning/positioningSteps.ts`: seen, facing, fits, posture, still; done / now / to do) and the next
   exercise. The amber framing bar above the camera is hidden while positioning and exercising (the owner: the same
   words were shown three times).
+- Between exercises (v0.7.2): `framingIntelligence.reset(msg, true)` keeps the placement when the next exercise needs the
+  same set-up (`setupFamily`: view, posture, coverage, reach, and the side only when side on), so right then left arm
+  raises facing the camera run straight on. If positioning is needed, the next exercise's spoken intro, the guide's
+  demonstration and the rep coach wait until placed (`pendingIntroRef`, `placedForCoaching`).
 - One thing at a time on the camera panel (`SessionRunner`: `positioningOnScreen`, `exerciseOnScreen`): while being
   positioned only the guide shows; the skeleton (faint) and the ghost demo appear once the session is running and the
   patient is placed, and the ghost's demo timer starts then. The ghost (`lib/pose/ghostAnimator.ts`) demonstrates a rep
