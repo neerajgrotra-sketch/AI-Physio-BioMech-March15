@@ -17,6 +17,12 @@ import {
   type PositionIssue, type PositionState, type Silhouette,
 } from "@/lib/positioning/positionCoach";
 
+// Set-ups that need the patient in the same place. Facing the camera,
+// which arm moves doesn't change where to sit; side on, the side does.
+function setupFamily(s: ReturnType<typeof positionSetupFor>): string {
+  return [s.view, s.view === "front" ? "" : s.side, s.posture, s.coverage, s.reach].join("|");
+}
+
 // What the on-screen position guide draws (components/session/PositionGuideOverlay.tsx).
 export type PositionGuide = {
   state: PositionState;
@@ -143,6 +149,11 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
   // exercise, so a new exercise (say, the other side) asks again.
   const positionTrackerRef = useRef(new PositionTracker());
   const positionForIdRef = useRef<string | null>(null);
+  // The camera set-up the tracker was placed for (view, posture, framing,
+  // movement; and which side faces the camera when side on). Moving to an
+  // exercise with the same set-up keeps the placement (the owner's run:
+  // positioning started over between right and left arm raises).
+  const positionFamilyRef = useRef<string | null>(null);
   const [positionGuide, setPositionGuide] = useState<PositionGuide | null>(null);
   const positionGuideKeyRef = useRef<string>("");
 
@@ -274,8 +285,8 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
   // RESET
   // ----------------------------------------------------------
 
-  const reset = useCallback((message = "Position yourself in view.") => {
-    debugLog("reset", message);
+  const reset = useCallback((message = "Position yourself in view.", keepPlacement = false) => {
+    debugLog("reset", message + (keepPlacement ? " (keeping placement if the set-up matches)" : ""));
     monitorRef.current.reset();
     evaluatorRef.current.cancel();
     preExerciseActiveRef.current = false;
@@ -286,12 +297,17 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
       window.clearTimeout(voiceTimeoutRef.current);
       voiceTimeoutRef.current = null;
     }
+    // Between exercises, a patient already placed stays placed; the next
+    // frame checks the new exercise's set-up (evaluateFraming) and starts
+    // over only if it differs.
+    if (keepPlacement && positionTrackerRef.current.isLocked()) return;
     // Not met until the positioning coach has seen the patient in place.
     const initial: PrerequisiteResult = { allMet: false, failures: [] };
     prerequisiteResultRef.current = initial;
     setPrerequisiteResult(initial);
     positionTrackerRef.current.reset();
     positionForIdRef.current = null;
+    positionFamilyRef.current = null;
     positionGuideKeyRef.current = "";
     setPositionGuide(null);
     setFramingPanelState(buildPanelState(message, "warning", false));
@@ -365,11 +381,15 @@ export function useFramingIntelligence(patientProfile: PatientProfile, debugLogg
 
     // Positioning coach, every frame: the first thing to fix, steadied
     // over time; "met" only once the patient is placed and has held still.
+    const setup = positionSetupFor(prescription);
     if (positionForIdRef.current !== prescription.id) {
       positionForIdRef.current = prescription.id;
-      positionTrackerRef.current.reset();
+      const family = setupFamily(setup);
+      const same = family === positionFamilyRef.current && positionTrackerRef.current.isLocked();
+      if (!same) positionTrackerRef.current.reset();
+      debugLog("position set-up", `${family}${same ? " (same as before: still placed)" : ""}`);
+      positionFamilyRef.current = family;
     }
-    const setup = positionSetupFor(prescription);
     // The preview is mirrored (front camera): see CameraViewport.
     const assessment = assessPosition(frame, setup, { mirrored: true });
     const tracked = positionTrackerRef.current.update(assessment, nowMs);
