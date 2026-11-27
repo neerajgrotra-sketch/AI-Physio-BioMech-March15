@@ -142,7 +142,7 @@ blind spots than a single depth camera.
   wording before a public launch.
 - The patient session screen (`SessionRunner`) is still dark; restyle it with the portrait redesign.
 
-## Resume, end early and walking away (owner's note 2026-11-27, design to agree before building)
+## Resume, end early and walking away (owner's note 2026-11-27; BUILT in v0.8.0, see CLAUDE.md "Pausing and resuming")
 
 Today a session is all or nothing: ending early writes results with "PARTIAL" and tries to set the status to
 `partially_completed`, which the database rejects (`sessions_status_check` allows pending, in_progress, completed,
@@ -167,5 +167,4 @@ Proposed behaviour:
 - **Physio view:** the assignment card shows "Paused: 1 of 2 exercises, 27 Nov 2:05 p.m." and the reason (ended,
   walked away, tab closed).
 
-Questions for the owner: does a paused session expire (e.g. start fresh after 24 h, or on the next prescribed
-day)? Should reps done in an unfinished exercise count on resume, or does that exercise start again?
+Decided: resumable the same day only; an exercise cut off part way starts again; finished ones stay done.

@@ -10,6 +10,7 @@ import SessionPageClient from './SessionPageClient';
 import { buildPrescription } from '@/lib/sessions/buildSessionPrescription';
 import type { ExercisePrescription } from '@/lib/types/exercise';
 import type { PatientProfile, PatientType } from '@/lib/patient/patientTypes';
+import type { SessionProgress } from '@/lib/session/resume';
 
 // ─── Next.js 14 server page props ────────────────────────────────────────────
 
@@ -90,6 +91,8 @@ export default async function SessionPage({ searchParams }: PageProps) {
       title,
       objective,
       patient_id,
+      status,
+      progress,
       session_blocks (
         id,
         sequence_order,
@@ -265,6 +268,8 @@ export default async function SessionPage({ searchParams }: PageProps) {
       patientName={patientName}
       patientId={patientId}
       previousSession={previousSession ?? undefined}
+      savedStatus={(data as { status?: string }).status ?? null}
+      savedProgress={((data as { progress?: SessionProgress | null }).progress) ?? null}
     />
   );
 }

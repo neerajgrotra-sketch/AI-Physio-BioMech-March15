@@ -24,6 +24,7 @@ import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
 import { exerciseSeconds } from "@/lib/app/sessionDuration";
+import { resumePlan, awayState, type AwayState, type SessionProgress } from "@/lib/session/resume";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -324,6 +325,7 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onV
     aiSummary: string;
     exerciseResults: { name: string; successful: number; prescribed: number; failed: number; }[];
     partial?: boolean;
+    paused?: boolean;
   };
   patientName?: string;
   sessionTitle?: string;
@@ -354,7 +356,9 @@ function SessionSummaryOverlay({ summary, patientName, sessionTitle, onDone, onV
           </div>
           {summary.partial && (
             <div style={{ fontSize: 13, color: "#d29922", marginBottom: 4 }}>
-              Completed exercises have been saved.
+              {summary.paused
+                ? "Your progress is saved. Open your link again today to carry on where you left off."
+                : "Completed exercises have been saved."}
             </div>
           )}
           {sessionTitle && (
@@ -478,6 +482,9 @@ interface SessionRunnerProps {
   patientName?: string;
   /** Previous session summary fetched server-side — used for greeting */
   previousSession?: { mobilityScore: number; sessionTitle: string; claudeSummary: string };
+  /** Saved status and progress of this assignment, to offer resuming it. */
+  savedStatus?: string | null;
+  savedProgress?: SessionProgress | null;
 }
 
 // Debug entry types — defined outside component to avoid SWC/Next.js issues
@@ -492,7 +499,7 @@ type RepCycleEntry = {
   encourageThreshold: number | null; repCount: number; detail: string;
 };
 
-export default function SessionRunner({ prescriptionQueue, restBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName, previousSession }: SessionRunnerProps = {}) {
+export default function SessionRunner({ prescriptionQueue, restBoundaries: fullBoundaries = [], sessionTitle, initialPatientProfile, prescriptionId, patientId, patientName, previousSession, savedStatus, savedProgress }: SessionRunnerProps = {}) {
   const { sessions } = useSessionLibrary();
   const exercises = ACTIVE_EXERCISE_LIBRARY;
   const cameraRef = useRef<CameraViewportHandle | null>(null);
@@ -603,6 +610,12 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   const [isPortrait, setIsPortrait] = useState(false);
   // Soft pause state — inference stops, camera stays on, timer freezes
   const [isPaused, setIsPaused] = useState(false);
+  // End session asks: save and finish later, or finish now.
+  const [endDialog, setEndDialog] = useState(false);
+  // Walking away (lib/session/resume.ts awayState): when the patient was last
+  // seen, and what that means now.
+  const lastSeenMsRef = useRef(Date.now());
+  const [away, setAway] = useState<AwayState>({ kind: "present" });
 
   // ── SESSION PHASE STATE MACHINE ──────────────────────────────────────────
   // Controls the pre-session sequence:
@@ -626,6 +639,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     aiSummary: string;
     durationMs: number;
     partial?: boolean;
+    paused?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -666,7 +680,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   }, [patientProfile]);
 
   // Session timer — runs while engine is running and not paused
-  const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running" && !isPaused);
+  const sessionTimer = useSessionTimer(inferenceLoop.engineStatus === "running" && !isPaused && away.kind === "present");
 
   useEffect(() => {
     if (selectedSessionIds.length === 0 && sessions[0]) {
@@ -722,7 +736,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     [sessions, selectedSessionIds]
   );
 
- const combinedQueue = useMemo(() => {
+ const fullQueue = useMemo(() => {
   if (prescriptionQueue && prescriptionQueue.length > 0) {
     return prescriptionQueue.map((p) => ({
       id: p.id,
@@ -734,6 +748,51 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   }
   return buildQueueFromSessions(selectedSessions, exercises);
 }, [selectedSessions, exercises, prescriptionQueue, sessionTitle]);
+
+  // ── Resuming (lib/session/resume.ts) ───────────────────────────────────
+  // The same day, a session left with exercises to go can be continued
+  // from the first unfinished one. `runIndexes` maps the run's exercises
+  // to their place in the full protocol; `doneIdx` is what is finished.
+  const resume = useMemo(
+    () => prescriptionId && prescriptionQueue
+      ? resumePlan({ status: savedStatus, progress: savedProgress, total: fullQueue.length, now: new Date() })
+      : { resumable: false, done: [] as number[], remaining: fullQueue.map((_, i) => i) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [prescriptionId, savedStatus, savedProgress, fullQueue.length]);
+  const [runIndexes, setRunIndexes] = useState<number[] | null>(null);
+  const runIndexesRef = useRef<number[] | null>(null);
+  runIndexesRef.current = runIndexes;
+  const combinedQueue = useMemo(
+    () => (runIndexes ? runIndexes.map((i) => fullQueue[i]).filter(Boolean) : fullQueue),
+    [fullQueue, runIndexes]
+  );
+  const restBoundaries = useMemo(
+    () => runIndexes
+      ? fullBoundaries.map((b) => ({ ...b, afterIndex: runIndexes.indexOf(b.afterIndex) })).filter((b) => b.afterIndex >= 0 && b.afterIndex < runIndexes.length - 1)
+      : fullBoundaries,
+    [fullBoundaries, runIndexes]
+  );
+  const [doneIdx, setDoneIdx] = useState<number[]>([]);
+  const doneIdxRef = useRef<number[]>([]);
+  const [pendingBegin, setPendingBegin] = useState(false);
+  /** The run's exercise i, as its place in the full protocol. */
+  const fullIndexOf = (i: number) => (runIndexesRef.current ? runIndexesRef.current[i] ?? i : i);
+
+  // Save where the patient is (app/api/session/progress: patients are not
+  // signed in, so this goes through the server).
+  const postProgress = useCallback((status: "in_progress" | "paused" | "completed", done: number[], reason?: string) => {
+    if (!prescriptionId || !prescriptionQueue) return;
+    void fetch("/api/session/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({ sessionId: prescriptionId, status, progress: { done, total: fullQueue.length }, reason }),
+    }).then(async (r) => {
+      if (r.ok) writeDebugLog("info", "PROGRESS", `Saved: ${status}${reason ? ` (${reason})` : ""}, done ${done.length}/${fullQueue.length}`);
+      else writeDebugLog("error", "PROGRESS", `Save failed: HTTP ${r.status}`, await r.text().catch(() => ""));
+    }).catch((e) => writeDebugLog("error", "PROGRESS", "Save failed", String(e)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prescriptionId, prescriptionQueue, fullQueue.length]);
 
   const combinedGoal = useMemo(
     () => inferSessionGoal(combinedQueue.map((i) => i.id)),
@@ -1037,6 +1096,14 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
     // getLandmarkConfidencePct() may already be stale/reset by the time this fires,
     // so we read from liveConfidenceSnapshotRef which was updated every frame.
     const completedIdx = sessionQueue.queueIndex;
+    {
+      const full = fullIndexOf(completedIdx);
+      const done = Array.from(new Set([...doneIdxRef.current, full])).sort((a, b) => a - b);
+      doneIdxRef.current = done;
+      setDoneIdx(done);
+      // The last one is saved as completed with the results.
+      if (done.length < fullQueue.length) postProgress("in_progress", done);
+    }
     exerciseLandmarkConfidenceRef.current[completedIdx] = liveConfidenceSnapshotRef.current;
     liveConfidenceSnapshotRef.current = null; // reset for next exercise
     writeDebugLog("info", "RESULTS", `landmark_confidence[${completedIdx}]=${exerciseLandmarkConfidenceRef.current[completedIdx] ?? "null"}`);
@@ -1104,7 +1171,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
         flushDebugLogToSupabase("session_end");
       }
     );
-  }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence, restBoundaries]);
+  }, [sessionQueue, patientContext, coachingBrain, patientProfile, inferenceLoop, framingIntelligence, restBoundaries, postProgress, fullQueue.length]);
 
   // ============================================================
   // SESSION RESULTS WRITER
@@ -1114,7 +1181,16 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // then updates session_prescriptions.status → completed.
   // ============================================================
 
+  // How a session that ends early is saved: "paused" (finish later today) or
+  // "completed" (finish now). Set by the End dialog and the walk-away timer.
+  const endModeRef = useRef<{ status: "paused" | "completed"; reason?: string }>({ status: "paused", reason: "ended" });
+
   async function writeSessionResults(partial = false) {
+    // Status and progress first, through the server (patients aren't signed
+    // in), so they are saved even if writing the results below fails.
+    // Early endings are "paused" (resumable today) or "completed".
+    if (partial) postProgress(endModeRef.current.status, doneIdxRef.current, endModeRef.current.reason);
+    else postProgress("completed", fullQueue.map((_, i) => i));
     const summary = patientContext.buildSessionSummaryInput();
     if (!summary) {
       writeDebugLog("warning", "RESULTS", "buildSessionSummaryInput returned null — skipping write");
@@ -1210,6 +1286,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
 
     // Show post-session summary overlay immediately
     setSessionSummary({
+      paused: partial && endModeRef.current.status === "paused",
       mobilityScore,
       durationMs,
       aiSummary,
@@ -1302,17 +1379,6 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
         writeDebugLog("success", "RESULTS", `exercise_results written — ${exerciseRows.length} rows`);
       }
 
-      if (prescriptionId) {
-        const { error: statusErr } = await supabase
-          .from("sessions")
-          .update({ status: partial ? "partially_completed" : "completed" })
-          .eq("id", prescriptionId);
-        if (statusErr) {
-          writeDebugLog("error", "RESULTS", "Failed to update session status", statusErr.message);
-        } else {
-          writeDebugLog("success", "RESULTS", `Session status → ${partial ? "partially_completed" : "completed"}`);
-        }
-      }
 
     } catch (err) {
       writeDebugLog("error", "RESULTS", "writeSessionResults threw", err instanceof Error ? err.message : String(err));
@@ -1383,6 +1449,86 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     };
   }, [sessionQueue.sessionStarted]);
 
+  // Switching to another tab pauses the session (Resume carries on).
+  const pauseRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "hidden" && sessionQueue.sessionStarted && sessionPhaseRef.current === "running") {
+        writeDebugLog("info", "SESSION", "Tab hidden: pausing");
+        pauseRef.current();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [sessionQueue.sessionStarted]);
+
+  // Walking away: nobody seen for 10 s pauses the coaching, a countdown
+  // shows from 60 s, and at 90 s the session is saved (paused, resumable
+  // today) and ends. Seeing the patient again carries on at once.
+  const endRef = useRef<(partial: boolean, mode: { status: "paused" | "completed"; reason?: string }) => void>(() => {});
+  useEffect(() => {
+    const live = sessionQueue.sessionStarted && sessionPhase === "running" && !isPaused && !sessionSummary && !restScreen;
+    if (!live) { setAway((a) => (a.kind === "present" ? a : { kind: "present" })); return; }
+    const t = window.setInterval(() => {
+      const next = awayState((Date.now() - lastSeenMsRef.current) / 1000);
+      setAway((prev) => {
+        if (prev.kind === next.kind && (next.kind !== "countdown" || (prev as any).secondsLeft === next.secondsLeft)) return prev;
+        return next;
+      });
+    }, 500);
+    return () => window.clearInterval(t);
+  }, [sessionQueue.sessionStarted, sessionPhase, isPaused, sessionSummary, restScreen]);
+  const awayKindRef = useRef<AwayState["kind"]>("present");
+  useEffect(() => {
+    const before = awayKindRef.current;
+    awayKindRef.current = away.kind;
+    if (before === away.kind) return;
+    const say = (text: string) => {
+      if (typeof window === "undefined" || !window.speechSynthesis || !voiceOn) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.95;
+      window.speechSynthesis.speak(u);
+    };
+    if (away.kind === "paused" && before === "present") {
+      writeDebugLog("warning", "SESSION", "Patient not seen for 10 s: pausing");
+      coachingBrain.setVoiceEnabled(false);
+      say("I can't see you. Your session is paused. Step back in front of the camera to carry on.");
+    } else if (away.kind === "countdown" && before !== "countdown") {
+      writeDebugLog("warning", "SESSION", "Patient away 60 s: countdown to save and end");
+      say("Your session will be saved and closed in thirty seconds.");
+    } else if (away.kind === "present" && before !== "present") {
+      writeDebugLog("info", "SESSION", "Patient back: carrying on");
+      coachingBrain.setVoiceEnabled(voiceOn);
+      if (sessionPhaseRef.current === "running" && !sessionSummary) say("Welcome back. Let's carry on.");
+    } else if (away.kind === "end") {
+      writeDebugLog("warning", "SESSION", "Patient away 90 s: saving and ending (paused)");
+      endRef.current(true, { status: "paused", reason: "walked_away" });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [away.kind]);
+  function imBack() {
+    lastSeenMsRef.current = Date.now();
+    setAway({ kind: "present" });
+  }
+
+  // Welcome back: Continue runs only the unfinished exercises; Start over
+  // runs them all. Begin waits a render so the run queue is in place.
+  function continueSession() {
+    setRunIndexes(resume.remaining);
+    setPendingBegin(true);
+  }
+  function startOver() {
+    setRunIndexes(null);
+    setPendingBegin(true);
+  }
+  useEffect(() => {
+    if (!pendingBegin) return;
+    setPendingBegin(false);
+    void beginCombinedSession();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingBegin, combinedQueue]);
+
   async function beginCombinedSession() {
     if (combinedQueue.length === 0) return;
     sessionStartedAtMsRef.current = Date.now();
@@ -1397,6 +1543,13 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
 
     const started = sessionQueue.beginSession(combinedQueue);
     if (!started) { writeDebugLog("error", "SESSION", "beginSession returned false"); return; }
+    // Progress: continuing keeps what was finished earlier today.
+    const startDone = runIndexesRef.current ? resume.done : [];
+    doneIdxRef.current = startDone;
+    setDoneIdx(startDone);
+    lastSeenMsRef.current = Date.now();
+    if (runIndexesRef.current) writeDebugLog("info", "SESSION", `Continuing: exercises ${runIndexesRef.current.map((i) => i + 1).join(", ")} of ${fullQueue.length}`);
+    postProgress("in_progress", startDone);
     setSelectorCollapsed(true);
     patientContext.beginSession();
     patientContext.beginExercise(combinedQueue[0].prescription, 0, combinedQueue.length);
@@ -1586,6 +1739,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
       // ── 1. Get live frame ─────────────────────────────────────────────────
       const frame = ghostFrameRef.current;
+      if (frame?.personDetected) lastSeenMsRef.current = Date.now();
       if (!frame || !frame.personDetected) {
         ghostAnimRef.current = requestAnimationFrame(tick);
         return;
@@ -2113,19 +2267,26 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     const video = videoElementRef.current;
     if (!video) { writeDebugLog("error", "SESSION", "Resume failed — no video element"); return; }
     setIsPaused(false);
-    coachingBrain.setVoiceEnabled(true);
+    lastSeenMsRef.current = Date.now();
+    coachingBrain.setVoiceEnabled(voiceOn);
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     startGhostLoop();
     writeDebugLog("info", "SESSION", "Resumed");
   }
 
-  async function endSession(partial = false) {
+  async function endSession(partial = false, mode: { status: "paused" | "completed"; reason?: string } = { status: "paused", reason: "ended" }) {
+    endModeRef.current = mode;
+    setEndDialog(false);
+    setAway({ kind: "present" });
     if (partial && sessionQueue.sessionStarted) {
       await writeSessionResults(true);
       flushDebugLogToSupabase("session_end");
     }
     cameraRef.current?.stopCamera();
   }
+
+  pauseRef.current = pauseSession;
+  endRef.current = (partial, mode) => { void endSession(partial, mode); };
 
   function resetSession() {
     sessionQueue.resetSession();
@@ -2325,7 +2486,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                   background: "rgba(240,180,41,0.12)", color: "#ffcc80", border: "1px solid rgba(240,180,41,0.3)", fontSize: 13, fontWeight: 700,
                 }}>Pause</button>
               )}
-              <button onClick={() => endSession(true)} style={{
+              <button onClick={() => setEndDialog(true)} style={{
                 height: 36, padding: "0 16px", borderRadius: 18, cursor: "pointer",
                 background: "rgba(255,255,255,0.06)", color: "#EEF2FF", border: "1px solid rgba(255,255,255,0.1)", fontSize: 13, fontWeight: 700,
               }}>End session</button>
@@ -2354,27 +2515,52 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
         {/* LEFT: the guide */}
         <section aria-label="Your guide" style={{
+          position: "relative",
           background: "#141A2E", borderRadius: 16, border: "1px solid rgba(255,255,255,0.06)",
           padding: 12, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: isMobile || isPortrait ? 0 : 360,
         }}>
+          {/* Walked away: the coach says so, counts down, and offers "I'm back". */}
+          {(away.kind === "paused" || away.kind === "countdown") && (
+            <div role="alert" style={{
+              position: "absolute", inset: 0, zIndex: 5, borderRadius: 16, background: "#141A2E",
+              display: "flex", flexDirection: "column", justifyContent: "center", gap: isMobile ? 12 : 20, padding: isMobile ? 16 : 28,
+            }}>
+              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>YOUR COACH</div>
+              <div style={{ background: away.kind === "countdown" ? "#F0B429" : "#58a6ff", color: away.kind === "countdown" ? "#1A1200" : "#04162E", borderRadius: 20, padding: isMobile ? "14px 16px" : "22px 24px" }}>
+                <div style={{ fontSize: isMobile ? 22 : "clamp(26px, 2.4vw, 38px)", fontWeight: 800, lineHeight: 1.15 }}>
+                  {away.kind === "countdown" ? `Saving and closing in ${away.secondsLeft}…` : "I can't see you. Your session is paused."}
+                </div>
+              </div>
+              <div style={{ fontSize: isMobile ? 17 : 22, color: "#C9D2EE", lineHeight: 1.35 }}>
+                Step back in front of the camera to carry on.{away.kind === "countdown" ? " Your progress will be saved, and you can finish later today." : ""}
+              </div>
+              <button onClick={imBack} style={{
+                alignSelf: "flex-start", background: "#3FB950", color: "#08240F", border: "none", borderRadius: 16,
+                padding: isMobile ? "12px 24px" : "16px 34px", fontSize: isMobile ? 18 : 24, fontWeight: 800, cursor: "pointer",
+              }}>
+                I'm back
+              </button>
+            </div>
+          )}
           {/* Where the patient is in the protocol (any number of exercises). */}
-          {sessionQueue.sessionStarted && combinedQueue.length > 0 && (() => {
-            const qi = Math.min(sessionQueue.queueIndex, combinedQueue.length - 1);
-            const next = combinedQueue[qi + 1];
+          {sessionQueue.sessionStarted && fullQueue.length > 0 && (() => {
+            const qi = Math.min(fullIndexOf(sessionQueue.queueIndex), fullQueue.length - 1);
+            const nextRun = combinedQueue[sessionQueue.queueIndex + 1];
+            const next = nextRun ?? null;
             const nm = (it: typeof combinedQueue[number]) => (it.prescription as any)?.clinicalName ?? it.displayName;
             return (
               <div style={{ padding: isMobile ? "4px 8px 8px" : "4px 16px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
                   <span style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700, letterSpacing: "0.08em", color: "#AEB8D6" }}>
-                    EXERCISE {qi + 1} OF {combinedQueue.length}
+                    EXERCISE {qi + 1} OF {fullQueue.length}
                   </span>
                   {next && <span style={{ fontSize: isMobile ? 12 : 14, color: "#8892B4", textAlign: "right" }}>Next: {nm(next)}</span>}
                 </div>
-                <div role="img" aria-label={`Exercise ${qi + 1} of ${combinedQueue.length}`} style={{ display: "flex", gap: 4 }}>
-                  {combinedQueue.map((it, i) => (
+                <div role="img" aria-label={`Exercise ${qi + 1} of ${fullQueue.length}`} style={{ display: "flex", gap: 4 }}>
+                  {fullQueue.map((it, i) => (
                     <span key={`${it.id}-${i}`} title={nm(it)} style={{
                       flex: 1, height: 6, borderRadius: 3,
-                      background: i < qi ? "#3FB950" : i === qi ? "#9DB8FF" : "#2A3352",
+                      background: doneIdx.includes(i) ? "#3FB950" : i === qi ? "#9DB8FF" : "#2A3352",
                     }} />
                   ))}
                 </div>
@@ -2396,22 +2582,25 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                 {patientName ? `GOOD ${new Date().getHours() < 12 ? "MORNING" : new Date().getHours() < 17 ? "AFTERNOON" : "EVENING"}, ${patientName.split(" ")[0].toUpperCase()}` : "WELCOME"}
               </div>
               <div style={{ fontSize: isMobile ? 24 : 34, fontWeight: 800, lineHeight: 1.15, color: "white" }}>
-                {sessionTitle ?? "Today's exercises"}
+                {resume.resumable ? "Welcome back" : (sessionTitle ?? "Today's exercises")}
               </div>
-              <div style={{ fontSize: isMobile ? 14 : 17, fontWeight: 700, color: "#AEB8D6" }}>
-                {combinedQueue.length === 1 ? "1 exercise" : `${combinedQueue.length} exercises`} · {formatDurationRange(combinedDurationSeconds)}
+              <div style={{ fontSize: isMobile ? 14 : 17, fontWeight: 700, color: resume.resumable ? "#9be7b0" : "#AEB8D6" }}>
+                {resume.resumable
+                  ? `You finished ${resume.done.length} of ${fullQueue.length} exercise${fullQueue.length !== 1 ? "s" : ""} earlier today.`
+                  : `${combinedQueue.length === 1 ? "1 exercise" : `${combinedQueue.length} exercises`} · ${formatDurationRange(combinedDurationSeconds)}`}
               </div>
               <ol style={{
                 margin: 0, padding: "0 4px 0 0", listStyle: "none", display: "flex", flexDirection: "column",
                 gap: combinedQueue.length > 4 ? 8 : 12, maxHeight: isMobile ? "30vh" : "44vh", overflowY: "auto",
               }}>
-                {combinedQueue.map((item, i) => {
+                {fullQueue.map((item, i) => {
                   const p = item.prescription as any;
                   const target = p.romTargetDegrees ?? p.targetThreshold ?? null;
+                  const wasDone = resume.resumable && resume.done.includes(i);
                   const hold = p.hold?.required && p.hold?.durationMs ? Math.round(p.hold.durationMs / 1000) : null;
                   return (
                     <li key={`${item.id}-${i}`} style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                      <span style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 18, background: "#2A3352", color: "#C9D2EE", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{i + 1}</span>
+                      <span aria-label={wasDone ? "done" : undefined} style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 18, background: wasDone ? "#3FB950" : "#2A3352", color: wasDone ? "#08240F" : "#C9D2EE", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{wasDone ? "✓" : i + 1}</span>
                       <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                         <span style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: "white" }}>{p.clinicalName ?? item.displayName}</span>
                         <span style={{ fontSize: isMobile ? 15 : 18, color: "#AEB8D6" }}>
@@ -2661,6 +2850,24 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                         </li>
                       ))}
                     </ul>
+                    {resume.resumable ? (
+                      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+                        <button onClick={continueSession} disabled={!canBegin} style={{
+                          background: canBegin ? "#3FB950" : "rgba(63,185,80,0.2)", color: canBegin ? "#08240F" : "#7a88a8",
+                          border: "none", borderRadius: 16, padding: isMobile ? "14px 28px" : "18px 40px",
+                          fontSize: isMobile ? 20 : 28, fontWeight: 800, cursor: canBegin ? "pointer" : "not-allowed",
+                        }}>
+                          Continue
+                        </button>
+                        <button onClick={startOver} disabled={!canBegin} style={{
+                          background: "transparent", color: "#C9D2EE", border: "2px solid #3A4466", borderRadius: 16,
+                          padding: isMobile ? "12px 20px" : "16px 28px", fontSize: isMobile ? 17 : 22, fontWeight: 700,
+                          cursor: canBegin ? "pointer" : "not-allowed",
+                        }}>
+                          Start over
+                        </button>
+                      </div>
+                    ) : (
                     <button
                       onClick={beginCombinedSession}
                       disabled={!canBegin}
@@ -2673,7 +2880,12 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                     >
                       Begin session
                     </button>
-                    <div style={{ fontSize: isMobile ? 13 : 16, color: "#AEB8D6" }}>Your camera turns on when you begin.</div>
+                    )}
+                    <div style={{ fontSize: isMobile ? 13 : 16, color: "#AEB8D6" }}>
+                      {resume.resumable
+                        ? `Continue starts with ${(() => { const it = fullQueue[resume.remaining[0]]; return it ? ((it.prescription as any)?.clinicalName ?? it.displayName) : "the next exercise"; })()}. Your camera turns on when you begin.`
+                        : "Your camera turns on when you begin."}
+                    </div>
                   </div>
                 )}
                 {/* Big rep count and one instruction line, readable from across the room. */}
@@ -3422,6 +3634,41 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           </div>
         )}
       </div>
+
+      {/* ── END SESSION: save and finish later, or finish now ── */}
+      {endDialog && (
+        <div role="dialog" aria-modal="true" aria-labelledby="endTitle" style={{
+          position: "fixed", inset: 0, zIndex: 50, background: "rgba(5,8,18,0.75)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+        }}>
+          <div style={{ width: "100%", maxWidth: 520, background: "#141A2E", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: 28, display: "flex", flexDirection: "column", gap: 16 }}>
+            <div id="endTitle" style={{ fontSize: 26, fontWeight: 800, color: "white" }}>End your session?</div>
+            <div style={{ fontSize: 17, color: "#C9D2EE", lineHeight: 1.4 }}>
+              {doneIdx.length} of {fullQueue.length} exercise{fullQueue.length !== 1 ? "s" : ""} finished.
+              {doneIdx.length < fullQueue.length ? " You can save and finish the rest later today." : ""}
+            </div>
+            {doneIdx.length < fullQueue.length && (
+              <button onClick={() => endSession(true, { status: "paused", reason: "ended" })} style={{
+                background: "#3FB950", color: "#08240F", border: "none", borderRadius: 14, padding: "16px 20px", fontSize: 20, fontWeight: 800, cursor: "pointer", textAlign: "left",
+              }}>
+                Save and finish later
+                <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>Open your link again today to carry on.</div>
+              </button>
+            )}
+            <button onClick={() => endSession(true, { status: "completed" })} style={{
+              background: "rgba(255,255,255,0.06)", color: "#EEF2FF", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: "14px 20px", fontSize: 18, fontWeight: 700, cursor: "pointer", textAlign: "left",
+            }}>
+              Finish now
+              <div style={{ fontSize: 14, fontWeight: 500, color: "#AEB8D6", marginTop: 2 }}>Anything not done is recorded as not done.</div>
+            </button>
+            <button onClick={() => setEndDialog(false)} style={{
+              background: "transparent", color: "#AEB8D6", border: "none", padding: 8, fontSize: 16, cursor: "pointer",
+            }}>
+              Keep going
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── REST SCREEN OVERLAY ── */}
       {restScreen && (
