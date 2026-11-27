@@ -9,6 +9,7 @@ import { Suspense } from "react";
 import SessionRunner from "@/components/session/SessionRunner";
 import type { ExercisePrescription } from "@/lib/types/exercise";
 import type { PatientProfile } from "@/lib/patient/patientTypes";
+import type { SessionProgress } from "@/lib/session/resume";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,9 @@ export interface SessionPageClientProps {
   patientId?: string;
   previousSession?: { mobilityScore: number; sessionTitle: string; claudeSummary: string };
   error?: string;
+  /** Saved status and progress, to offer resuming (lib/session/resume.ts). */
+  savedStatus?: string | null;
+  savedProgress?: SessionProgress | null;
 }
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
@@ -91,6 +95,8 @@ export default function SessionPageClient({
   patientId,
   previousSession,
   error,
+  savedStatus,
+  savedProgress,
 }: SessionPageClientProps) {
   // No prescription param — render SessionRunner in default library mode
   if (!prescriptionId) {
@@ -128,6 +134,8 @@ export default function SessionPageClient({
         prescriptionId={prescriptionId}
         patientId={patientId}
         previousSession={previousSession}
+        savedStatus={savedStatus}
+        savedProgress={savedProgress}
       />
     </Suspense>
   );

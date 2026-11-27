@@ -191,9 +191,28 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 
 - `/api/coach` and `/api/tts` are open to anyone (patients use them without logging in), so they can run up the OpenAI
   bill. They need a check, such as a valid session id and a rate limit.
-- Ending a session early sets status `partially_completed`, which `sessions_status_check` rejects, so it stays
-  `pending`. Resume / walk-away design: BACKLOG.md "Resume, end early and walking away".
+- Results and debug logs (`session_results`, `exercise_results`, `session_debug_logs`) are written from the browser
+  with the anon client, and RLS only lets clinic staff insert them: they save when a physio is signed in on the same
+  browser (all tests so far), not for a real patient. Move them behind a server route like `api/session/progress`.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
+
+## Pausing and resuming (v0.8.0, the owner's decisions)
+
+- Statuses: pending -> in_progress (on Begin) -> completed, or `paused` (ended early or walked away with exercises
+  left). Migration `20261127000100_session_pause_resume.sql`: `paused` in the check, `sessions.progress`
+  (`{ done, total, updated_at }`), `paused_at`, `pause_reason` (`ended`, `walked_away`).
+- Saved through `app/api/session/progress` (service role, the session id is the key, only status and progress
+  change), because patients are not signed in: on Begin, after each exercise, on End and when walking away.
+- `lib/session/resume.ts` `resumePlan`: resumable the SAME DAY only, if something was finished and something is
+  left and the protocol still has the same number of exercises; Continue runs the unfinished ones (`runIndexes`,
+  `fullIndexOf`, `combinedQueue` = the run, `fullQueue` = the protocol), an exercise cut off part way starts again;
+  Start over runs them all. The welcome screen says "Welcome back, you finished x of n" with ticks.
+- End session asks: Save and finish later (paused), Finish now (completed; not done recorded as not done), Keep going.
+- Walking away (`awayState`): nobody seen 10 s -> coaching paused and the coach panel says so; 60 s -> countdown
+  "Saving and closing in 30..."; 90 s -> saved as paused, session ends. Seen again or "I'm back" carries on. A hidden
+  tab pauses (Resume). Not during positioning or a rest screen.
+- Admin: paused / in-progress assignments show "x of n exercises done, paused <time>, patient walked away", count
+  as to do, and the button reads Continue Session.
 
 ## Assignment IDs
 

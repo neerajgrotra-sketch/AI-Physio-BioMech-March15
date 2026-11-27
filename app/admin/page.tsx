@@ -51,6 +51,9 @@ interface PrescribedSession {
   status: string; estimated_duration_mins: number; created_at: string;
   source_protocol_id: string | null;
   exercises: { display_name: string; reps: number; hold_ms: number; sequence_order: number; }[];
+  progress?: { done: number[]; total: number; updated_at: string } | null;
+  paused_at?: string | null;
+  pause_reason?: string | null;
 }
 
 interface SessionResult {
@@ -751,7 +754,8 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
   const bmiInfo = bmi ? bmiCategory(bmi) : null;
   const patientSessions = prescriptions.filter(s => s.patient_id === patient.id).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const completedSessions = patientSessions.filter(s => s.status === "completed");
-  const pendingSessions   = patientSessions.filter(s => s.status === "pending");
+  // Still to do: not started, or started and left part way (paused today).
+  const pendingSessions   = patientSessions.filter(s => s.status === "pending" || s.status === "paused" || s.status === "in_progress");
 
   const [assigning, setAssigning] = useState(false);
   const [viewingResultsId, setViewingResultsId] = useState<string | null>(null);
@@ -848,8 +852,17 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                               {assignmentCode(s.id)} ⧉
                             </button>
                           </div>
-                          <Badge label={s.status === "completed" ? "Completed" : s.status === "pending" ? "Pending" : s.status} color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : C.textMuted} />
+                          <Badge
+                            label={s.status === "completed" ? "Completed" : s.status === "pending" ? "Pending" : s.status === "paused" ? "Paused" : s.status === "in_progress" ? "In progress" : s.status}
+                            color={s.status === "completed" ? C.green : s.status === "pending" ? C.blue : s.status === "paused" || s.status === "in_progress" ? C.orange : C.textMuted} />
                         </div>
+                        {(s.status === "paused" || s.status === "in_progress") && s.progress && (
+                          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+                            {s.progress.done.length} of {s.progress.total} exercise{s.progress.total !== 1 ? "s" : ""} done
+                            {s.status === "paused" && s.paused_at ? ` · paused ${formatDateTime(s.paused_at)}` : ` · last activity ${formatDateTime(s.progress.updated_at)}`}
+                            {s.pause_reason === "walked_away" ? " · patient walked away" : s.pause_reason === "ended" ? " · patient ended early" : ""}
+                          </div>
+                        )}
                         {s.exercises.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 4, marginBottom: 10 }}>
                             {s.exercises.slice(0, 4).map((ex, i) => <span key={i} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: C.surface, border: `1px solid ${C.border}`, color: C.textMuted }}>{ex.display_name}</span>)}
@@ -857,7 +870,7 @@ function PatientProfilePanel({ patient, prescriptions, templates, onClose, onEdi
                           </div>
                         )}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>{s.status === "completed" ? "↺ Re-run" : "▶ Run Session"}</Btn>
+                          <Btn onClick={() => window.open(`/session?prescription=${s.id}`, "_blank")} small>{s.status === "completed" ? "↺ Re-run" : s.status === "paused" || s.status === "in_progress" ? "▶ Continue Session" : "▶ Run Session"}</Btn>
                           {s.status === "completed" && <Btn onClick={() => { setViewingResultsId(s.id); setViewingResultsTitle(s.title); }} small variant="ghost">📊 Results</Btn>}
                           {s.status === "pending" && <button onClick={() => handleDeleteSession(s.id, s.title)} disabled={deletingId === s.id} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: deletingId === s.id ? "not-allowed" : "pointer", background: "rgba(239,68,68,0.08)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.2)", opacity: deletingId === s.id ? 0.5 : 1 }}>{deletingId === s.id ? "Deleting…" : "🗑 Delete"}</button>}
                         </div>
@@ -1553,7 +1566,7 @@ export default function AdminPage() {
       const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];
       const blockExercises = blocks.flatMap((b: Record<string, unknown>) => ((b.session_block_exercises as Record<string, unknown>[]) ?? [])).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
       const pe = blockExercises.length > 0 ? blockExercises : ((s.prescription_exercises as Record<string, unknown>[]) ?? []).sort((a, b) => (a.sequence_order as number) - (b.sequence_order as number));
-      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
+      return { id: s.id as string, title: s.title as string, objective: s.objective as string | null, patient_id: s.patient_id as string | null, status: s.status as string, estimated_duration_mins: s.estimated_duration_mins as number, created_at: s.created_at as string, source_protocol_id: s.source_protocol_id as string | null, progress: (s.progress as PrescribedSession["progress"]) ?? null, paused_at: (s.paused_at as string | null) ?? null, pause_reason: (s.pause_reason as string | null) ?? null, exercises: pe.map(e => ({ display_name: (e.exercise_templates as { display_name: string } | null)?.display_name ?? "Unknown", reps: (e.reps_override as number) ?? 6, hold_ms: (e.hold_ms_override as number) ?? 2000, sequence_order: e.sequence_order as number })) };
     }));
     if (tmpl) setAllTemplates(tmpl.map((t: Record<string, unknown>) => ({
       id: t.id as string, title: t.title as string, objective: t.objective as string | null, estimated_duration_mins: t.estimated_duration_mins as number, tags: (t.tags as string[]) ?? [], created_at: t.created_at as string,
