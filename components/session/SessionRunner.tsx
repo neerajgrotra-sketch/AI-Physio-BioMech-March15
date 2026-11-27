@@ -14,13 +14,14 @@ import React, {
 
 import PositionGuideOverlay, { POSITION_ICON, POSITION_COLOR } from "@/components/session/PositionGuideOverlay";
 import { positioningSteps } from "@/lib/positioning/positioningSteps";
-import { drawArmLabel, drawReachGuide, reachLineY, handTargetPoint, handInTarget, drawHandTarget } from "@/lib/pose/reachGuide";
+import { drawArmLabel, drawReachGuide, reachLineY, handTargetPoint, drawHandTarget, handOffset, medianOffset, targetFromOffset } from "@/lib/pose/reachGuide";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
 import { PostureLatch } from "@/lib/pose/postureLatch";
 import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
-import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
+import { maxPlaneNow, setMaxPlaneDeg } from "@/lib/interpreter/movementInterpreter";
+import { setHoldSlipMs } from "@/lib/interpreter/repStateMachine";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
 import { exerciseSeconds } from "@/lib/app/sessionDuration";
@@ -566,8 +567,14 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
       restTauMs: coach.restSettleSeconds * 1000,
     });
     setRestSettleMs(coach.restSettleSeconds * 1000);
+    setMaxPlaneDeg(coach.sidewaysAllowanceDeg);
+    setHoldSlipMs(coach.holdSlipSeconds * 1000);
   }, [coach]);
   const narratorRef = useRef(new DemoNarrator()); // the guide talks while demonstrating
+  // Where this patient's hand is when a rep reaches the target (wrist offset
+  // from the shoulder, recorded at each crossing): the hand circle moves there.
+  const handSamplesRef = useRef<Array<{ dx: number; dy: number }>>([]);
+  const prevMetricForHandRef = useRef<number | null>(null);
   // The next exercise's spoken intro waits until the patient is placed (the
   // owner's run: "raise your left arm" played over the positioning voice).
   const pendingIntroRef = useRef(false);
@@ -1163,6 +1170,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
     repCoachRef.current.reset();
     narratorRef.current.reset();
     postureLatchRef.current = null;
+    handSamplesRef.current = [];
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
@@ -1700,6 +1708,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     repCoachRef.current.reset();
     narratorRef.current.reset();
     postureLatchRef.current = null;
+    handSamplesRef.current = [];
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1900,7 +1909,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           repCount: ghostRepCountRef.current,
           repTarget: p?.repTarget ?? 0,
           elbowBent: flexion ? (feats?.[sd === "left" ? "leftElbowBent" : "rightElbowBent"] ?? null) : null,
-          wrongPlane: flexion && plane !== null ? plane > MAX_PLANE_DEG_FLEXION : null,
+          wrongPlane: flexion && plane !== null ? plane > maxPlaneNow() : null,
           side: p?.side === "both" ? "both" : sd,
           oppositeMetric: flexion ? (feats?.[sd === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"] ?? null) : null,
           startThreshold: p?.startThreshold,
@@ -2110,11 +2119,21 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           // Where the hand should reach (testers' request): green once the arm's
           // angle makes the target, or the hand is in the circle with a straight arm.
           if (c.showHandTarget) {
-            const t = handTargetPoint(frame, side, inferenceLoop.getArmLength(side), target);
-            // Not green for a hand that got there with a bent elbow: that rep
-            // wouldn't count (the upper arm is still short).
+            // Learn: the moment the measured angle first makes the target with a
+            // straight arm, note where the hand is. The circle then sits there
+            // (the middle of the last few), so it matches how reps are counted
+            // for this patient; until then, geometry places it.
             const bentNow = inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] === true;
-            if (t) drawHandTarget(ctx, side, t, reachedNow || (!bentNow && handInTarget(frame, side, t)), W, H, now);
+            const prev = prevMetricForHandRef.current;
+            if (metricNow !== null && prev !== null && prev < target && metricNow >= target && !bentNow) {
+              const off = handOffset(frame, side);
+              if (off) handSamplesRef.current = [...handSamplesRef.current, off].slice(-7);
+            }
+            prevMetricForHandRef.current = metricNow;
+            const learned = medianOffset(handSamplesRef.current);
+            const t = learned ? targetFromOffset(frame, side, learned) : handTargetPoint(frame, side, inferenceLoop.getArmLength(side), target);
+            // Green only when the rep will count (the measured angle made it).
+            if (t) drawHandTarget(ctx, side, t, reachedNow, W, H, now);
           }
         }
         // The card leads like a physio: it demonstrates while the patient is
@@ -2126,7 +2145,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         const plane = inferenceLoop.getFeatures()?.[sideNow === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"];
         const holdLeft = ghostHoldRemRef.current;
         const wrongArm = repCoachRef.current.wrongArmNow;
-        const wrongPlaneNow = activeRep && plane !== null && plane !== undefined && plane > MAX_PLANE_DEG_FLEXION;
+        const wrongPlaneNow = activeRep && plane !== null && plane !== undefined && plane > maxPlaneNow();
         // Label the arm to use: before the first rep, and loudly on the wrong arm.
         if (config.sides.length === 1 && (wrongArm || (repsDone === 0 && (infPhase === "ready" || infPhase === "lifting")))) {
           drawArmLabel(ctx, frame, sideNow, W, H, wrongArm, now);

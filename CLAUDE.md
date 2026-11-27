@@ -50,8 +50,10 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    next rep. A hold dropped early fails at once (`failed_hold`). Isolation: the other arm may not rise more than
    `maxOppositeArmElevationDeg` above where it rested while ready (`oppositeRest`), not an absolute 35° (a seated
    patient's resting arm reads 40-60°). Form (forward raises facing the camera, plane over `MAX_PLANE_DEG_FLEXION`
-   60° = out to the side) is judged AT THE TARGET: on the way up it is only coached; the hold runs only while the arm
-   is in front (it waits at `top`, and a slip of more than `HOLD_DIP_GRACE_MS` mid-hold restarts it), so raising
+   75° = out to the side; was 60, v0.9.2; Coach Lab `sidewaysAllowanceDeg` via `setMaxPlaneDeg`) is judged AT THE TARGET: on the way up it is only coached; the hold runs only while the arm
+   is in front (it waits at `top`; a form slip mid-hold is ignored for `HOLD_SLIP_GRACE_MS` 1 s (Coach Lab
+   `holdSlipSeconds`), and a longer one PAUSES the hold, which resumes with the time already held, `heldBeforeSlipMs`;
+   the owner's run A-57EDFCAD had the plane wavering at 55-75° and a hold restarting six times), so raising
    sideways and then bringing the arm in front while up is a good rep (the owner's case); lowering without ever
    holding it in front fails as `failed_form`. A straight arm is required the same way (`FormIssue` "elbow"): the hold
    only runs with the elbow straight (3D elbow angle under `STRAIGHT_ELBOW_DEG` 135 = bent; 2D: the hand far above OR
@@ -135,9 +137,11 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   mirrors the patient's own arm. `lib/coaching/demoNarrator.ts` narrates the demonstration in step with it ("Watch me
   first… up to here… and slowly down… your turn"; shorter on repeats). A short marker beside the raised arm marks
   where the ELBOW must reach, with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`); a
-  glowing circle shows where the HAND reaches with a straight arm at the target (`handTargetPoint`: up from the
-  shoulder by 1.9 upper arms x cos(target); testers' request, v0.9.1), green with a tick once the angle makes it or the
-  hand is in it with a straight elbow; the elbow bar loses its label while the circle shows (Coach Lab: "On the
+  glowing circle shows where the HAND should reach (testers' request, v0.9.1): from geometry at first
+  (`handTargetPoint`: up from the shoulder by 1.9 upper arms x cos(target)), then where this patient's hand actually
+  was each time the measured angle crossed the target with a straight arm (`handOffset`, the middle of the last 7,
+  `targetFromOffset`; v0.9.2: geometry alone sat well below the hand because the measured angle reads lower than the
+  true one near the top); green with a tick only when the rep will count (the measured angle made it); the elbow bar loses its label while the circle shows (Coach Lab: "On the
   camera" switches for both); and
   `drawArmLabel` labels the arm to use ("RIGHT ARM") before the first rep and, red, on the wrong arm.
   `lib/coaching/repCoach.ts` coaches through the rep: "A little higher", "Keep your arm straight", "Bring your arm in

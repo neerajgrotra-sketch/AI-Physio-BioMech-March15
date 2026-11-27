@@ -51,3 +51,22 @@ describe("hand target: a straight arm at the target lands in the circle", () => 
     }
   });
 });
+
+import { handOffset, medianOffset, targetFromOffset } from "@/lib/pose/reachGuide";
+describe("hand target learned from the patient (run A-57EDFCAD)", () => {
+  it("a recorded hand position maps back onto the same spot, and follows the patient if they shift", () => {
+    const f = frameFromPixels(flexionFront(130));
+    const wr = (f.landmarks as any).right_wrist;
+    const t = targetFromOffset(f, "right", handOffset(f, "right")!)!;
+    expect(t.x).toBeCloseTo(wr.x, 5);
+    expect(t.y).toBeCloseTo(wr.y, 5);
+    const moved = frameFromPixels(flexionFront(5, { }));
+    const shifted = { ...moved, landmarks: Object.fromEntries(Object.entries(moved.landmarks).map(([k, v]: any) => [k, { ...v, x: v.x + 0.1 }])) } as any;
+    const t2 = targetFromOffset(shifted, "right", handOffset(f, "right")!)!;
+    expect(t2.x).toBeGreaterThan(t.x + 0.05); // moves with the shoulder
+  });
+  it("the middle of the recorded positions ignores one odd one", () => {
+    expect(medianOffset([{ dx: 0.2, dy: -1 }, { dx: 0.25, dy: -1.1 }, { dx: 2, dy: 3 }])).toEqual({ dx: 0.25, dy: -1 });
+    expect(medianOffset([])).toBeNull();
+  });
+});

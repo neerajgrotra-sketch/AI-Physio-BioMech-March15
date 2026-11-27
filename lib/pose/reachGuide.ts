@@ -62,6 +62,40 @@ export function handTargetPoint(
   };
 }
 
+/**
+ * The wrist's place relative to the shoulder, in torso lengths (x in true
+ * image proportions, image directions: +x right, +y down). Recorded the
+ * moment a rep reaches the target, it says where THIS patient's hand is
+ * when the measured angle makes the target (the owner's run A-57EDFCAD: the
+ * measured angle and the true geometry differ near the top, so a circle
+ * from geometry alone sat well below the hand).
+ */
+export function handOffset(frame: PoseFrame, side: "right" | "left"): { dx: number; dy: number } | null {
+  const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
+  const sh = lm[`${side}_shoulder`], wr = lm[`${side}_wrist`];
+  const torso = torsoLength(frame);
+  if (!sh || !wr || (sh.score ?? 1) < 0.35 || (wr.score ?? 1) < 0.35 || torso === null || torso < 1e-3) return null;
+  const A = frame.sourceWidth && frame.sourceHeight ? frame.sourceWidth / frame.sourceHeight : 16 / 9;
+  return { dx: ((wr.x - sh.x) * A) / torso, dy: (wr.y - sh.y) / torso };
+}
+
+/** The middle of the recorded offsets (each axis), or null with none. */
+export function medianOffset(samples: Array<{ dx: number; dy: number }>): { dx: number; dy: number } | null {
+  if (samples.length === 0) return null;
+  const mid = (v: number[]) => { const s = [...v].sort((a, b) => a - b); const k = s.length >> 1; return s.length % 2 ? s[k] : (s[k - 1] + s[k]) / 2; };
+  return { dx: mid(samples.map((s) => s.dx)), dy: mid(samples.map((s) => s.dy)) };
+}
+
+/** The hand target from a learned offset, placed on the patient's shoulder now. */
+export function targetFromOffset(frame: PoseFrame, side: "right" | "left", off: { dx: number; dy: number }): { x: number; y: number; radius: number } | null {
+  const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
+  const sh = lm[`${side}_shoulder`];
+  const torso = torsoLength(frame);
+  if (!sh || (sh.score ?? 1) < 0.35 || torso === null) return null;
+  const A = frame.sourceWidth && frame.sourceHeight ? frame.sourceWidth / frame.sourceHeight : 16 / 9;
+  return { x: sh.x + (off.dx * torso) / A, y: sh.y + off.dy * torso, radius: Math.max(0.035, torso * 0.16) };
+}
+
 /** Whether the patient's hand is inside the target circle. */
 export function handInTarget(frame: PoseFrame, side: "right" | "left", t: { x: number; y: number; radius: number }): boolean {
   const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
