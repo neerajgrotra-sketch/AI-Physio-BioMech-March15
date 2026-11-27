@@ -27,6 +27,7 @@ import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
 import { exerciseSeconds } from "@/lib/app/sessionDuration";
+import { liftCaption, targetPhrase } from "@/lib/coaching/plainHeight";
 import { resumePlan, awayState, type AwayState, type SessionProgress } from "@/lib/session/resume";
 import CameraViewport, {
   type CameraViewportHandle
@@ -2132,7 +2133,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             ? (holdLeft !== null ? `Hold… ${Math.max(1, Math.ceil(holdLeft / 1000))}` : "Hold it there")
           : infPhase === "lowering" ? "Lower slowly"
           : infPhase === "lifting" ? (metricNow !== null && metricNow < target ? "Higher…" : "That's it")
-          : `Raise to ${Math.round(target)}° — arm straight`;
+          : liftCaption(target); // plain words, not degrees (lib/coaching/plainHeight.ts)
         const gc = guideCanvasRef.current;
         const gctx = gc?.getContext("2d") ?? null;
         const GW = 600, GH = 660;
@@ -2624,7 +2625,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                       <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                         <span style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: "white" }}>{p.clinicalName ?? item.displayName}</span>
                         <span style={{ fontSize: isMobile ? 15 : 18, color: "#AEB8D6" }}>
-                          {[`${p.repTarget} reps`, hold ? `hold ${hold} s` : null, target !== null ? `up to ${Math.round(target)}°` : null].filter(Boolean).join(" · ")}
+                          {[`${p.repTarget} reps`, hold ? `hold ${hold} s` : null, targetPhrase(p.target?.metric, target)].filter(Boolean).join(" · ")}
                         </span>
                       </span>
                     </li>

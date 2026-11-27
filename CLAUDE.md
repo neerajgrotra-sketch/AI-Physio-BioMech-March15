@@ -152,6 +152,8 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   full-width camera. Side by side the coach panel takes the camera panel's height (its content sits in an absolute box, scrolling if
   needed); with the guide in its own panel the camera shows no instruction band and no score ring, only the rep
   count, the elbow marker and the arm label: the guide's caption carries the instruction and hold count.
+  Patients never see degrees (`lib/coaching/plainHeight.ts`: "to shoulder height", "up to head height"; knees "until your
+  leg is straight"); degrees stay in the panels underneath and the logs.
   Before Begin Session (`welcomeOnScreen`) the guide panel lists the plan (greeting, protocol,
   each exercise's reps, hold and target, the time) and the camera panel shows "Before you start" and a big Begin
   button, not "Camera is off". During the spoken greeting the coach panel greets (name, the greeting's words as a
