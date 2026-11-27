@@ -1,7 +1,7 @@
 "use client";
 
 // app/admin/page.tsx — Module 7
-// Three tabs: Exercise Library | Patients | Protocols
+// Four tabs: Exercise Library | Patients | Protocols | Coach Lab
 // Sessions tab → Template Builder (no patient assignment)
 // Patient profile → Assign Session flow (picks template, applies overrides)
 // Patient profile → View Results (completed session drill-down)
@@ -13,6 +13,10 @@ import { BRAND, BrandLogo } from "@/components/brand/brand";
 import { versionLabel, APP_BUILT_AT } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
 import { sessionMinutes } from "@/lib/app/sessionDuration";
+import { COACH_DEFAULTS, COACH_SETTING_DEFS, resolveCoachSettings, changedFromDefaults, orbitYaw, type CoachSettings } from "@/lib/coach/coachSettings";
+import { drawExampleCard } from "@/lib/pose/exampleCard";
+import { demoCycle, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
+import { liftCaption, targetPhrase } from "@/lib/coaching/plainHeight";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1243,6 +1247,194 @@ function SessionTemplatesTab({ showToast }: { showToast: (msg: string, ok?: bool
   );
 }
 
+// ─── Coach Lab Tab ────────────────────────────────────────────────────────────
+// Play with the coach (the owner's request): a live guide figure that follows
+// the settings, voice samples at the chosen speed, and every adjustable
+// behaviour with a plain explanation. Save stores them for the clinic
+// (public.coach_settings); every session link reads them when it opens.
+
+function CoachLabTab({ showToast }: { showToast: (msg: string, ok?: boolean) => void; }) {
+  const supabase = getSupabaseClient();
+  const [settings, setSettings] = useState<CoachSettings>(COACH_DEFAULTS);
+  const [saved, setSaved] = useState<CoachSettings>(COACH_DEFAULTS);
+  const [hasRow, setHasRow] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  // Preview-only choices (not saved).
+  const [seated, setSeated] = useState(true);
+  const [side, setSide] = useState<"right" | "left">("right");
+  const [target, setTarget] = useState(130);
+  const [correcting, setCorrecting] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const live = useRef({ settings, seated, side, target, correcting });
+  live.current = { settings, seated, side, target, correcting };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data, error } = await supabase.from("coach_settings").select("settings, updated_at").maybeSingle();
+        if (error) showToast("Couldn't load the saved coach settings; showing the defaults.", false);
+        if (data) {
+          const s = resolveCoachSettings((data as { settings: unknown }).settings);
+          setSettings(s); setSaved(s); setHasRow(true);
+          setUpdatedAt((data as { updated_at?: string }).updated_at ?? null);
+        }
+      } catch {
+        showToast("Couldn't load the saved coach settings; showing the defaults.", false);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The preview: the session's guide figure, demonstrating on a loop.
+  useEffect(() => {
+    let raf = 0;
+    let yaw = 90;
+    const t0 = performance.now();
+    const draw = () => {
+      const c = canvasRef.current;
+      const ctx = c?.getContext("2d");
+      if (c && ctx) {
+        const { settings: s, seated: st, side: sd, target: tg, correcting: cr } = live.current;
+        const t = (performance.now() - t0) / 1000;
+        const inCycle = t % DEMO_CYCLE_S;
+        const lift = demoCycle(t);
+        const goal = cr ? 25 : inCycle < 2 && t < DEMO_CYCLE_S ? 90 - (90 - orbitYaw(s, t)) * (inCycle / 2) : orbitYaw(s, t);
+        yaw += (goal - yaw) * 0.05;
+        const holdLeft = inCycle >= 2 && inCycle < 3.2 ? Math.ceil(3.2 - inCycle) : null;
+        const caption = cr ? "Arm in front of you"
+          : holdLeft !== null ? `Hold… ${holdLeft}`
+          : inCycle >= 3.2 && inCycle < 5.2 ? "Lower slowly"
+          : liftCaption(tg);
+        ctx.clearRect(0, 0, c.width, c.height);
+        drawExampleCard({ ctx, W: c.width, H: c.height, full: true, armDeg: lift * tg, targetDeg: tg, seated: st, side: sd, yawDeg: yaw, caption, rgb: { r: 96, g: 190, b: 250 } });
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const set = <K extends keyof CoachSettings>(k: K, v: CoachSettings[K]) => setSettings((p) => resolveCoachSettings({ ...p, [k]: v }));
+  const dirty = JSON.stringify(settings) !== JSON.stringify(saved);
+
+  const speak = (text: string) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = settings.voiceRate;
+    const pref = window.speechSynthesis.getVoices().find(v => v.lang.startsWith("en") && /Natural|Neural|Premium|Samantha|Karen|Daniel/.test(v.name));
+    if (pref) u.voice = pref;
+    window.speechSynthesis.speak(u);
+  };
+
+  async function save(next: CoachSettings) {
+    setSaving(true);
+    const payload = { settings: changedFromDefaults(next), updated_at: new Date().toISOString() };
+    const res = hasRow
+      ? await supabase.from("coach_settings").update(payload).not("clinic_id", "is", null).select("updated_at")
+      : await supabase.from("coach_settings").insert(payload).select("updated_at");
+    setSaving(false);
+    if (res.error) { showToast("Couldn't save: " + res.error.message, false); return; }
+    setHasRow(true); setSaved(next); setSettings(next);
+    setUpdatedAt(((res.data as { updated_at?: string }[] | null)?.[0]?.updated_at) ?? new Date().toISOString());
+    showToast("Coach settings saved. Session links use them the next time they're opened.");
+  }
+
+  const groups = Array.from(new Set(COACH_SETTING_DEFS.map(d => d.group)));
+  const card = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18 } as const;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" as const }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px", color: C.text }}>Coach Lab</h2>
+          <div style={{ fontSize: 13, color: C.textMuted }}>
+            Try how the coach behaves. Saved settings apply to every session link in your clinic the next time it's opened.
+            {updatedAt && <> Last saved {new Date(updatedAt).toLocaleString("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.</>}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn onClick={() => setSettings(COACH_DEFAULTS)} disabled={loading}>Reset to defaults</Btn>
+          <Btn onClick={() => setSettings(saved)} disabled={!dirty}>Undo changes</Btn>
+          <Btn variant="primary" onClick={() => save(settings)} disabled={!dirty || saving || loading}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16, alignItems: "start" }}>
+        {/* Live preview */}
+        <div style={{ ...card, position: "sticky", top: 72, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.textDim, textTransform: "uppercase" as const }}>Live preview</div>
+          <div style={{ background: "#141A2E", borderRadius: 12, overflow: "hidden" }}>
+            <canvas ref={canvasRef} width={600} height={660} aria-label="The guide figure demonstrating with these settings" style={{ width: "100%", display: "block" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+            {([["Seated", true], ["Standing", false]] as const).map(([l, v]) => (
+              <Btn key={l} small variant={seated === v ? "primary" : "ghost"} onClick={() => setSeated(v)}>{l}</Btn>
+            ))}
+            {([["Right arm", "right"], ["Left arm", "left"]] as const).map(([l, v]) => (
+              <Btn key={l} small variant={side === v ? "primary" : "ghost"} onClick={() => setSide(v)}>{l}</Btn>
+            ))}
+            <Btn small variant={correcting ? "primary" : "ghost"} onClick={() => setCorrecting(c => !c)}>Show "in front of you"</Btn>
+          </div>
+          <label style={{ fontSize: 12, color: C.textMuted, display: "flex", flexDirection: "column", gap: 4 }}>
+            Target for the preview: {target}° (the patient sees "{targetPhrase("rightArmElevationDeg", target)}")
+            <input type="range" min={60} max={180} step={5} value={target} onChange={e => setTarget(Number(e.target.value))} />
+          </label>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.textDim, textTransform: "uppercase" as const, marginTop: 4 }}>Hear the voice</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+            {["Watch me first. Up to here. And slowly down. Your turn.", "A little higher.", "Hold it there… 3, 2, 1.", "That's your left arm. Rest it down and lift your right arm.", "I can't see you. Your session is paused."].map(line => (
+              <Btn key={line} small onClick={() => speak(line)}>▶ {line.length > 26 ? line.slice(0, 24) + "…" : line}</Btn>
+            ))}
+          </div>
+        </div>
+
+        {/* Settings */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {groups.map(g => (
+            <div key={g} style={card}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: C.text }}>{g}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {COACH_SETTING_DEFS.filter(d => d.group === g).map(d => {
+                  const v = settings[d.key];
+                  const changed = v !== COACH_DEFAULTS[d.key];
+                  return (
+                    <div key={d.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <label htmlFor={`cs-${d.key}`} style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                          {d.label}
+                          {changed && <span title="Changed from the default" style={{ marginLeft: 6, color: C.blue }}>●</span>}
+                        </label>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {d.kind === "number" && <span style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" as const }}>{v as number}{d.unit === "°" ? "°" : d.unit === "×" ? "×" : ` ${d.unit ?? ""}`}</span>}
+                          {changed && <button onClick={() => set(d.key, COACH_DEFAULTS[d.key] as never)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 11, cursor: "pointer", padding: 0 }}>default</button>}
+                        </div>
+                      </div>
+                      {d.kind === "boolean" ? (
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.textMuted, cursor: "pointer" }}>
+                          <input id={`cs-${d.key}`} type="checkbox" checked={v as boolean} onChange={e => set(d.key, e.target.checked as never)} />
+                          {(v as boolean) ? "On" : "Off"}
+                        </label>
+                      ) : (
+                        <input id={`cs-${d.key}`} type="range" min={d.min} max={d.max} step={d.step} value={v as number}
+                          onChange={e => set(d.key, Number(e.target.value) as never)} style={{ width: "100%" }} />
+                      )}
+                      <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.4 }}>{d.help}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Exercise Library Tab ─────────────────────────────────────────────────────
 
 function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boolean) => void; }) {
@@ -1536,7 +1728,7 @@ function ExerciseLibraryTab({ showToast }: { showToast: (msg: string, ok?: boole
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-type Tab = "library" | "patients" | "sessions";
+type Tab = "library" | "patients" | "sessions" | "coach";
 
 export default function AdminPage() {
   const supabase = getSupabaseClient();
@@ -1580,6 +1772,7 @@ export default function AdminPage() {
     { key: "library",  label: "Exercise Library", icon: "🏋️" },
     { key: "patients", label: "Patients",          icon: "👤" },
     { key: "sessions", label: "Protocols",         icon: "📋" },
+    { key: "coach",    label: "Coach Lab",         icon: "🧑‍⚕️" },
   ];
 
   const initials = physioName
@@ -1648,6 +1841,7 @@ export default function AdminPage() {
         {activeTab === "library"  && <ExerciseLibraryTab showToast={showToast} />}
         {activeTab === "patients" && <PatientsTab showToast={showToast} prescriptions={allPrescriptions} templates={allTemplates} onRefresh={loadShared} />}
         {activeTab === "sessions" && <SessionTemplatesTab showToast={showToast} />}
+        {activeTab === "coach"    && <CoachLabTab showToast={showToast} />}
       </div>
 
       {toast && <Toast msg={toast.msg} ok={toast.ok} />}

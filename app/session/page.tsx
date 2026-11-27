@@ -91,6 +91,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
       title,
       objective,
       patient_id,
+      clinic_id,
       status,
       progress,
       session_blocks (
@@ -151,6 +152,14 @@ export default async function SessionPage({ searchParams }: PageProps) {
         error={error?.message ?? 'Session not found. It may have been deleted.'}
       />
     );
+  }
+
+  // ── The clinic's coach settings (Coach Lab in /admin) ────────────────────
+  let coachSettings: unknown = null;
+  const clinicId = (data as { clinic_id?: string | null }).clinic_id ?? null;
+  if (clinicId) {
+    const { data: cs } = await supabase.from('coach_settings').select('settings').eq('clinic_id', clinicId).maybeSingle();
+    coachSettings = (cs as { settings?: unknown } | null)?.settings ?? null;
   }
 
   // ── Fetch patient record ─────────────────────────────────────────────────
@@ -270,6 +279,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
       previousSession={previousSession ?? undefined}
       savedStatus={(data as { status?: string }).status ?? null}
       savedProgress={((data as { progress?: SessionProgress | null }).progress) ?? null}
+      coachSettings={coachSettings}
     />
   );
 }

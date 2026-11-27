@@ -22,7 +22,7 @@
 // Tested by repCoach.test.ts.
 // ============================================================
 
-import { nextRest, restShareFor } from "@/lib/interpreter/restEstimate";
+import { nextRest, restShareFor, REST_TAU_MS } from "@/lib/interpreter/restEstimate";
 
 export type RepCoachInput = {
   nowMs: number;
@@ -51,7 +51,23 @@ export const WRONG_ARM_MIN_GAP_MS = 2000;
 // isolation check; its history explains the v0.6.0 and v0.6.1 failures).
 const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 4000 };
 
+/** Adjustable from the Coach Lab (lib/coach/coachSettings.ts); defaults = the constants above. */
+export type RepCoachOptions = { stallMs?: number; wrongArmRiseDeg?: number; wrongArmPersistMs?: number; restTauMs?: number };
+
 export class RepCoach {
+  private opt: Required<RepCoachOptions>;
+  constructor(o: RepCoachOptions = {}) {
+    this.opt = {
+      stallMs: o.stallMs ?? STALL_MS,
+      wrongArmRiseDeg: o.wrongArmRiseDeg ?? WRONG_ARM_RISE_DEG,
+      wrongArmPersistMs: o.wrongArmPersistMs ?? WRONG_ARM_PERSIST_MS,
+      restTauMs: o.restTauMs ?? REST_TAU_MS,
+    };
+  }
+  /** Change the adjustable values (keeps what the coach has learned). */
+  configure(o: RepCoachOptions): void {
+    this.opt = { ...this.opt, ...Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) } as Required<RepCoachOptions>;
+  }
   private phase = "";
   private phaseSince = 0;
   private best: { v: number; at: number } | null = null; // best angle this lift, and when
@@ -129,15 +145,15 @@ export class RepCoach {
     const oneArm = i.side === "right" || i.side === "left";
     const exerciseArmDown = i.metric === null || i.metric < (i.startThreshold ?? 40);
     if (oneArm && opp !== null) {
-      const lifted = this.oppRest !== null && opp > this.oppRest + WRONG_ARM_RISE_DEG;
+      const lifted = this.oppRest !== null && opp > this.oppRest + this.opt.wrongArmRiseDeg;
       // Learned slowly while waiting between reps (lib/interpreter/restEstimate.ts).
       if (this.oppRest === null) this.oppRest = opp;
-      else if (i.phase === "ready") this.oppRest = nextRest(this.oppRest, opp, restShareFor(dt));
+      else if (i.phase === "ready") this.oppRest = nextRest(this.oppRest, opp, restShareFor(dt, this.opt.restTauMs));
       this.wrongArmSince = lifted && exerciseArmDown ? (this.wrongArmSince ?? now) : null;
     } else {
       this.wrongArmSince = null;
     }
-    this.wrongArmNow = this.wrongArmSince !== null && now - this.wrongArmSince >= WRONG_ARM_PERSIST_MS;
+    this.wrongArmNow = this.wrongArmSince !== null && now - this.wrongArmSince >= this.opt.wrongArmPersistMs;
     if (!this.wrongArmNow) this.wrongArmEpisode = false;
     // Every new wrong lift is called out (at most every WRONG_ARM_MIN_GAP_MS),
     // and while the arm stays up the call repeats on the cooldown. (It used to
@@ -170,7 +186,7 @@ export class RepCoach {
     // Stalled on the way up.
     if (i.phase === "lifting" && i.metric !== null) {
       if (this.best === null || i.metric > this.best.v + STALL_PROGRESS_DEG) this.best = { v: i.metric, at: now };
-      const stalled = now - this.best.at >= STALL_MS && now - this.phaseSince >= STALL_MS;
+      const stalled = now - this.best.at >= this.opt.stallMs && now - this.phaseSince >= this.opt.stallMs;
       if (stalled && i.metric < i.target - NEAR_TARGET_DEG && this.can("higher", now)) {
         this.best = { v: i.metric, at: now }; // give them another moment
         return this.say("higher", now, "A little higher.");

@@ -208,6 +208,23 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   browser (all tests so far), not for a real patient. Move them behind a server route like `api/session/progress`.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
 
+## Coach Lab (v0.9.0, admin -> Coach Lab)
+
+- `lib/coach/coachSettings.ts`: every adjustable coach behaviour with its default (the tuned value), range, group and
+  plain explanation (guide orbit on/off, speed, nearest/furthest angle; sit/stand switch delay; voice speed; demo
+  narration; wrong-arm rise and delay; other-arm allowance (isolation); resting-place settle time; "a little higher"
+  delay; walk-away pause, countdown and close). `resolveCoachSettings` fills gaps and clamps, so saved values can
+  never break a session; `changedFromDefaults` is what gets saved; `orbitYaw` is the guide's turn.
+- Saved per clinic in `public.coach_settings` (migration `20261127000200_coach_settings.sql`; RLS: the clinic's
+  staff; `clinic_id` defaults to `my_clinic_id()`). The session page reads the row for the session's clinic with the
+  service role and passes it to SessionRunner (`coachSettings` -> `coach` / `coachRef`), which configures RepCoach
+  (`configure`), the isolation rest settle (`setRestSettleMs`), PostureLatch, `awayState` thresholds, the orbit, the
+  voice rate, narration on/off, and patches `maxOppositeArmElevationDeg` on the prescriptions.
+- The admin tab (`CoachLabTab` in app/admin/page.tsx): a live guide preview drawn by the session's own
+  `drawExampleCard` (seated/standing, arm, target with its plain words, "in front of you"), voice samples at the
+  chosen speed, the settings by group with "changed" dots and per-setting default, Save / Undo / Reset to defaults.
+  A new setting: add it to `CoachSettings`, `COACH_DEFAULTS` and `COACH_SETTING_DEFS`, then read it in the session.
+
 ## Pausing and resuming (v0.8.0, the owner's decisions)
 
 - Statuses: pending -> in_progress (on Begin) -> completed, or `paused` (ended early or walked away with exercises

@@ -1,4 +1,4 @@
-import { nextRest, REST_SHARE_PER_FRAME } from "@/lib/interpreter/restEstimate";
+import { nextRest, restSharePerFrame } from "@/lib/interpreter/restEstimate";
 import { updateRepState } from "@/lib/interpreter/repStateMachine";
 import type { MovementFeatures } from "@/lib/types/movement";
 import type { CoachingCode } from "@/lib/types/coaching";
@@ -296,7 +296,7 @@ function interpretRaiseHoldLower(
   const opp = oppositeArm(features, prescription);
   let oppositeRest = currentRepState.oppositeRest ?? null;
   if (oppositeRest === null) oppositeRest = opp;
-  else if (currentRepState.phase === "ready") oppositeRest = nextRest(oppositeRest, opp, REST_SHARE_PER_FRAME);
+  else if (currentRepState.phase === "ready") oppositeRest = nextRest(oppositeRest, opp, restSharePerFrame());
   const isolationOk = getIsolationOk(features, prescription, oppositeRest);
   const bilateralParticipationOk = getBilateralParticipationOk(
     features,

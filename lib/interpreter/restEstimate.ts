@@ -27,7 +27,15 @@ export function nextRest(rest: number | null, value: number | null | undefined, 
 }
 
 /** The share for a time step (ms), for callers that know the frame time. */
-export const restShareFor = (dtMs: number) => Math.max(0, Math.min(1, dtMs / REST_TAU_MS));
+export const restShareFor = (dtMs: number, tauMs: number = REST_TAU_MS) => Math.max(0, Math.min(1, dtMs / tauMs));
 
 /** The share per frame at about 30 frames a second (for per-frame callers). */
 export const REST_SHARE_PER_FRAME = restShareFor(1000 / 30);
+
+// The settle time per-frame callers use (the isolation check). The session
+// sets it from the Coach Lab settings (setRestSettleMs); tests use the default.
+let perFrameShare = REST_SHARE_PER_FRAME;
+export function setRestSettleMs(tauMs: number): void {
+  perFrameShare = restShareFor(1000 / 30, Math.max(100, tauMs));
+}
+export const restSharePerFrame = () => perFrameShare;

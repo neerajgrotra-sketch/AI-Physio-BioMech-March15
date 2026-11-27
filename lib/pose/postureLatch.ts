@@ -16,8 +16,10 @@ export class PostureLatch {
   private value: Posture;
   private otherSince: number | null = null;
 
-  constructor(initial: Posture = "seated") {
+  private switchMs: number;
+  constructor(initial: Posture = "seated", switchMs: number = SWITCH_AFTER_MS) {
     this.value = initial;
+    this.switchMs = switchMs;
   }
 
   reset(initial: Posture): void {
@@ -36,7 +38,7 @@ export class PostureLatch {
       return this.value;
     }
     this.otherSince ??= nowMs;
-    if (nowMs - this.otherSince >= SWITCH_AFTER_MS) {
+    if (nowMs - this.otherSince >= this.switchMs) {
       this.value = raw;
       this.otherSince = null;
     }
