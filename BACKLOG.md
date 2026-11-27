@@ -141,3 +141,31 @@ blind spots than a single depth camera.
 - Landing page claims ("94% session completion", "3x more data", "PIPEDA compliant") need backing data or softer
   wording before a public launch.
 - The patient session screen (`SessionRunner`) is still dark; restyle it with the portrait redesign.
+
+## Resume, end early and walking away (owner's note 2026-11-27, design to agree before building)
+
+Today a session is all or nothing: ending early writes results with "PARTIAL" and tries to set the status to
+`partially_completed`, which the database rejects (`sessions_status_check` allows pending, in_progress, completed,
+missed, cancelled), so the session stays `pending` by accident (run A-1A1194D5: right arm done, left not started).
+Nobody watches for the patient walking away.
+
+Proposed behaviour:
+- **Statuses:** pending -> in_progress (on Begin) -> completed, or `paused` (ended or timed out with exercises
+  left; resumable). A migration adds `paused` to the check. `missed` stays for sessions never started by their date.
+- **Progress saved as it happens:** after each exercise (and each rep), so a closed tab or a crash loses at most one
+  rep. Kept per assignment: which exercises are done, reps done in the current one.
+- **Resume:** opening a link with saved progress shows "Welcome back, you finished 1 of 2 exercises" with
+  **Continue** (at the next unfinished exercise; reps already done in it count) and **Start over**. Positioning
+  runs again first (the room may have changed).
+- **End session mid-way:** asks "Save and finish later" (status paused) or "Finish now" (completed, with the
+  missing reps recorded as not done).
+- **Walking away:** nobody seen for 10 s -> the session pauses itself ("I can't see you. Your session is paused.",
+  timer stopped, coaching quiet). After 60 s in all, a countdown card in the coach panel: "Ending in 30… Step back
+  in front of the camera to carry on", with a big **I'm back** button; seeing the patient again resumes at once.
+  At 0: progress saved, status paused, camera off, "Saved. Open your link again to carry on." Also pause when the
+  tab is hidden.
+- **Physio view:** the assignment card shows "Paused: 1 of 2 exercises, 27 Nov 2:05 p.m." and the reason (ended,
+  walked away, tab closed).
+
+Questions for the owner: does a paused session expire (e.g. start fresh after 24 h, or on the next prescribed
+day)? Should reps done in an unfinished exercise count on resume, or does that exercise start again?

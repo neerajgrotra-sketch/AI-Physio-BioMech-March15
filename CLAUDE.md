@@ -191,6 +191,8 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
 
 - `/api/coach` and `/api/tts` are open to anyone (patients use them without logging in), so they can run up the OpenAI
   bill. They need a check, such as a valid session id and a rate limit.
+- Ending a session early sets status `partially_completed`, which `sessions_status_check` rejects, so it stays
+  `pending`. Resume / walk-away design: BACKLOG.md "Resume, end early and walking away".
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
 
 ## Assignment IDs
