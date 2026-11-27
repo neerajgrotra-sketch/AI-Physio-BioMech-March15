@@ -14,7 +14,7 @@ import React, {
 
 import PositionGuideOverlay, { POSITION_ICON, POSITION_COLOR } from "@/components/session/PositionGuideOverlay";
 import { positioningSteps } from "@/lib/positioning/positioningSteps";
-import { drawArmLabel, drawReachGuide, reachLineY } from "@/lib/pose/reachGuide";
+import { drawArmLabel, drawReachGuide, reachLineY, handTargetPoint, handInTarget, drawHandTarget } from "@/lib/pose/reachGuide";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
@@ -2101,8 +2101,21 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         const target = ghostPrescriptionRef.current?.targetThreshold ?? 110;
         const metricNow = ghostActiveMetricRef.current;
         for (const side of config.sides) {
-          const y = reachLineY(frame, side, inferenceLoop.getArmLength(side), target);
-          if (y !== null) drawReachGuide(ctx, frame, side, y, metricNow !== null && metricNow >= target, target, W, H, now);
+          const reachedNow = metricNow !== null && metricNow >= target;
+          const c = coachRef.current;
+          if (c.showElbowMarker) {
+            const y = reachLineY(frame, side, inferenceLoop.getArmLength(side), target);
+            if (y !== null) drawReachGuide(ctx, frame, side, y, reachedNow, target, W, H, now, !c.showHandTarget);
+          }
+          // Where the hand should reach (testers' request): green once the arm's
+          // angle makes the target, or the hand is in the circle with a straight arm.
+          if (c.showHandTarget) {
+            const t = handTargetPoint(frame, side, inferenceLoop.getArmLength(side), target);
+            // Not green for a hand that got there with a bent elbow: that rep
+            // wouldn't count (the upper arm is still short).
+            const bentNow = inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] === true;
+            if (t) drawHandTarget(ctx, side, t, reachedNow || (!bentNow && handInTarget(frame, side, t)), W, H, now);
+          }
         }
         // The card leads like a physio: it demonstrates while the patient is
         // at rest (once, then again only after a long pause), and during a
