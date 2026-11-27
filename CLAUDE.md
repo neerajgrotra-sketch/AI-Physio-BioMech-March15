@@ -150,8 +150,8 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   right with a big rep count and one instruction band (the coaching line, or "Hold it there… n"; coloured by tone).
   On a screen taller than wide (`isPortrait`, a monitor turned upright) or a phone, the guide stacks above a
   full-width camera. Side by side the coach panel takes the camera panel's height (its content sits in an absolute box, scrolling if
-  needed); with the guide in its own panel the camera shows no instruction band and no score ring, only the rep
-  count, the elbow marker and the arm label: the guide's caption carries the instruction and hold count.
+  needed); with the guide in its own panel the camera shows no instruction band; it keeps the score ring
+  (percentage, top left: the owner uses it to see compliance), the rep count, the elbow marker and the arm label: the guide's caption carries the instruction and hold count.
   Patients never see degrees (`lib/coaching/plainHeight.ts`: "to shoulder height", "up to head height"; knees "until your
   leg is straight"); degrees stay in the panels underneath and the logs.
   Before Begin Session (`welcomeOnScreen`) the guide panel lists the plan (greeting, protocol,
