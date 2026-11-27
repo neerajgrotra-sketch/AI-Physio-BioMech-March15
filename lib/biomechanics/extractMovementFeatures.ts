@@ -135,12 +135,31 @@ function shoulderAbductionDeg(shoulder: P, wrist: P | null, elbow: P | null): nu
  * (foreshortened), so the thigh/shin length ratio tells it instead:
  * about 1 standing, well under 0.6 seated.
  */
+// Facing the camera, a seated thigh points at the lens and looks short next
+// to the torso; a standing thigh looks about as long as the torso. The knee
+// angle means nothing from the front (hip, knee and ankle line up when
+// seated, reading ~170°, "standing": the guide kept standing up mid-exercise
+// in the owner's runs), and the ankles are often out of frame.
+export const SEATED_THIGH_TORSO = 0.45;
+export const STANDING_THIGH_TORSO = 0.6;
+
 export function inferPosture(
   kneeAngles: Array<number | null>,
-  thighShinRatios: Array<number | null>
+  thighShinRatios: Array<number | null>,
+  front?: { facing: boolean; thighTorso: number | null }
 ): PostureType {
-  const knee = average(kneeAngles);
   const ratio = average(thighShinRatios);
+  if (front?.facing) {
+    const t = front.thighTorso;
+    if (t !== null) {
+      if (t < SEATED_THIGH_TORSO) return "seated";
+      if (t > STANDING_THIGH_TORSO && (ratio === null || ratio > 0.75)) return "standing";
+      return "unknown";
+    }
+    // No knees in frame: only the thigh/shin ratio can tell, and only "seated".
+    return ratio !== null && ratio < 0.55 ? "seated" : "unknown";
+  }
+  const knee = average(kneeAngles);
   if (knee === null && ratio === null) return "unknown";
 
   const seatedByKnee = knee !== null && knee < 120;
@@ -301,9 +320,20 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     return shin < 1e-3 ? null : dist(hip, knee) / shin;
   };
 
+  // Thigh length per torso length, from knees that are really in the picture
+  // (BlazePose guesses points beyond the frame's edge).
+  const inFrame = (p: P | null) => (p && p.y <= 0.97 ? p : null);
+  const thighTorso = (() => {
+    if (torsoLen === null || torsoLen < 1e-3) return null;
+    const th = [lHip && inFrame(lKn) ? dist(lHip, lKn!) : null, rHip && inFrame(rKn) ? dist(rHip, rKn!) : null];
+    const a = average(th);
+    return a === null ? null : round3(a / torsoLen);
+  })();
+  const facingFront = shoulderWidthRatio !== null && shoulderWidthRatio > 0.5;
   const posture = inferPosture(
     [kneeAngleLeft, kneeAngleRight],
-    [ratio(lHip, lKn, lAn), ratio(rHip, rKn, rAn)]
+    [ratio(lHip, inFrame(lKn), inFrame(lAn)), ratio(rHip, inFrame(rKn), inFrame(rAn))],
+    { facing: facingFront, thighTorso }
   );
 
   return {

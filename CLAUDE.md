@@ -76,6 +76,11 @@ replay too**, or the tests stop proving anything.
 
 Bilateral metrics are judged on min(left, right): both sides must make it.
 
+Posture (`inferPosture`): from the side, the knee angle. Facing the camera the knee angle is useless (a seated
+thigh points at the lens, so hip, knee and ankle line up and read ~170°, "standing"), so it uses the thigh's length
+per torso length from knees really inside the frame (y <= 0.97): under 0.45 seated, over 0.6 standing, else unknown.
+Points BlazePose guesses beyond the frame's edge are ignored.
+
 ### Exercise data notes
 
 - Prescriptions are built from `exercise_templates` rows by slug in `lib/sessions/buildSessionPrescription.ts`
@@ -123,9 +128,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   back to rest with them after the rep, and 1.5 s later shows the next one (one clock, `demoClock`, for the movement
   and the narration). Facing the camera, forward raises show the guide figure, "the physio" (`lib/pose/exampleCard.ts`):
   a small 3D figure drawn as a mirror image, centred in its card, seated or standing like the patient (steadied by
-  `lib/pose/postureLatch.ts`: it switches only after the other posture is seen for 2.5 s; it used to flip every frame), using the exercise's arm; seen side on at the start of a demonstration and turning to three-quarter
-  (55°; 35° made the arm look as if it crossed the chest) as it raises the arm, facing the patient (25°) to show "in
-  front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep
+  `lib/pose/postureLatch.ts`: read only between reps, it switches only after the other posture is seen for 6 s);
+  using the exercise's arm; seen side on at the start of a demonstration, then walking slowly round the patient
+  between three-quarter (62°) and nearly facing them (18°) every `GUIDE_ORBIT_S` (14 s, the testers' request),
+  facing the patient (25°) to show "in front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep
   mirrors the patient's own arm. `lib/coaching/demoNarrator.ts` narrates the demonstration in step with it ("Watch me
   first… up to here… and slowly down… your turn"; shorter on repeats). A short marker beside the raised arm marks
   where the ELBOW must reach, with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`), and
@@ -143,7 +149,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   otherwise the panel shows the exercise and its instruction, or the positioning message), the camera large on the
   right with a big rep count and one instruction band (the coaching line, or "Hold it there… n"; coloured by tone).
   On a screen taller than wide (`isPortrait`, a monitor turned upright) or a phone, the guide stacks above a
-  full-width camera. Before Begin Session (`welcomeOnScreen`) the guide panel lists the plan (greeting, protocol,
+  full-width camera. Side by side the coach panel takes the camera panel's height (its content sits in an absolute box, scrolling if
+  needed); with the guide in its own panel the camera shows no instruction band and no score ring, only the rep
+  count, the elbow marker and the arm label: the guide's caption carries the instruction and hold count.
+  Before Begin Session (`welcomeOnScreen`) the guide panel lists the plan (greeting, protocol,
   each exercise's reps, hold and target, the time) and the camera panel shows "Before you start" and a big Begin
   button, not "Camera is off". During the spoken greeting the coach panel greets (name, the greeting's words as a
   caption, `greetingCaption`) and the camera panel only says the camera is about to start; when placed, the coach

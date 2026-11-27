@@ -19,6 +19,9 @@ import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
 import { PostureLatch } from "@/lib/pose/postureLatch";
+// The guide figure walks round the patient over this many seconds (out to
+// three-quarter and back to nearly facing them).
+const GUIDE_ORBIT_S = 14;
 import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
 import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
@@ -608,6 +611,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
   // A screen taller than it is wide (a monitor turned upright, a tablet on a
   // stand): the guide goes above the camera so both use the full width.
   const [isPortrait, setIsPortrait] = useState(false);
+  const stacked = isMobile || isPortrait; // guide above the camera
   // Soft pause state — inference stops, camera stays on, timer freezes
   const [isPaused, setIsPaused] = useState(false);
   // End session asks: save and finish later, or finish now.
@@ -2100,18 +2104,26 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // patient (25°) to show "in front of you" when they go out to the side.
         const sinceReady = (now - ghostReadyStartRef.current) / 1000;
         const clockNow = infPhase === "ready" ? demoClock(repsDone === 0 ? sinceReady : sinceReady - BETWEEN_REPS_REST_S) : null;
+        // The rest of the time it walks slowly round the patient, from
+        // three-quarter (62°) to nearly facing them (18°) and back over
+        // GUIDE_ORBIT_S, like a physio showing the movement from different
+        // angles (the owner's testers' request); smoothed, so it never jumps.
+        const orbit = 40 + 22 * Math.sin((now / 1000) * (2 * Math.PI / GUIDE_ORBIT_S));
         const yawTarget = wrongPlaneNow ? 25
-          : clockNow ? 90 - 35 * Math.min(1, clockNow.t / 2)
-          : 55;
-        guideYawRef.current += (yawTarget - guideYawRef.current) * 0.08;
+          : clockNow && clockNow.t < 2 ? 90 - (90 - orbit) * (clockNow.t / 2)
+          : orbit;
+        guideYawRef.current += (yawTarget - guideYawRef.current) * 0.05;
         // Seated or standing like the patient (kept when the legs are hidden).
         // Steady, not per frame: the reading flickers when the legs are half
         // hidden (lib/pose/postureLatch.ts).
         const featsNow = inferenceLoop.getFeatures();
         postureLatchRef.current ??= new PostureLatch(ghostPrescriptionRef.current?.posture === "standing" ? "standing" : "seated");
-        const seatedNow = postureLatchRef.current.update(
-          featsNow?.isSeated ? "seated" : featsNow?.isStanding ? "standing" : "unknown", snapNow
-        ) === "seated";
+        // Only read between reps: mid-rep, a raised arm and a leaning trunk
+        // shift the hips, and nobody sits down or stands up during a raise.
+        const postureNow = infPhase === "ready"
+          ? (featsNow?.isSeated ? "seated" : featsNow?.isStanding ? "standing" : "unknown")
+          : "unknown";
+        const seatedNow = postureLatchRef.current.update(postureNow, snapNow) === "seated";
         const caption =
           wrongArm ? `Use your ${sideNow} arm`
           : wrongPlaneNow ? "Arm in front of you"
@@ -2151,7 +2163,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       });
 
       // ── 13. ROM score ring (top-left) ─────────────────────────────────────
-      {
+      // Not when the guide has its own panel: the camera stays clear (the
+      // owner: the hold was shown in three places).
+      if (!frontFlexion) {
         const romPct    = score;
         const romRadius = Math.min(W, H) * 0.13;
         const romStrokeW = romRadius * 0.14;
@@ -2542,6 +2556,12 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               </button>
             </div>
           )}
+          {/* Side by side, the panel takes the camera's height (its content sits
+              in a box that doesn't stretch the row, and scrolls if it must);
+              stacked, it flows. */}
+          <div style={stacked ? { display: "flex", flexDirection: "column", gap: 0 } : {
+            position: "absolute", inset: 12, display: "flex", flexDirection: "column", justifyContent: "center", overflowY: "auto",
+          }}>
           {/* Where the patient is in the protocol (any number of exercises). */}
           {sessionQueue.sessionStarted && fullQueue.length > 0 && (() => {
             const qi = Math.min(fullIndexOf(sessionQueue.queueIndex), fullQueue.length - 1);
@@ -2572,7 +2592,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             width={600} height={660}
             aria-label="Your guide showing the movement"
             style={{
-              width: "100%", height: isMobile || isPortrait ? "34vh" : "auto", maxHeight: isMobile || isPortrait ? "34vh" : "calc(100vh - 160px)",
+              width: "100%", height: stacked ? "34vh" : "auto", flex: stacked ? undefined : "1 1 0", minHeight: 0,
               objectFit: "contain", display: guideInPanel && exerciseOnScreen ? "block" : "none",
             }}
           />
@@ -2725,6 +2745,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               </div>
             </div>
           )}
+          </div>
         </section>
 
         {/* RIGHT: Framing Intelligence Bar + Camera */}
@@ -2902,7 +2923,9 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                     </span>
                   </div>
                 )}
-                {exerciseOnScreen && (() => {
+                {/* With the guide in its own panel, its caption carries the instruction
+                    and the hold count; the camera stays clear (the owner). */}
+                {exerciseOnScreen && !guideInPanel && (() => {
                   const holding = inferenceLoop.phase === "holding" && inferenceLoop.holdRemainingMs !== null;
                   const text = holding
                     ? `Hold it there… ${Math.max(1, Math.ceil(inferenceLoop.holdRemainingMs! / 1000))}`
