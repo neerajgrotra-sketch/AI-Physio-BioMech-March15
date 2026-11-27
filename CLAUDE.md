@@ -142,7 +142,11 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   each exercise's reps, hold and target, the time) and the camera panel shows "Before you start" and a big Begin
   button, not "Camera is off". During the spoken greeting the coach panel greets (name, the greeting's words as a
   caption, `greetingCaption`) and the camera panel only says the camera is about to start; when placed, the coach
-  panel says "Perfect…" and the camera panel shows a tick (one message, one place). Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
+  panel says "Perfect…" and the camera panel shows a tick (one message, one place). The header (v0.7.0) holds only
+  what the panels don't: logo, assignment and build (small), the AI status light (checked on load; green glow
+  connected, red blinking offline, click to re-check), voice on/off, Test sound, and once running the timer, Pause,
+  End session, Restart. The plan list scrolls for long protocols, and during a session the guide panel starts with
+  "EXERCISE i OF n", a segment bar and "Next: …". Live Coaching, progress, Camera Sees, session details and the logs sit underneath for now. Text there is sized
   to be read from 2-3 m. Parked details: BACKLOG.md "Session screen layout".
 - `lib/biomechanics/world3d.ts` reads the arm from BlazePose's keypoints3D (depth estimated from the webcam). Its plane
   and elbow angle drive the form checks; its elevation is only logged (`3d: elev plane elbow` on TRACE) until a check
