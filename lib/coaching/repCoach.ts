@@ -22,6 +22,8 @@
 // Tested by repCoach.test.ts.
 // ============================================================
 
+import { nextRest, restShareFor } from "@/lib/interpreter/restEstimate";
+
 export type RepCoachInput = {
   nowMs: number;
   phase: string;              // ready | lifting | top | holding | lowering | complete
@@ -45,14 +47,8 @@ export const AGAIN_AFTER_MS = 1500;    // after the rep, at rest this long -> "A
 export const WRONG_ARM_RISE_DEG = 30;  // the other arm this far above its rest = it's being lifted
 export const WRONG_ARM_PERSIST_MS = 400; // quicker than other form cues: it's an obvious mistake
 export const WRONG_ARM_MIN_GAP_MS = 2000;
-// Where the other arm rests is learned only from small, slow changes: it
-// follows the arm down at once, drifts up over a few seconds, and ignores
-// anything more than REST_TRACK_DEG above it. (It used to move 10% of the way
-// every frame, so a lift at normal speed dragged the "rest" up behind the arm
-// and it never got WRONG_ARM_RISE_DEG above it: the owner's v0.6.0 run lifted
-// the left arm to 116° three times with no call.)
-export const REST_TRACK_DEG = 10;
-export const REST_RISE_TAU_MS = 3000;
+// Where the other arm rests: lib/interpreter/restEstimate.ts (shared with the
+// isolation check; its history explains the v0.6.0 and v0.6.1 failures).
 const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 4000 };
 
 export class RepCoach {
@@ -134,13 +130,9 @@ export class RepCoach {
     const exerciseArmDown = i.metric === null || i.metric < (i.startThreshold ?? 40);
     if (oneArm && opp !== null) {
       const lifted = this.oppRest !== null && opp > this.oppRest + WRONG_ARM_RISE_DEG;
-      if (this.oppRest === null) {
-        this.oppRest = opp;
-      } else if (opp < this.oppRest) {
-        this.oppRest += (opp - this.oppRest) * Math.min(1, dt / 150); // lower: follow quickly (not a one-frame glitch)
-      } else if (i.phase === "ready" && opp - this.oppRest <= REST_TRACK_DEG) {
-        this.oppRest += (opp - this.oppRest) * Math.min(1, dt / REST_RISE_TAU_MS); // settling a little higher
-      }
+      // Learned slowly while waiting between reps (lib/interpreter/restEstimate.ts).
+      if (this.oppRest === null) this.oppRest = opp;
+      else if (i.phase === "ready") this.oppRest = nextRest(this.oppRest, opp, restShareFor(dt));
       this.wrongArmSince = lifted && exerciseArmDown ? (this.wrongArmSince ?? now) : null;
     } else {
       this.wrongArmSince = null;

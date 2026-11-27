@@ -166,3 +166,19 @@ describe("RepCoach: the wrong arm lifted at normal speed (owner's v0.6.0 run)", 
     expect(said.some((x) => x.includes("left arm"))).toBe(false);
   });
 });
+
+describe("RepCoach: a camera dip in the resting arm (owner's v0.8.0 run A-A4D8281D)", () => {
+  const right = { side: "right" as const, startThreshold: 75.5 };
+  it("the left arm read ~10° for a second, then ~27°; back at its usual 48° it is not 'your left arm'", () => {
+    const c = new RepCoach();
+    const said: string[] = [];
+    let t = 0;
+    const step = (opp: number) => { const out = c.update({ ...base, ...right, phase: "ready", metric: 50, oppositeMetric: opp, nowMs: t }); t += 33; if (out) said.push(out); };
+    for (let k = 0; k < 150; k++) step(45 + (k % 7) - 3);  // resting 42-48° for 5 s
+    for (let k = 0; k < 30; k++) step(10 + (k % 4));        // the glitch: ~10° for 1 s
+    for (let k = 0; k < 45; k++) step(27);                  // then ~27° for 1.5 s
+    for (let k = 0; k < 150; k++) step(48 + (k % 5));       // back to 48-52°
+    expect(said.some((x) => x.includes("left arm"))).toBe(false);
+    expect(c.wrongArmNow).toBe(false);
+  });
+});

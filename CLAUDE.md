@@ -134,9 +134,10 @@ Bilateral metrics are judged on min(left, right): both sides must make it.
   front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again". The wrong-arm
   call is a correction: it interrupts other speech, fires on every new wrong lift (at most every 2 s) and repeats while the
   arm stays up; and the guide doesn't re-demonstrate while the patient is moving (`lastActivityMs`). Where the other arm
-  rests is learned only from small, slow changes (it follows the arm down quickly, drifts up over seconds, ignores
-  anything 10° above it), in RepCoach and in the isolation check alike: a plain average chased a lifted arm, so
-  the wrong arm was never called (v0.6.0 run).
+  rests is one shared rule, `lib/interpreter/restEstimate.ts` (RepCoach and the isolation check): learned only
+  while waiting between reps, slowly (about 3 s) in BOTH directions, ignoring anything 10° above it. v0.6.0 chased a
+  lifted arm (wrong arm never called); v0.6.1 followed dips down quickly, so a camera glitch made the resting arm
+  look lifted and every hold failed isolation (v0.8.0 run A-A4D8281D).
 - Layout (`SessionRunner`, row 2, the 10-foot layout from the owner's mockup, v0.6.0): the guide in its own panel
   on the left (`guideCanvasRef`, `drawExampleCard({ full: true })`, shown for forward raises facing the camera;
   otherwise the panel shows the exercise and its instruction, or the positioning message), the camera large on the
