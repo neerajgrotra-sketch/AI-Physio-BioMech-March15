@@ -175,6 +175,8 @@ export type ExercisePrescription = {
   name: string;
   /** The clinical name (e.g. "Shoulder Flexion — Unilateral Right"); `name` is the patient's name for it. */
   clinicalName?: string;
+  /** This patient's tolerances for the exercise, set when assigned (lib/coach/patientTolerances.ts). */
+  tolerances?: Record<string, number> | null;
   category: ExerciseCategory;
   template: ExerciseTemplate;
   runtimeStatus: ExerciseRuntimeStatus;

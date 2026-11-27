@@ -14,6 +14,7 @@ import { versionLabel, APP_BUILT_AT } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
 import { sessionMinutes } from "@/lib/app/sessionDuration";
 import { COACH_DEFAULTS, COACH_SETTING_DEFS, resolveCoachSettings, changedFromDefaults, orbitYaw, type CoachSettings } from "@/lib/coach/coachSettings";
+import { PRESETS, TOLERANCE_DEFS, cleanTolerances, effectiveTolerances, presetOf, type PatientTolerances, type PresetName, type ToleranceKey } from "@/lib/coach/patientTolerances";
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { demoCycle, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
 import { liftCaption, targetPhrase } from "@/lib/coaching/plainHeight";
@@ -45,6 +46,7 @@ interface SessionTemplateExercise {
   sequence_order: number; default_reps: number | null; default_hold_ms: number | null;
   exercise_template?: {
     id: string; display_name: string; default_reps: number; default_hold_ms: number; exercise_type: string;
+    slug?: string;
     rom_start_degrees: number | null; rom_norm_degrees: number | null;
     rom_max_degrees: number | null; rom_acceptable_min: number | null;
   };
@@ -609,6 +611,19 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
   const [search, setSearch] = useState("");
   const [overrides, setOverrides] = useState<{ reps: number; hold_ms: number; note: string; rom_target: number | null; rom_encourage: number | null; }[]>([]);
   const [saving, setSaving] = useState(false);
+  // Per-patient tolerances for each exercise (lib/coach/patientTolerances.ts):
+  // only what the physio changes is saved; the rest comes from the clinic.
+  const [tols, setTols] = useState<PatientTolerances[]>([]);
+  const [clinic, setClinic] = useState<CoachSettings>(COACH_DEFAULTS);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.from("coach_settings").select("settings").maybeSingle();
+        if (data) setClinic(resolveCoachSettings((data as { settings: unknown }).settings));
+      } catch { /* clinic defaults stay the built-in ones */ }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredTemplates = templates.filter(t => {
     const matchSearch = search === "" || t.title.toLowerCase().includes(search.toLowerCase());
@@ -625,6 +640,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
       rom_target: ex.exercise_template?.rom_acceptable_min ?? null,
       rom_encourage: null,
     })));
+    setTols(t.exercises.map(() => ({})));
     setStep("override");
   };
 
@@ -638,7 +654,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
       const { data: block, error: bErr } = await supabase.from("session_blocks").insert({ session_id: session.id, protocol_id: selectedTemplate.id, sequence_order: 0, rest_before_ms: 0 }).select().single();
       if (bErr) throw bErr;
       const { error: eErr } = await supabase.from("session_block_exercises").insert(
-        selectedTemplate.exercises.map((ex, i) => ({ session_block_id: block.id, exercise_template_id: ex.exercise_template_id, sequence_order: i, reps_override: overrides[i]?.reps ?? null, hold_ms_override: overrides[i]?.hold_ms ?? null, coaching_notes: overrides[i]?.note || null, rom_target_degrees: overrides[i]?.rom_target ?? null, rom_encourage_degrees: overrides[i]?.rom_encourage ?? null }))
+        selectedTemplate.exercises.map((ex, i) => ({ session_block_id: block.id, exercise_template_id: ex.exercise_template_id, sequence_order: i, reps_override: overrides[i]?.reps ?? null, hold_ms_override: overrides[i]?.hold_ms ?? null, coaching_notes: overrides[i]?.note || null, rom_target_degrees: overrides[i]?.rom_target ?? null, rom_encourage_degrees: overrides[i]?.rom_encourage ?? null, tolerances: Object.keys(cleanTolerances(tols[i])).length ? cleanTolerances(tols[i]) : null }))
       );
       if (eErr) throw eErr;
       onAssign();
@@ -688,7 +704,7 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
         <button onClick={() => setStep("pick")} style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 13, padding: 0 }}>← Back</button>
         <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{selectedTemplate?.title}</div>
       </div>
-      <div style={{ fontSize: 12, color: C.textMuted }}>Adjust reps, hold duration, and ROM targets per exercise for {patient.full_name}.</div>
+      <div style={{ fontSize: 12, color: C.textMuted }}>Adjust reps, hold duration, ROM targets and how forgiving the coach is, per exercise, for {patient.full_name}.</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 480, overflowY: "auto" }}>
         {selectedTemplate?.exercises.sort((a, b) => a.sequence_order - b.sequence_order).map((ex, i) => {
           const romStart = ex.exercise_template?.rom_start_degrees ?? 0;
@@ -740,6 +756,51 @@ function AssignSessionPanel({ patient, templates, onAssign, onCancel }: { patien
                   </div>
                 </div>
               )}
+              {/* How forgiving the coach is for this patient (per exercise). */}
+              {(() => {
+                const slug = ex.exercise_template?.slug ?? "";
+                const flexion = slug.startsWith("shoulder_flexion");
+                const oneArm = /_(right|left)$/.test(slug) && (slug.startsWith("shoulder_flexion") || slug.startsWith("shoulder_abduction"));
+                const shown = TOLERANCE_DEFS.filter(d => d.key === "holdSlipSeconds" || (d.key === "sidewaysAllowanceDeg" && flexion) || (d.key === "otherArmAllowanceDeg" && oneArm));
+                const mine = tols[i] ?? {};
+                const eff = effectiveTolerances(mine, clinic);
+                const preset = presetOf(mine);
+                const setOne = (k: ToleranceKey, v: number | undefined) => setTols(prev => prev.map((t, j) => { if (j !== i) return t; const n = { ...t }; if (v === undefined) delete n[k]; else n[k] = v; return n; }));
+                return (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" as const, marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, color: C.textDim, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>How forgiving</span>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {(Object.keys(PRESETS) as PresetName[]).map(name => (
+                          <button key={name} title={PRESETS[name].help} onClick={() => setTols(prev => prev.map((t, j) => j === i ? { ...PRESETS[name].values } : t))}
+                            style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, border: `1px solid ${preset === name ? C.blue : C.border}`, background: preset === name ? C.blueDim : C.surface, color: preset === name ? C.blue : C.textMuted }}>
+                            {PRESETS[name].label}
+                          </button>
+                        ))}
+                        {preset === "custom" && <span style={{ fontSize: 11, padding: "3px 8px", color: C.orange, fontWeight: 600 }}>Custom</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {shown.map(d => {
+                        const k = d.key as ToleranceKey;
+                        const own = mine[k] !== undefined;
+                        return (
+                          <label key={k} style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 12, color: C.textMuted }}>
+                            <span style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <span>{d.label}</span>
+                              <span style={{ color: own ? C.blue : C.textDim, fontWeight: 700 }}>
+                                {eff[k]}{d.unit === "°" ? "°" : ` ${d.unit ?? ""}`}{own ? "" : " (clinic)"}
+                                {own && <button onClick={(e) => { e.preventDefault(); setOne(k, undefined); }} style={{ marginLeft: 6, background: "none", border: "none", color: C.textDim, cursor: "pointer", fontSize: 11, padding: 0 }}>reset</button>}
+                              </span>
+                            </span>
+                            <input type="range" min={d.min} max={d.max} step={d.step} value={eff[k]} onChange={e => setOne(k, Number(e.target.value))} style={{ width: "100%", accentColor: C.blue, cursor: "pointer" }} />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -1354,6 +1415,7 @@ function CoachLabTab({ showToast }: { showToast: (msg: string, ok?: boolean) => 
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px", color: C.text }}>Coach Lab</h2>
           <div style={{ fontSize: 13, color: C.textMuted }}>
             Try how the coach behaves. Saved settings apply to every session link in your clinic the next time it's opened.
+            Settings marked "clinic default" can be changed for each patient when you assign a protocol.
             {updatedAt && <> Last saved {new Date(updatedAt).toLocaleString("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.</>}
           </div>
         </div>
@@ -1752,7 +1814,7 @@ export default function AdminPage() {
   const loadShared = useCallback(async () => {
     const [{ data: sess }, { data: tmpl }] = await Promise.all([
       supabase.from("sessions").select(`*, session_blocks(sequence_order, session_block_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))), prescription_exercises(sequence_order, reps_override, hold_ms_override, exercise_templates(display_name, default_reps, default_hold_ms))`).order("created_at", { ascending: false }),
-      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, display_name, default_reps, default_hold_ms, rom_start_degrees, rom_norm_degrees, rom_max_degrees, rom_acceptable_min))").order("title"),
+      supabase.from("protocols").select("*, protocol_exercises(*, exercise_templates(id, slug, display_name, default_reps, default_hold_ms, rom_start_degrees, rom_norm_degrees, rom_max_degrees, rom_acceptable_min))").order("title"),
     ]);
     if (sess) setAllPrescriptions(sess.map((s: Record<string, unknown>) => {
       const blocks = (s.session_blocks as Record<string, unknown>[]) ?? [];

@@ -233,6 +233,18 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   chosen speed, the settings by group with "changed" dots and per-setting default, Save / Undo / Reset to defaults.
   A new setting: add it to `CoachSettings`, `COACH_DEFAULTS` and `COACH_SETTING_DEFS`, then read it in the session.
 
+## Per-patient tolerances (v0.10.0, the owner's decision)
+
+- Clinical tolerances are set per patient, per exercise, when a protocol is assigned (admin, patient -> Assign
+  Protocol, "How forgiving"): how far the arm may drift out to the side and still hold (`sidewaysAllowanceDeg`, forward
+  raises), how long a slip in the hold is ignored (`holdSlipSeconds`), how far the other arm may move
+  (`otherArmAllowanceDeg`, one-arm raises). Presets Standard (the clinic's values) / Gentle / Strict, or sliders.
+- `lib/coach/patientTolerances.ts`: `PRESETS`, `cleanTolerances`, `effectiveTolerances` (patient's value, else the
+  clinic's Coach Lab default, else built-in), `presetOf`. Saved on `session_block_exercises.tolerances` (only what the
+  physio changed; migration `20261127000300_exercise_tolerances.sql`), read by app/session/page.tsx onto
+  `ExercisePrescription.tolerances`; SessionRunner applies them when each exercise starts (`setMaxPlaneDeg`,
+  `setHoldSlipMs`) and patches `maxOppositeArmElevationDeg`. The Coach Lab keeps these three as clinic defaults.
+
 ## Pausing and resuming (v0.8.0, the owner's decisions)
 
 - Statuses: pending -> in_progress (on Begin) -> completed, or `paused` (ended early or walked away with exercises

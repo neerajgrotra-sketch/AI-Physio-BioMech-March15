@@ -28,6 +28,7 @@ import { exerciseSeconds } from "@/lib/app/sessionDuration";
 import { liftCaption, targetPhrase } from "@/lib/coaching/plainHeight";
 import { resumePlan, awayState, type AwayState, type SessionProgress } from "@/lib/session/resume";
 import { resolveCoachSettings, orbitYaw } from "@/lib/coach/coachSettings";
+import { effectiveTolerances } from "@/lib/coach/patientTolerances";
 import { setRestSettleMs } from "@/lib/interpreter/restEstimate";
 import CameraViewport, {
   type CameraViewportHandle
@@ -567,8 +568,6 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
       restTauMs: coach.restSettleSeconds * 1000,
     });
     setRestSettleMs(coach.restSettleSeconds * 1000);
-    setMaxPlaneDeg(coach.sidewaysAllowanceDeg);
-    setHoldSlipMs(coach.holdSlipSeconds * 1000);
   }, [coach]);
   const narratorRef = useRef(new DemoNarrator()); // the guide talks while demonstrating
   // Where this patient's hand is when a rep reaches the target (wrist offset
@@ -769,7 +768,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
       displayName: p.name,
       // The Coach Lab's "other arm may move by" replaces the built-in limit.
       prescription: p.qualityLimits?.maxOppositeArmElevationDeg !== undefined
-        ? { ...p, qualityLimits: { ...p.qualityLimits, maxOppositeArmElevationDeg: resolveCoachSettings(savedCoach).otherArmAllowanceDeg } }
+        ? { ...p, qualityLimits: { ...p.qualityLimits, maxOppositeArmElevationDeg: effectiveTolerances(p.tolerances, resolveCoachSettings(savedCoach)).otherArmAllowanceDeg } }
         : p,
       seconds: exerciseSeconds({ reps: p.repTarget, holdMs: p.hold?.durationMs ?? 2000 }),
       sessionName: sessionTitle ?? "Session",
@@ -2382,6 +2381,13 @@ Keep it to 2–3 natural spoken sentences. No lists.`
   const welcomeOnScreen = !sessionQueue.sessionStarted && combinedQueue.length > 0;
   const canBegin = combinedQueue.length > 0 && inferenceLoop.engineStatus !== "running" && inferenceLoop.engineStatus !== "loading";
   const currentPrescription = sessionQueue.currentPrescription;
+  // This exercise's tolerances: the patient's (set when assigned), else the
+  // clinic's Coach Lab defaults. Applied whenever the exercise changes.
+  useEffect(() => {
+    const t = effectiveTolerances(currentPrescription?.tolerances, coach);
+    setMaxPlaneDeg(t.sidewaysAllowanceDeg);
+    setHoldSlipMs(t.holdSlipSeconds * 1000);
+  }, [currentPrescription?.id, currentPrescription?.tolerances, coach]);
   const currentQueueItem = sessionQueue.currentQueueItem;
   const { framingPanelState } = framingIntelligence;
   const { panelState: coachingPanelState } = coachingBrain;
