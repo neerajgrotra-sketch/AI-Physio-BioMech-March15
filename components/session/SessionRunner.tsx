@@ -503,6 +503,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
   // guide figure is drawn here for forward raises facing the camera.
   const guideCanvasRef  = useRef<HTMLCanvasElement | null>(null);
   const [guideInPanel, setGuideInPanel] = useState(false);
+  // The words of the spoken greeting, shown in the coach panel while it plays.
+  const [greetingCaption, setGreetingCaption] = useState<string | null>(null);
   const guideInPanelRef = useRef(false);
   // Refs hold latest values for rAF ghost loop - avoids stale closures
   const ghostFrameRef   = useRef<import("@/lib/types/pose").PoseFrame | null>(null);
@@ -1430,6 +1432,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     }
 
     writeDebugLog("info", "GREETING", "Speaking greeting", greetingText.slice(0, 100));
+    setGreetingCaption(greetingText.replace(/\s+/g, " ").trim());
 
     // Speak the greeting, then start camera for framing phase
     if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -2378,6 +2381,39 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               already right, and what comes next. The camera keeps only the
               outline and an arrow (the owner's request: the same words were
               shown in three places). */}
+          {/* The coach greets the patient (it is the coach speaking, so it is
+              shown here, not on the camera), then confirms they are placed. */}
+          {!welcomeOnScreen && sessionPhase === "greeting" && (
+            <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: isMobile ? 12 : 20 }}>
+              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF", display: "flex", alignItems: "center", gap: 12 }}>
+                <span aria-hidden="true" style={{ display: "flex", alignItems: "center", gap: 3, height: 20 }}>
+                  {[0.4, 0.8, 1.0, 0.6, 0.9].map((h, i) => (
+                    <span key={i} style={{ width: 4, borderRadius: 2, background: "#9DB8FF", height: `${h * 100}%`, animation: "wave 1.2s ease-in-out infinite", animationDelay: `${i * 0.15}s` }} />
+                  ))}
+                </span>
+                YOUR COACH
+              </div>
+              <div style={{ fontSize: isMobile ? 26 : "clamp(30px, 2.8vw, 44px)", fontWeight: 800, lineHeight: 1.15, color: "white" }}>
+                {patientName ? `Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${patientName.split(" ")[0]}` : "Welcome"}
+              </div>
+              <div aria-live="polite" style={{ fontSize: isMobile ? 18 : "clamp(20px, 1.7vw, 26px)", color: "#C9D2EE", lineHeight: 1.4 }}>
+                {greetingCaption ?? "One moment…"}
+              </div>
+              {previousSession && (
+                <div style={{ fontSize: isMobile ? 14 : 17, color: "#AEB8D6" }}>
+                  Last time: {previousSession.sessionTitle}
+                </div>
+              )}
+            </div>
+          )}
+          {!welcomeOnScreen && sessionPhase === "confirmed" && (
+            <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: 20 }}>
+              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>YOUR COACH</div>
+              <div style={{ background: "#3FB950", color: "#08240F", borderRadius: 20, padding: isMobile ? "14px 16px" : "22px 24px", fontSize: isMobile ? 22 : "clamp(26px, 2.4vw, 38px)", fontWeight: 800, lineHeight: 1.15 }}>
+                Perfect, I can see you clearly. Let's begin.
+              </div>
+            </div>
+          )}
           {!welcomeOnScreen && positioningOnScreen && framingIntelligence.positionGuide && (() => {
             const g = framingIntelligence.positionGuide;
             const col = POSITION_COLOR[g.state];
@@ -2439,7 +2475,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               </div>
             );
           })()}
-          {!welcomeOnScreen && !positioningOnScreen && !(guideInPanel && exerciseOnScreen) && (
+          {!welcomeOnScreen && !positioningOnScreen && sessionPhase !== "greeting" && sessionPhase !== "confirmed" && !(guideInPanel && exerciseOnScreen) && (
             <div style={{ padding: isMobile ? 8 : 16, display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, letterSpacing: "0.08em", color: "#9DB8FF" }}>
                 {positioningOnScreen ? "LET'S GET YOU IN PLACE" : "YOUR EXERCISE"}
@@ -2461,7 +2497,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           <div style={{
             // Hidden on the welcome screen, while positioning (the coach panel
             // says it) and during the exercise (the instruction band does).
-            display: welcomeOnScreen || positioningOnScreen || exerciseOnScreen ? "none" : "flex",
+            display: welcomeOnScreen || positioningOnScreen || exerciseOnScreen || sessionPhase === "greeting" || sessionPhase === "confirmed" ? "none" : "flex",
             marginBottom: 8,
             padding: "9px 14px",
             borderRadius: 9,
@@ -2519,57 +2555,23 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           {/* ── CAMERA CARD ── */}
           <div style={{ background: "#1a2040", borderRadius: 12, padding: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
 
-            {/* GREETING PHASE OVERLAY — shown while greeting is speaking, camera off */}
-            {(sessionPhase === "greeting") && (
+            {/* GREETING / CONFIRMED: the coach panel does the talking; the
+                camera panel only says what is happening to the camera. */}
+            {(sessionPhase === "greeting" || sessionPhase === "confirmed") && (
               <div style={{
-                minHeight: 280, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", gap: 16,
-                padding: 24,
+                minHeight: isMobile ? 200 : 360, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 14, padding: 24, textAlign: "center",
               }}>
-                {/* Animated waveform */}
-                <div style={{ display: "flex", alignItems: "center", gap: 4, height: 40 }}>
-                  {[0.4, 0.7, 1.0, 0.7, 0.4, 0.9, 0.5].map((h, i) => (
-                    <div key={i} style={{
-                      width: 4, borderRadius: 2,
-                      background: "linear-gradient(180deg, #6C63FF, #00C2C7)",
-                      height: `${h * 100}%`,
-                      animation: `wave 1.2s ease-in-out infinite`,
-                      animationDelay: `${i * 0.15}s`,
-                    }} />
-                  ))}
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#e6edf3", marginBottom: 6 }}>
-                    {patientName ? `Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${patientName.split(" ")[0]}` : "Welcome"}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#7a88a8" }}>
-                    Preparing your session…
-                  </div>
-                </div>
-                {previousSession && (
-                  <div style={{
-                    background: "rgba(108,99,255,0.08)", border: "1px solid rgba(108,99,255,0.2)",
-                    borderRadius: 8, padding: "8px 14px", fontSize: 11, color: "#a78bfa",
-                    maxWidth: 280, textAlign: "center",
-                  }}>
-                    Last session: {previousSession.sessionTitle} · Score {previousSession.mobilityScore}/100
-                  </div>
+                {sessionPhase === "confirmed" ? (
+                  <div aria-hidden="true" style={{ width: 96, height: 96, borderRadius: 48, background: "#3FB950", color: "#08240F", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 56, fontWeight: 900 }}>✓</div>
+                ) : (
+                  <>
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#6B7598" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" />
+                    </svg>
+                    <div style={{ fontSize: isMobile ? 17 : 22, color: "#AEB8D6" }}>Your camera turns on in a moment.</div>
+                  </>
                 )}
-              </div>
-            )}
-
-            {/* FRAMING CONFIRMED OVERLAY */}
-            {sessionPhase === "confirmed" && (
-              <div style={{
-                minHeight: 280, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", gap: 12,
-                padding: 24,
-              }}>
-                <div style={{ fontSize: 32 }}>✅</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#9be7b0" }}>
-                  Perfect — I can see you clearly
-                </div>
-                <div style={{ fontSize: 12, color: "#7a88a8" }}>Starting your session…</div>
               </div>
             )}
 
