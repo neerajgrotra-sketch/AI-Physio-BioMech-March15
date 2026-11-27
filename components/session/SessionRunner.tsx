@@ -23,6 +23,7 @@ import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAn
 import { MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
+import { exerciseSeconds } from "@/lib/app/sessionDuration";
 import CameraViewport, {
   type CameraViewportHandle
 } from "@/components/camera/CameraViewport";
@@ -724,7 +725,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
       id: p.id,
       displayName: p.name,
       prescription: p,
-      seconds: p.repTarget * ((p.hold?.durationMs ?? 2000) / 1000 + 5),
+      seconds: exerciseSeconds({ reps: p.repTarget, holdMs: p.hold?.durationMs ?? 2000 }),
       sessionName: sessionTitle ?? "Session",
     }));
   }
