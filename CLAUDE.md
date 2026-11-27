@@ -134,7 +134,11 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   facing the patient (25°) to show "in front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep
   mirrors the patient's own arm. `lib/coaching/demoNarrator.ts` narrates the demonstration in step with it ("Watch me
   first… up to here… and slowly down… your turn"; shorter on repeats). A short marker beside the raised arm marks
-  where the ELBOW must reach, with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`), and
+  where the ELBOW must reach, with a dot on the patient's elbow, never across the face (`lib/pose/reachGuide.ts`); a
+  glowing circle shows where the HAND reaches with a straight arm at the target (`handTargetPoint`: up from the
+  shoulder by 1.9 upper arms x cos(target); testers' request, v0.9.1), green with a tick once the angle makes it or the
+  hand is in it with a straight elbow; the elbow bar loses its label while the circle shows (Coach Lab: "On the
+  camera" switches for both); and
   `drawArmLabel` labels the arm to use ("RIGHT ARM") before the first rep and, red, on the wrong arm.
   `lib/coaching/repCoach.ts` coaches through the rep: "A little higher", "Keep your arm straight", "Bring your arm in
   front of you" / "That's better", "That's your left arm. Rest it down and lift your right arm.", "And again". The wrong-arm

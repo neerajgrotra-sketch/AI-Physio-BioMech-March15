@@ -33,6 +33,93 @@ export function reachLineY(
   return sh.y + upperArmTorsos * torso * Math.cos((targetDeg * Math.PI) / 180);
 }
 
+// A straight arm's hand is (1 + FOREARM) upper-arm lengths from the shoulder
+// (lib/biomechanics/flexionView.ts uses the same proportion).
+export const ARM_TO_HAND = 1.9;
+
+/**
+ * Where the HAND should be, for a straight arm at the target angle, facing the
+ * camera (testers asked for a hand target): straight up from the shoulder's
+ * position in the picture by (1 + forearm) upper-arm lengths x cos(target).
+ * Frame fractions (x 0..1 unmirrored, y 0 top), or null if not known.
+ */
+export function handTargetPoint(
+  frame: PoseFrame,
+  side: "right" | "left",
+  upperArmTorsos: number | null,
+  targetDeg: number
+): { x: number; y: number; radius: number } | null {
+  if (!upperArmTorsos) return null;
+  const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
+  const sh = lm[`${side}_shoulder`];
+  const torso = torsoLength(frame);
+  if (!sh || (sh.score ?? 1) < 0.35 || torso === null) return null;
+  const reach = upperArmTorsos * ARM_TO_HAND * torso;
+  return {
+    x: sh.x,
+    y: sh.y + reach * Math.cos((targetDeg * Math.PI) / 180),
+    radius: Math.max(0.035, torso * 0.16), // generous: the hand only needs to get there
+  };
+}
+
+/** Whether the patient's hand is inside the target circle. */
+export function handInTarget(frame: PoseFrame, side: "right" | "left", t: { x: number; y: number; radius: number }): boolean {
+  const lm = frame.landmarks as Record<string, { x: number; y: number; score?: number } | undefined>;
+  const wr = lm[`${side}_wrist`];
+  if (!wr || (wr.score ?? 1) < 0.35) return false;
+  const A = frame.sourceWidth && frame.sourceHeight ? frame.sourceWidth / frame.sourceHeight : 16 / 9;
+  return Math.hypot((wr.x - t.x) * A, wr.y - t.y) <= t.radius * 1.3;
+}
+
+/**
+ * Draws the hand target: a pulsing amber circle where the hand should reach,
+ * with "Hand here" on its outer side (away from the face); green with a tick
+ * once the hand (or the arm's angle) gets there.
+ */
+export function drawHandTarget(
+  ctx: CanvasRenderingContext2D,
+  side: "right" | "left",
+  t: { x: number; y: number; radius: number },
+  reached: boolean,
+  W: number,
+  H: number,
+  nowMs: number
+): void {
+  const out = side === "right" ? 1 : -1;
+  const r = Math.max(28, t.radius * H);
+  const cx = Math.max(r + 4, Math.min(W - r - 4, (1 - t.x) * W));
+  const cy = Math.max(r + 4, Math.min(H - r - 4, t.y * H));
+  const pulse = reached ? 1 : 0.6 + 0.4 * Math.sin(nowMs / 240);
+  const col = reached ? "63,185,80" : "255,190,60";
+  ctx.save();
+  ctx.fillStyle = `rgba(${col},${0.18 * pulse})`;
+  ctx.beginPath(); ctx.arc(cx, cy, r * (1 + 0.12 * (1 - pulse)), 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = `rgba(${col},0.95)`;
+  ctx.lineWidth = 4;
+  ctx.setLineDash(reached ? [] : [9, 6]);
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+  if (reached) {
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(cx - r * 0.35, cy); ctx.lineTo(cx - r * 0.08, cy + r * 0.28); ctx.lineTo(cx + r * 0.4, cy - r * 0.3); ctx.stroke();
+  }
+  const label = reached ? "That's it!" : "Hand here";
+  ctx.font = "700 16px Inter, system-ui, sans-serif";
+  const tw = ctx.measureText(label).width;
+  let lx = out > 0 ? cx + r + 10 : cx - r - 10 - tw;
+  if (lx < 8 || lx + tw > W - 8) lx = Math.max(8, Math.min(W - tw - 8, cx - tw / 2)); // no room beside: centre it
+  const ly = lx === cx - tw / 2 ? cy + r + 22 : cy + 6;
+  ctx.fillStyle = "rgba(10,14,30,0.72)";
+  ctx.beginPath();
+  (ctx as any).roundRect ? (ctx as any).roundRect(lx - 7, ly - 18, tw + 14, 24, 7) : ctx.rect(lx - 7, ly - 18, tw + 14, 24);
+  ctx.fill();
+  ctx.fillStyle = `rgba(${col},1)`;
+  ctx.textAlign = "left";
+  ctx.fillText(label, lx, ly);
+  ctx.restore();
+}
+
 // Shoulder width is about 0.8 of the torso length facing the camera.
 const SW_PER_TORSO = 0.8;
 
@@ -62,7 +149,8 @@ export function drawReachGuide(
   targetDeg: number,
   W: number,
   H: number,
-  nowMs: number
+  nowMs: number,
+  withLabel = true
 ): void {
   const lm = frame.landmarks as Record<string, { x: number; y: number } | undefined>;
   const sh = lm[`${side}_shoulder`];
@@ -85,21 +173,24 @@ export function drawReachGuide(
   ctx.setLineDash(reached ? [] : [10, 7]);
   ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
   ctx.setLineDash([]);
-  // Label just above the bar, anchored at its outer end.
-  const label = reached ? "✓ Target" : "Elbow here";
+  // Label just above the bar, anchored at its outer end (left off when the
+  // hand target is shown: one thing to aim for).
+  const label = !withLabel ? "" : reached ? "✓ Target" : "Elbow here";
   ctx.font = "700 16px Inter, system-ui, sans-serif";
-  const tw = ctx.measureText(label).width;
+  const tw = label ? ctx.measureText(label).width : 0;
   // Starts at the bar's inner end and runs OUTWARD, away from the face (it
   // used to be anchored at the outer end and run inward, across the face);
   // it only slides back if it would run off the frame.
   const lx = out > 0 ? Math.min(x1, W - tw - 8) : Math.max(x1 - tw, 8);
-  ctx.fillStyle = "rgba(10,14,30,0.72)";
-  ctx.beginPath();
-  (ctx as any).roundRect ? (ctx as any).roundRect(lx - 7, y - 30, tw + 14, 24, 7) : ctx.rect(lx - 7, y - 30, tw + 14, 24);
-  ctx.fill();
-  ctx.fillStyle = `rgba(${col},1)`;
-  ctx.textAlign = "left";
-  ctx.fillText(label, lx, y - 12);
+  if (label) {
+    ctx.fillStyle = "rgba(10,14,30,0.72)";
+    ctx.beginPath();
+    (ctx as any).roundRect ? (ctx as any).roundRect(lx - 7, y - 30, tw + 14, 24, 7) : ctx.rect(lx - 7, y - 30, tw + 14, 24);
+    ctx.fill();
+    ctx.fillStyle = `rgba(${col},1)`;
+    ctx.textAlign = "left";
+    ctx.fillText(label, lx, y - 12);
+  }
   // A dot on the patient's own elbow, so they can see it travel to the line.
   const el = lm[`${side}_elbow`];
   if (el) {

@@ -17,6 +17,9 @@ export type CoachSettings = {
   guideOrbitNearDeg: number;
   guideOrbitFarDeg: number;
   postureSwitchSeconds: number;
+  // On the camera
+  showHandTarget: boolean;
+  showElbowMarker: boolean;
   // Voice
   voiceRate: number;
   demoNarrationOn: boolean;
@@ -35,7 +38,7 @@ export type CoachSettings = {
 
 export type SettingDef = {
   key: keyof CoachSettings;
-  group: "Guide figure" | "Voice" | "Other arm" | "Coaching cues" | "Walking away";
+  group: "Guide figure" | "On the camera" | "Voice" | "Other arm" | "Coaching cues" | "Walking away";
   label: string;
   help: string;
   kind: "number" | "boolean";
@@ -51,6 +54,8 @@ export const COACH_DEFAULTS: CoachSettings = {
   guideOrbitNearDeg: 18,
   guideOrbitFarDeg: 62,
   postureSwitchSeconds: 6,
+  showHandTarget: true,
+  showElbowMarker: true,
   voiceRate: 0.95,
   demoNarrationOn: true,
   wrongArmRiseDeg: 30,
@@ -74,6 +79,10 @@ export const COACH_SETTING_DEFS: SettingDef[] = [
     help: "90 is fully side on (best for seeing how high the arm goes)." },
   { key: "postureSwitchSeconds", group: "Guide figure", kind: "number", min: 1, max: 20, step: 0.5, unit: "s", label: "Sit/stand change after",
     help: "How long the patient must be seen in the other posture (between reps) before the guide sits down or stands up." },
+  { key: "showHandTarget", group: "On the camera", kind: "boolean", label: "Show where the hand should reach",
+    help: "A glowing circle where the hand gets to with a straight arm at the target; it turns green with a tick when reached." },
+  { key: "showElbowMarker", group: "On the camera", kind: "boolean", label: "Show the elbow marker",
+    help: "A short bar at the height the elbow must reach, with a dot on the patient's elbow (labelled only when the hand circle is off)." },
   { key: "voiceRate", group: "Voice", kind: "number", min: 0.7, max: 1.2, step: 0.05, unit: "×", label: "Speaking speed",
     help: "1 is normal speed; lower is slower and clearer for older patients." },
   { key: "demoNarrationOn", group: "Voice", kind: "boolean", label: "Talk through the demonstration",
