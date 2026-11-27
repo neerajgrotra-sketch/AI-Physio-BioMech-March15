@@ -559,6 +559,10 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries = [], 
 
   useEffect(() => { patchFetch(); }, []);
 
+  // The AI status light in the header shows the real state from the start.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { checkAiEngine(true); }, []);
+
   // Voice toggle
   const [voiceOn, setVoiceOn] = useState(true);
   const handleVoiceToggle = () => {
@@ -2148,176 +2152,159 @@ Keep it to 2–3 natural spoken sentences. No lists.`
   return (
     <div style={{ marginTop: 12, fontFamily: "system-ui, sans-serif" }}>
 
-      {/* ── ROW 1: COMPACT SESSION BAR ── */}
-      <div style={{
-        background: "#1a2040",
-        borderRadius: 12,
-        padding: isMobile ? "12px 14px" : "10px 18px",
-        border: "1px solid rgba(255,255,255,0.08)",
+      {/* ── ROW 1: HEADER ──
+          Only what isn't on the screen below (the owner, v0.6.4): the logo, the
+          assignment and build (small, for tests and logs), the AI status light,
+          voice on/off, a sound test, and the session controls once running.
+          The plan, patient and Begin button are in the panels. */}
+      <header style={{
+        background: "#141A2E",
+        borderRadius: 14,
+        padding: isMobile ? "10px 12px" : "10px 18px",
+        border: "1px solid rgba(255,255,255,0.06)",
         marginBottom: 12,
         display: "flex",
-        alignItems: isMobile ? "flex-start" : "center",
+        alignItems: "center",
         justifyContent: "space-between",
-        flexDirection: isMobile ? "column" : "row",
-        gap: 10,
+        flexWrap: "wrap",
+        gap: 12,
       }}>
-        {/* Left: Branding + session meta */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          {/* Rehably logo mark */}
+        {/* Left: logo, then the assignment and build in small type */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <div style={{
-              width: 30, height: 30, borderRadius: 7, flexShrink: 0,
+              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
               background: "linear-gradient(135deg, #6C63FF 0%, #4A90D9 60%, #00C2C7 100%)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 0 10px rgba(108,99,255,0.4)",
             }}>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M9 2L4 9H8L7 14L12 7H8L9 2Z" fill="white" strokeLinejoin="round"/>
               </svg>
             </div>
-            <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 800, color: "white", letterSpacing: -0.4 }}>
-              Reha<span style={{ background: "linear-gradient(90deg, #4A90D9, #00C2C7)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>bly</span>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "white", letterSpacing: -0.4 }}>
+              Reha<span style={{ color: "#4FB6E0" }}>bly</span>
             </div>
           </div>
-          <div>
-            {sessionTitle && (
-              <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 600, color: "#aab6d3" }}>
-                {sessionTitle}
-              </div>
-            )}
-            {patientName && (
-              <div style={{ fontSize: 11, color: "#aab6d3", marginTop: 1 }}>
-                {patientName}
-                {" · "}
-                <span style={{ color: "#7a88a8" }}>{patientProfile.type.replace(/_/g, " ")}</span>
-              </div>
-            )}
-            {/* Session ID chip — monospace, copy on click */}
-            {prescriptionId && (
-              <div
-                title="Assignment ID — click to copy the full ID"
-                onClick={() => copyToClipboard(prescriptionId)}
-                style={{ fontSize: 10, fontFamily: "monospace", color: "#484f58", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 5, padding: "2px 7px", cursor: "pointer", letterSpacing: 0.5, userSelect: "none" }}
-              >
-                {assignmentCode(prescriptionId)}
-              </div>
-            )}
-            {/* Which build is running */}
-            <div style={{ fontSize: 10, fontFamily: "monospace", color: "#7a88a8", padding: "2px 0" }}>{versionLabel()}</div>
-          </div>
-          {/* Stats badges */}
-          {combinedQueue.length > 0 && (
-            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-              {[
-                formatDurationRange(combinedDurationSeconds),
-                `${combinedQueue.length} exercise${combinedQueue.length !== 1 ? "s" : ""}`,
-                `${combinedTotalReps} reps`,
-              ].map(label => (
-                <span key={label} style={{
-                  padding: "3px 9px", borderRadius: 999,
-                  background: "rgba(124,198,255,0.08)", color: "#7cc6ff",
-                  fontSize: 11, fontWeight: 600,
-                }}>{label}</span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right: Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-          {/* AI status dot */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{
-              width: 7, height: 7, borderRadius: "50%",
-              background: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : aiEngineStatus === "checking" ? "#ffcc80" : "#7a88a8",
-              boxShadow: aiEngineStatus === "ok" ? "0 0 5px #9be7b0" : aiEngineStatus === "checking" ? "0 0 5px #ffcc80" : "none",
-              animation: aiEngineStatus === "checking" ? "pulse 1s infinite" : "none",
-            }} />
-            <span style={{ fontSize: 11, color: aiEngineStatus === "ok" ? "#9be7b0" : aiEngineStatus === "error" ? "#ff8f8f" : "#7a88a8" }}>
-              {aiEngineStatus === "ok" ? "AI Ready" : aiEngineStatus === "error" ? "AI Error" : aiEngineStatus === "checking" ? "Connecting…" : "AI Engine"}
-            </span>
-          </div>
-
-          {/* Voice toggle */}
-          <button onClick={handleVoiceToggle} style={{
-            background: voiceOn ? "rgba(100,220,150,0.12)" : "rgba(255,255,255,0.06)",
-            color: voiceOn ? "#9be7b0" : "#7a88a8",
-            border: "1px solid " + (voiceOn ? "rgba(100,220,150,0.3)" : "rgba(255,255,255,0.1)"),
-            borderRadius: 7, padding: "5px 10px",
-            fontSize: 11, fontWeight: 700, cursor: "pointer",
-          }}>
-            {voiceOn ? "🔊 Voice" : "🔇 Muted"}
-          </button>
-
-          {/* Pre-session: Test + Begin */}
-          {!sessionQueue.sessionStarted && (
-            <>
-              <button onClick={() => checkAiEngine(false)} style={{
-                background: "rgba(124,198,255,0.1)", color: "#7cc6ff",
-                border: "1px solid rgba(124,198,255,0.25)", borderRadius: 7,
-                padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
-              }}>
-                Test
-              </button>
-              {combinedQueue.length > 0 && (
+          {!isMobile && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "monospace", color: "#6B7598" }}>
+              {prescriptionId && (
                 <button
-                  onClick={beginCombinedSession}
-                  disabled={!canBegin}
-                  style={{
-                    background: canBegin ? "#9be7b0" : "rgba(155,231,176,0.15)",
-                    color: canBegin ? "#08111f" : "#7a88a8",
-                    border: "none", borderRadius: 8,
-                    padding: "8px 18px", fontSize: 13, fontWeight: 800,
-                    cursor: canBegin ? "pointer" : "not-allowed",
-                    letterSpacing: 0.3,
-                  }}
+                  title="Assignment ID: click to copy the full ID"
+                  onClick={() => copyToClipboard(prescriptionId)}
+                  style={{ font: "inherit", color: "inherit", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}
                 >
-                  Begin Session
+                  {assignmentCode(prescriptionId)}
                 </button>
               )}
-            </>
+              <span>{versionLabel()}</span>
+            </div>
           )}
+        </div>
 
-          {/* In-session: progress + pause/resume + end/reset */}
+        {/* Right: status and controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* AI status light: green (steady glow) connected, red blinking not
+              connected, amber checking. Click to check again. */}
+          {(() => {
+            const st = aiEngineStatus;
+            const led = st === "ok" ? "#3FB950" : st === "error" ? "#F85149" : st === "checking" ? "#F0B429" : "#6B7598";
+            const label = st === "ok" ? "AI connected" : st === "error" ? "AI offline" : st === "checking" ? "Checking AI…" : "AI not checked";
+            return (
+              <button
+                onClick={() => checkAiEngine(false)}
+                title={`${label}. Click to check again.${st === "error" ? " Coaching still works with built-in phrases." : ""}`}
+                aria-label={`${label}. Check again`}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, height: 36, padding: "0 12px",
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18,
+                  color: "#C9D2EE", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                <span aria-hidden="true" style={{
+                  width: 10, height: 10, borderRadius: 5, background: led,
+                  boxShadow: st === "ok" || st === "error" ? `0 0 8px ${led}` : "none",
+                  animation: st === "error" ? "ledBlink 1s ease-in-out infinite" : st === "ok" ? "ledGlow 2.4s ease-in-out infinite" : st === "checking" ? "pulse 1s infinite" : "none",
+                }} />
+                AI
+              </button>
+            );
+          })()}
+
+          {/* Voice on / off */}
+          <button
+            onClick={handleVoiceToggle}
+            aria-pressed={voiceOn}
+            title={voiceOn ? "Voice coaching is on. Click to mute." : "Voice coaching is muted. Click to turn it on."}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, height: 36, padding: "0 12px",
+              background: voiceOn ? "rgba(63,185,80,0.12)" : "rgba(255,255,255,0.04)",
+              border: `1px solid ${voiceOn ? "rgba(63,185,80,0.35)" : "rgba(255,255,255,0.08)"}`, borderRadius: 18,
+              color: voiceOn ? "#9be7b0" : "#AEB8D6", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M11 5L6 9H2v6h4l5 4V5z" />
+              {voiceOn ? <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /> : <path d="M23 9l-6 6M17 9l6 6" />}
+            </svg>
+            {voiceOn ? "Voice on" : "Muted"}
+          </button>
+
+          {/* Sound test: says one line through the same voice */}
+          <button
+            onClick={() => {
+              if (typeof window === "undefined" || !window.speechSynthesis) return;
+              window.speechSynthesis.cancel();
+              const utt = new SpeechSynthesisUtterance(voiceOn ? "Hello, I'm your coach. If you can hear me, your sound is working." : "Voice is muted. Turn the voice on to hear me.");
+              utt.rate = 0.92;
+              const pref = window.speechSynthesis.getVoices().find(v => v.lang.startsWith("en") && /Natural|Neural|Premium|Samantha|Karen|Daniel/.test(v.name));
+              if (pref) utt.voice = pref;
+              window.speechSynthesis.speak(utt);
+              writeDebugLog("info", "VOICE", "Sound test");
+            }}
+            title="Play a short line to check your speakers"
+            style={{
+              height: 36, padding: "0 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 18, color: "#C9D2EE", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            Test sound
+          </button>
+
+          {/* In session: time, pause / resume, end, restart */}
           {sessionQueue.sessionStarted && (
             <>
+              <span aria-hidden="true" style={{ width: 1, height: 24, background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
               <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                background: isPaused ? "rgba(255,200,80,0.08)" : "rgba(155,231,176,0.08)",
-                border: `1px solid ${isPaused ? "rgba(255,200,80,0.2)" : "rgba(155,231,176,0.2)"}`,
-                borderRadius: 8, padding: "5px 12px",
+                display: "flex", alignItems: "center", gap: 8, height: 36, padding: "0 14px", borderRadius: 18,
+                background: isPaused ? "rgba(240,180,41,0.1)" : "rgba(63,185,80,0.1)",
               }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isPaused ? "#ffcc80" : "#9be7b0", boxShadow: `0 0 5px ${isPaused ? "#ffcc80" : "#9be7b0"}`, animation: isPaused ? "none" : "pulse 2s infinite" }} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: isPaused ? "#ffcc80" : "#9be7b0" }}>{isPaused ? "Paused" : "In Progress"}</span>
-                <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: "white", letterSpacing: 1 }}>{sessionTimer}</span>
+                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 4, background: isPaused ? "#F0B429" : "#3FB950", animation: isPaused ? "none" : "pulse 2s infinite" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: isPaused ? "#ffcc80" : "#9be7b0" }}>{isPaused ? "Paused" : "In session"}</span>
+                <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "monospace", color: "white", letterSpacing: 1 }}>{sessionTimer}</span>
               </div>
-              <span style={{ fontSize: 12, color: "#7a88a8" }}>
-                {sessionQueue.queueIndex + 1}&thinsp;/&thinsp;{sessionQueue.getActiveQueue().length}
-              </span>
-              {/* Pause / Resume */}
               {isPaused ? (
                 <button onClick={resumeSession} style={{
-                  background: "rgba(155,231,176,0.15)", color: "#9be7b0", padding: "6px 14px",
-                  borderRadius: 7, border: "1px solid rgba(155,231,176,0.3)", cursor: "pointer", fontSize: 12, fontWeight: 700,
-                }}>▶ Resume</button>
+                  height: 36, padding: "0 16px", borderRadius: 18, border: "none", cursor: "pointer",
+                  background: "#3FB950", color: "#08240F", fontSize: 13, fontWeight: 800,
+                }}>Resume</button>
               ) : (
                 <button onClick={pauseSession} style={{
-                  background: "rgba(255,200,80,0.1)", color: "#ffcc80", padding: "6px 12px",
-                  borderRadius: 7, border: "1px solid rgba(255,200,80,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
-                }}>⏸ Pause</button>
+                  height: 36, padding: "0 16px", borderRadius: 18, cursor: "pointer",
+                  background: "rgba(240,180,41,0.12)", color: "#ffcc80", border: "1px solid rgba(240,180,41,0.3)", fontSize: 13, fontWeight: 700,
+                }}>Pause</button>
               )}
               <button onClick={() => endSession(true)} style={{
-                background: "rgba(124,198,255,0.1)", color: "#7cc6ff", padding: "6px 12px",
-                borderRadius: 7, border: "1px solid rgba(124,198,255,0.2)", cursor: "pointer", fontSize: 12, fontWeight: 600,
-              }}>End</button>
-              <button onClick={resetSession} style={{
-                background: "rgba(255,255,255,0.06)", color: "#aab6d3", padding: "6px 12px",
-                borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12,
-              }}>Reset</button>
+                height: 36, padding: "0 16px", borderRadius: 18, cursor: "pointer",
+                background: "rgba(255,255,255,0.06)", color: "#EEF2FF", border: "1px solid rgba(255,255,255,0.1)", fontSize: 13, fontWeight: 700,
+              }}>End session</button>
+              <button onClick={resetSession} title="Start this session again from the beginning" style={{
+                height: 36, padding: "0 10px", borderRadius: 18, cursor: "pointer",
+                background: "transparent", color: "#8892B4", border: "none", fontSize: 13,
+              }}>Restart</button>
             </>
           )}
         </div>
-      </div>
+      </header>
 
       {/* ── ROW 2: THE EXERCISE SCREEN (read from 2-3 m) ──
           The guide in its own panel on the left, the camera large on the
@@ -2338,6 +2325,30 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           background: "#141A2E", borderRadius: 16, border: "1px solid rgba(255,255,255,0.06)",
           padding: 12, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: isMobile || isPortrait ? 0 : 360,
         }}>
+          {/* Where the patient is in the protocol (any number of exercises). */}
+          {sessionQueue.sessionStarted && combinedQueue.length > 0 && (() => {
+            const qi = Math.min(sessionQueue.queueIndex, combinedQueue.length - 1);
+            const next = combinedQueue[qi + 1];
+            const nm = (it: typeof combinedQueue[number]) => (it.prescription as any)?.clinicalName ?? it.displayName;
+            return (
+              <div style={{ padding: isMobile ? "4px 8px 8px" : "4px 16px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <span style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700, letterSpacing: "0.08em", color: "#AEB8D6" }}>
+                    EXERCISE {qi + 1} OF {combinedQueue.length}
+                  </span>
+                  {next && <span style={{ fontSize: isMobile ? 12 : 14, color: "#8892B4", textAlign: "right" }}>Next: {nm(next)}</span>}
+                </div>
+                <div role="img" aria-label={`Exercise ${qi + 1} of ${combinedQueue.length}`} style={{ display: "flex", gap: 4 }}>
+                  {combinedQueue.map((it, i) => (
+                    <span key={`${it.id}-${i}`} title={nm(it)} style={{
+                      flex: 1, height: 6, borderRadius: 3,
+                      background: i < qi ? "#3FB950" : i === qi ? "#9DB8FF" : "#2A3352",
+                    }} />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <canvas
             ref={guideCanvasRef}
             width={600} height={660}
@@ -2355,7 +2366,13 @@ Keep it to 2–3 natural spoken sentences. No lists.`
               <div style={{ fontSize: isMobile ? 24 : 34, fontWeight: 800, lineHeight: 1.15, color: "white" }}>
                 {sessionTitle ?? "Today's exercises"}
               </div>
-              <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: isMobile ? 14 : 17, fontWeight: 700, color: "#AEB8D6" }}>
+                {combinedQueue.length === 1 ? "1 exercise" : `${combinedQueue.length} exercises`} · {formatDurationRange(combinedDurationSeconds)}
+              </div>
+              <ol style={{
+                margin: 0, padding: "0 4px 0 0", listStyle: "none", display: "flex", flexDirection: "column",
+                gap: combinedQueue.length > 4 ? 8 : 12, maxHeight: isMobile ? "30vh" : "44vh", overflowY: "auto",
+              }}>
                 {combinedQueue.map((item, i) => {
                   const p = item.prescription as any;
                   const target = p.romTargetDegrees ?? p.targetThreshold ?? null;
@@ -2373,7 +2390,6 @@ Keep it to 2–3 natural spoken sentences. No lists.`
                   );
                 })}
               </ol>
-              <div style={{ fontSize: isMobile ? 15 : 18, color: "#AEB8D6" }}>{formatDurationRange(combinedDurationSeconds)} in all</div>
             </div>
           )}
           {/* The coach, while the patient gets into place: the ONE instruction
@@ -3410,6 +3426,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
           50% { transform: scaleY(1); opacity: 1; }
         }
+        @keyframes ledBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+        @keyframes ledGlow { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
