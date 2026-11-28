@@ -230,6 +230,12 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   while the loop holds the rep counter (`useInferenceLoop` `setRepHold`, `isCalibrated`); the guide mirrors the arm, the
   rep coach, the demonstration and the target markers wait. "Comfortable", not "as high as you can" (rehab patients);
   missing the target is never called a failure.
+- Order (v0.12.1, the owner's run: the intro said "raise your right arm", reps were already open, then the check cut in):
+  while a check is due (`reachDue`) the rep counter is held from the exercise's start and the exercise intro is deferred
+  (`deferredIntroRef`) until the check ends; then the intro and the guide's demonstration.
+- After "All exercises complete" (`sessionDoneRef`), while the exercise phase is `complete`, and while the patient is away,
+  the rep coach, the guide's narration and the range check are silent (`coachable`; it called "that's your left arm" over
+  the summary).
 - It gives: the comfortable range (peak measured angle, the target's scale) saved as
   `exercise_results.comfortable_range_deg` (migration `20261128000000_comfortable_range.sql`, applied) and shown on the
   admin result ("comfortable range"); hand positions at the target, which seed the hand circle (`handSamplesRef`) so it
