@@ -31,6 +31,7 @@ interface SupabaseSessionBlock {
     hold_ms_override: number | null;
     rom_target_degrees: number | null;
     rom_encourage_degrees: number | null;
+    tolerances?: Record<string, number> | null;
     exercise_templates: {
       slug: string;
       display_name: string;
@@ -105,6 +106,7 @@ export default async function SessionPage({ searchParams }: PageProps) {
           hold_ms_override,
           rom_target_degrees,
           rom_encourage_degrees,
+          tolerances,
           exercise_templates (
             slug,
             display_name,
@@ -248,7 +250,8 @@ export default async function SessionPage({ searchParams }: PageProps) {
         const reps = ex.reps_override ?? tmpl.default_reps;
         const holdMs = ex.hold_ms_override ?? tmpl.default_hold_ms;
         const prescription = buildPrescription(tmpl.slug, tmpl.display_name, reps, holdMs, tmpl.coaching_strings, tmpl.rom_start_degrees ?? null, tmpl.rom_norm_degrees ?? null, tmpl.rom_acceptable_min ?? null, ex.rom_target_degrees ?? null, ex.rom_encourage_degrees ?? null, { cameraPosition: tmpl.camera_position, patientPosition: tmpl.patient_position, clinicalName: tmpl.clinical_name });
-        if (prescription) mapped.push(prescription);
+        // This patient's tolerances for the exercise (set when assigned).
+        if (prescription) mapped.push(ex.tolerances ? { ...prescription, tolerances: ex.tolerances } : prescription);
       }
     }
   } else {
