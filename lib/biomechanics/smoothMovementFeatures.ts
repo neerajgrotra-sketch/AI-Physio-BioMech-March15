@@ -117,6 +117,8 @@ export function smoothMovementFeatures(history: MovementFeatures[]): MovementFea
     kneeAngleRight: average(history.map((item) => item.kneeAngleRight)),
 
     hipVelocityY: average(history.map((item) => item.hipVelocityY)),
+    shoulderCenterY: average3(history.map((item) => item.shoulderCenterY)),
+    torsoLength: average3(history.map((item) => item.torsoLength)),
 
     isStanding: majorityBoolean(history.map((item) => item.isStanding)),
     isSeated: majorityBoolean(history.map((item) => item.isSeated))

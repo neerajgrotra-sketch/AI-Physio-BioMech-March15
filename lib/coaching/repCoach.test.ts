@@ -42,6 +42,18 @@ describe("RepCoach", () => {
     expect(said[0][1]).toBe("Keep your arm straight.");
   });
 
+  it("a lift that went up out to the side: says so once, asks for a fresh forward lift, then waits", () => {
+    const c = new RepCoach();
+    const said = run(c, [
+      ...repeat({ phase: "lifting", metric: 90, wrongPath: true, wrongPlane: true }, 10),
+      ...repeat({ phase: "top", metric: 120, wrongPath: true, wrongPlane: false }, 60),
+    ]);
+    expect(said.map((s) => s[1])).toEqual(["That's out to the side. Lower your arm, and lift it forward, in front of you."]);
+    // The next lift, forward: nothing about the side.
+    const next = run(c, [...repeat({ phase: "ready", metric: 20 }, 5), ...repeat({ phase: "lifting", metric: 80 }, 10)], 7000);
+    expect(next.some((s) => s[1].includes("side"))).toBe(false);
+  });
+
   it("going out to the side: 'Bring your arm in front of you' (before anything else)", () => {
     const c = new RepCoach();
     const said = run(c, repeat({ phase: "lifting", metric: 70, elbowBent: true, wrongPlane: true }, 12));

@@ -50,6 +50,8 @@ export type RuntimeRepState = {
   heldBeforeSlipMs?: number | null;
   /** Which form problem kept the hold from running: out to the side, or a bent elbow. */
   badFormKind?: "plane" | "elbow" | null;
+  /** Plane readings while this lift climbed through mid-range (lib/interpreter/liftPath.ts). */
+  liftPath?: number[];
 
   lastRepEvaluation: RepEvaluation;
 };

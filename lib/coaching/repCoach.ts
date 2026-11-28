@@ -33,6 +33,8 @@ export type RepCoachInput = {
   repTarget: number;
   elbowBent: boolean | null;  // facing the camera only, else null
   wrongPlane: boolean | null; // forward raise going out to the side, else null
+  /** This lift went up out to the side (lib/interpreter/liftPath.ts): it won't count however it ends. */
+  wrongPath?: boolean;
   /** One-arm exercises: which arm it is, and the OTHER arm's elevation now. */
   side?: "right" | "left" | "both";
   oppositeMetric?: number | null;
@@ -76,6 +78,7 @@ export class RepCoach {
   private lastSaid: Record<string, number> = {};
   private againForRep = -1;
   private planeCued = false; // "in front of you" was said during this lift
+  private pathCued = false;  // "that went out to the side" was said for this lift
   private oppRest: number | null = null;  // where the other arm rests
   private wrongArmSince: number | null = null;
   /** True while the patient is lifting the wrong arm (for the on-screen highlight). */
@@ -98,6 +101,7 @@ export class RepCoach {
     this.lastSaid = {};
     this.againForRep = -1;
     this.planeCued = false;
+    this.pathCued = false;
     this.oppRest = null;
     this.wrongArmSince = null;
     this.wrongArmNow = false;
@@ -134,7 +138,7 @@ export class RepCoach {
       this.phase = i.phase;
       this.phaseSince = now;
       if (i.phase === "lifting") this.best = null;
-      if (i.phase === "ready") this.planeCued = false;
+      if (i.phase === "ready") { this.planeCued = false; this.pathCued = false; }
     }
     const active = i.phase === "lifting" || i.phase === "top" || i.phase === "holding";
 
@@ -167,7 +171,17 @@ export class RepCoach {
       return this.say("wrongArm", now, `That's your ${other} arm. Rest it down and lift your ${i.side} arm.`);
     }
 
-    // Form first: it matters more than height.
+    // Form first: it matters more than height. A lift that went up out to
+    // the side is a side raise: say so once and ask for a fresh one (moving
+    // the arm in front at the top no longer rescues it).
+    if (active && i.wrongPath) {
+      if (!this.pathCued) {
+        this.pathCued = true;
+        this.planeCued = false;
+        return this.say("plane", now, "That's out to the side. Lower your arm, and lift it forward, in front of you.");
+      }
+      return null;
+    }
     this.planeSince = active && i.wrongPlane ? (this.planeSince ?? now) : null;
     if (this.planeSince !== null && now - this.planeSince >= FORM_PERSIST_MS && this.can("plane", now)) {
       this.planeCued = true;

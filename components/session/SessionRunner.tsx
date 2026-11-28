@@ -18,9 +18,9 @@ import { drawArmLabel, drawReachGuide, reachLineY, handTargetPoint, drawHandTarg
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
-import { PostureLatch } from "@/lib/pose/postureLatch";
+import { PostureLatch, RiseDetector } from "@/lib/pose/postureLatch";
 import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
-import { maxPlaneNow, setMaxPlaneDeg } from "@/lib/interpreter/movementInterpreter";
+import { maxPlaneNow, pathSidewaysNow, setMaxPlaneDeg } from "@/lib/interpreter/movementInterpreter";
 import { setHoldSlipMs } from "@/lib/interpreter/repStateMachine";
 import { versionLabel, APP_VERSION, APP_COMMIT, APP_BRANCH } from "@/lib/app/version";
 import { assignmentCode } from "@/lib/app/assignment";
@@ -579,6 +579,7 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
   const pendingIntroRef = useRef(false);
   const guideYawRef = useRef(90);                 // the guide figure's current viewing angle
   const postureLatchRef = useRef<PostureLatch | null>(null); // steady seated / standing for the guide
+  const riseRef = useRef(new RiseDetector()); // standing up seen from the shoulders when the knees are hidden
   const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
   const ghostLowerStartRef = useRef<number>(0);   // when lowering began  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
@@ -1168,7 +1169,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
           ghostPhaseSeenRef.current = "";
     repCoachRef.current.reset();
     narratorRef.current.reset();
-    postureLatchRef.current = null;
+    // The guide keeps the patient's posture into the next exercise (same
+    // person, same chair): restarting from the template's posture made it
+    // sit again for a patient who had stood up.
     handSamplesRef.current = [];
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
@@ -1707,6 +1710,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     repCoachRef.current.reset();
     narratorRef.current.reset();
     postureLatchRef.current = null;
+    riseRef.current.reset();
     handSamplesRef.current = [];
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
@@ -1880,7 +1884,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           `bent=${inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] ?? "?"} | ` +
           `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)} elbow=${fmt(w3?.elbowDeg)} | ` +
           `opp=${fmt(inferenceLoop.getFeatures()?.[side === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"])} ` +
-          `wrongArm=${repCoachRef.current.wrongArmNow} guide=${postureLatchRef.current?.get() ?? "?"}`);
+          `wrongArm=${repCoachRef.current.wrongArmNow} path=${pathSidewaysNow() ? "side" : "ok"} ` +
+          `guide=${postureLatchRef.current?.get() ?? "?"} legs=${inferenceLoop.getFeatures()?.posture ?? "?"} shY=${inferenceLoop.getFeatures()?.shoulderCenterY?.toFixed(3) ?? "?"}`);
       }
 
       // ── 3c. Coaching through the rep (lib/coaching/repCoach.ts) ─────────
@@ -1909,6 +1914,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           repTarget: p?.repTarget ?? 0,
           elbowBent: flexion ? (feats?.[sd === "left" ? "leftElbowBent" : "rightElbowBent"] ?? null) : null,
           wrongPlane: flexion && plane !== null ? plane > maxPlaneNow() : null,
+          wrongPath: flexion && pathSidewaysNow(),
           side: p?.side === "both" ? "both" : sd,
           oppositeMetric: flexion ? (feats?.[sd === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"] ?? null) : null,
           startThreshold: p?.startThreshold,
@@ -2144,7 +2150,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         const plane = inferenceLoop.getFeatures()?.[sideNow === "left" ? "leftArmPlaneDeg" : "rightArmPlaneDeg"];
         const holdLeft = ghostHoldRemRef.current;
         const wrongArm = repCoachRef.current.wrongArmNow;
-        const wrongPlaneNow = activeRep && plane !== null && plane !== undefined && plane > maxPlaneNow();
+        const wrongPathNow = activeRep && pathSidewaysNow();
+        const wrongPlaneNow = wrongPathNow || (activeRep && plane !== null && plane !== undefined && plane > maxPlaneNow());
         // Label the arm to use: before the first rep, and loudly on the wrong arm.
         if (config.sides.length === 1 && (wrongArm || (repsDone === 0 && (infPhase === "ready" || infPhase === "lifting")))) {
           drawArmLabel(ctx, frame, sideNow, W, H, wrongArm, now);
@@ -2168,14 +2175,20 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // hidden (lib/pose/postureLatch.ts).
         const featsNow = inferenceLoop.getFeatures();
         postureLatchRef.current ??= new PostureLatch(ghostPrescriptionRef.current?.posture === "standing" ? "standing" : "seated", coachRef.current.postureSwitchSeconds * 1000);
-        // Only read between reps: mid-rep, a raised arm and a leaning trunk
-        // shift the hips, and nobody sits down or stands up during a raise.
-        const postureNow = infPhase === "ready"
+        // The leg reading except at the top (a held, leaning trunk shifts the
+        // hips); it was only read between reps, and the owner's patient stood
+        // up mid-exercise while the guide stayed seated. With the knees out of
+        // the picture, a big rise or drop of the shoulders reads as standing
+        // up or sitting down (RiseDetector), in any phase.
+        const legsNow = infPhase !== "top" && infPhase !== "holding"
           ? (featsNow?.isSeated ? "seated" : featsNow?.isStanding ? "standing" : "unknown")
           : "unknown";
+        const postureNow = riseRef.current.read(legsNow, postureLatchRef.current.get(),
+          featsNow?.shoulderCenterY ?? null, featsNow?.torsoLength ?? null);
         const seatedNow = postureLatchRef.current.update(postureNow, snapNow) === "seated";
         const caption =
           wrongArm ? `Use your ${sideNow} arm`
+          : wrongPathNow ? "Lower, then lift in front"
           : wrongPlaneNow ? "Arm in front of you"
           : activeRep && bent && infPhase !== "lowering" ? "Keep your arm straight"
           : infPhase === "holding" || infPhase === "top"
