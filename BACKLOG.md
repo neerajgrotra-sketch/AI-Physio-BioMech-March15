@@ -1,3 +1,23 @@
+# Architecture rebuild (agreed with the owner, 2026-11-28)
+
+The owner: "it feels like if-then-else, not AI; something is off." Agreed diagnosis:
+- The AI coach never ran (retired model, every call 404): all speech was fallback lines. Fixed in v0.13.0.
+- Seven parts speak on their own timers (greeting, positioning, coaching brain, rep coach, guide narration, range check,
+  away messages); each test found a new collision and each patch moved the problem.
+- Facing the camera is the hardest geometry for a forward raise (the arm moves toward the lens); side on is easy.
+- No replay of real sessions, so every change is first tested by the owner.
+
+The plan, in order:
+1. AI coach working (v0.13.0): current model, official SDK, both request shapes, latency in the log.
+2. One session director: an explicit state machine (setup -> range check -> demo -> reps -> rest -> paused -> done) that
+   alone decides what is said and when (priorities, pacing, one message at a time). The other parts report events to it
+   and stop speaking themselves.
+3. The AI coach under the director: every few seconds and at key moments it gets a compact summary (rep n of m, where reps
+   stall, drift, pace, what was last said) and writes the line; the director decides when it is spoken. Later: listen to
+   the patient (pain -> stop, "say that again"), spot fatigue and suggest target changes to the physio, session summaries.
+4. Record and replay: save the pose stream of test runs and replay them as tests.
+5. Recommend side on for forward raises; facing the camera stays as a fallback.
+
 # Backlog
 
 Parked ideas and decisions waiting on something. Newest first.

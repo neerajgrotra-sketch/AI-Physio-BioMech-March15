@@ -10,8 +10,9 @@ The other Supabase projects named ai-physio are old; nothing uses them.
 
 ## Stack
 
-Next.js 14 (App Router) + React 18 + TypeScript, Supabase (auth + Postgres), OpenAI (coaching text and speech, server
-routes only), `@tensorflow-models/pose-detection` with the BlazePose `mediapipe` runtime in the browser.
+Next.js 14 (App Router) + React 18 + TypeScript, Supabase (auth + Postgres), Claude (the AI coach: `app/api/coach`,
+official `@anthropic-ai/sdk`, model `claude-opus-5-5` at low effort, `COACH_MODEL` overrides; until v0.13.0 it named a
+retired model and every call returned 404, so only fallback lines were heard), OpenAI (speech, `app/api/tts`), `@tensorflow-models/pose-detection` with the BlazePose `mediapipe` runtime in the browser.
 
 ## Commands
 
@@ -21,7 +22,7 @@ routes only), `@tensorflow-models/pose-detection` with the BlazePose `mediapipe`
 - `npm run build`: what Vercel runs. It builds with placeholder env values too.
 
 Environment: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (server only, the
-session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit them.
+session page), `ANTHROPIC_API_KEY` (server only, the AI coach), `OPENAI_API_KEY` (server only). They live in Vercel; never commit them.
 
 ## The measurement pipeline (per camera frame)
 

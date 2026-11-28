@@ -121,7 +121,7 @@ function patchFetch() {
       let promptSnippet = "";
       try {
         const body = JSON.parse((init?.body as string) ?? "{}");
-        promptSnippet = (body.prompt ?? "").slice(0, 200);
+        promptSnippet = (body.prompt ?? body.messages?.[0]?.content ?? "").slice(0, 200);
       } catch { promptSnippet = "(could not parse)"; }
       writeDebugLog("api_out", "API", "POST /api/coach →", promptSnippet + (promptSnippet.length >= 200 ? "…" : ""));
       try {
@@ -132,7 +132,7 @@ function patchFetch() {
             writeDebugLog("error", "API", `Error: ${data.error}`, data.detail ?? "");
           } else {
             const text = (data.text ?? "").slice(0, 300);
-            writeDebugLog("api_in", "API", "← Response received", text);
+            writeDebugLog("api_in", "API", `← Response received${data.ms ? ` (${data.ms} ms, ${data.model ?? "?"})` : ""}`, text);
           }
         }).catch(() => writeDebugLog("error", "API", "Could not parse response"));
         return response;
@@ -1677,7 +1677,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         })
       });
       const data = await resp.json();
-      greetingText = data.content?.[0]?.text ?? `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${framingHint}`;
+      greetingText = data.text || (data.content?.[0]?.text ?? `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${framingHint}`);
     } catch {
       greetingText = `Good ${timeOfDay}, ${firstName}. Today we'll work through ${exerciseNames}. ${prevContext} ${framingHint}`;
     }
