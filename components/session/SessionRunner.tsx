@@ -579,6 +579,15 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
   const reachDoneRef = useRef<Set<string>>(new Set());     // arms already checked this session
   const reachRangeRef = useRef<Record<number, number>>({}); // queue index -> comfortable range (measured degrees)
   const angleBiasRef = useRef(new AngleBias());            // 3D minus measured near the top, for the hand circle
+  const deferredIntroRef = useRef(false);                  // the exercise intro waits for the range check
+  const sessionDoneRef = useRef(false);                    // all exercises finished: no more coaching
+  // A range check is still to come for the current exercise (before its first rep).
+  const reachDue = () => {
+    const p = sessionQueue.getActivePrescription();
+    const side = p?.side === "left" ? "left" : p?.side === "right" ? "right" : null;
+    return !!p && !!side && (p.id ?? "").startsWith("shoulder_flexion") && coachRef.current.reachCheckOn &&
+      !runIndexesRef.current && !reachDoneRef.current.has(side) && !sessionDoneRef.current;
+  };
   const prevMetricForHandRef = useRef<number | null>(null);
   // The next exercise's spoken intro waits until the patient is placed (the
   // owner's run: "raise your left arm" played over the positioning voice).
@@ -1041,6 +1050,14 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
         writeDebugLog("info", "COACHING", "onExerciseStarted suppressed — in framing/greeting phase");
         return;
       }
+      // The range check comes first (the owner's run: the intro said "raise
+      // your right arm", the patient started, then the range check cut in).
+      // The intro is given when it finishes.
+      if (reachDue() || reachRef.current) {
+        deferredIntroRef.current = true;
+        writeDebugLog("info", "COACHING", "Exercise intro waits for the range check");
+        return;
+      }
       coachingCallbacksRef.current.onExerciseStarted(nowMs);
     },
     feedFrame: (params: any) => coachingCallbacksRef.current.feedFrame(params),
@@ -1206,6 +1223,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
       },
       () => {
         writeDebugLog("success", "SESSION", "All exercises complete");
+        sessionDoneRef.current = true; // the rep coach and the guide stop talking (they used to call "that's your left arm" over the summary)
+        window.speechSynthesis?.cancel();
         writeSessionResults();
         flushDebugLogToSupabase("session_end");
       }
@@ -1582,6 +1601,8 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     liveConfidenceSnapshotRef.current = null;
     checkAiEngine(true);
 
+    sessionDoneRef.current = false;
+    deferredIntroRef.current = false;
     const started = sessionQueue.beginSession(combinedQueue);
     if (!started) { writeDebugLog("error", "SESSION", "beginSession returned false"); return; }
     // Progress: continuing keeps what was finished earlier today.
@@ -1722,6 +1743,8 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     reachRef.current = null;
     inferenceLoop.setRepHold(false);
     reachDoneRef.current = new Set(); // a fresh start checks the range again
+    sessionDoneRef.current = false;
+    deferredIntroRef.current = false;
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1903,7 +1926,14 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       // positioning coach talks, nothing else (the owner's run).
       // (Before the first rep only, like the positioning screen: a brief
       // slip mid-exercise must not silence the coaching.)
-      const placedForCoaching = !pendingIntroRef.current &&
+      // The rep counter stays held from the start of the exercise until its
+      // range check is done, so a patient can't start reps before it.
+      inferenceLoop.setRepHold(reachRef.current !== null || reachDue());
+      // Nobody to coach: the session is over, the exercise is done, or the
+      // patient isn't in front of the camera (the owner's run: "that's your
+      // left arm" over the session summary and while out of view).
+      const coachable = !sessionDoneRef.current && ghostPhaseInfRef.current !== "complete" && awayKindRef.current === "present";
+      const placedForCoaching = coachable && !pendingIntroRef.current &&
         (framingIntelligence.prerequisiteResultRef.current.allMet || ghostRepCountRef.current > 0);
       if (!placedForCoaching) {
         narratorRef.current.update(null, false);
@@ -1950,6 +1980,11 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             inferenceLoop.setRepHold(false);
             ghostReadyStartRef.current = performance.now(); // the guide's demonstration starts now
             narratorRef.current.reset();
+            if (deferredIntroRef.current) {
+              deferredIntroRef.current = false;
+              writeDebugLog("info", "COACHING", "Range check done: exercise intro");
+              coachingCallbacksRef.current.onExerciseStarted(Date.now());
+            }
           } else {
             narratorRef.current.update(null, false);
             ghostReadyStartRef.current = performance.now();
