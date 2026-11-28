@@ -133,6 +133,19 @@ describe("RepCoach: the wrong arm, tried again and again", () => {
     expect(said.filter((s) => s[1].includes("left arm")).length).toBeGreaterThanOrEqual(3);
   });
 
+  it("backs off after three calls with no lift of the right arm, then calls again after 20 s (owner's run: every 2-4 s for minutes)", () => {
+    const c = new RepCoach();
+    const lift = [
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 100, ...right }, 8),
+      ...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 17),
+    ];
+    const lifts = Array.from({ length: 8 }, () => lift).flat(); // 8 wrong lifts in 20 s
+    const said = run(c, [...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20), ...lifts]);
+    expect(said.filter((s) => s[1].includes("left arm")).length).toBe(3);
+    const later = run(c, [...repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20), ...lift], 2000 + 20 * 100 + lifts.length * 100 + 20000);
+    expect(later.filter((s) => s[1].includes("left arm")).length).toBe(1);
+  });
+
   it("marks its line as a correction", () => {
     const c = new RepCoach();
     run(c, repeat({ phase: "ready", metric: 20, oppositeMetric: 20, ...right }, 20));
