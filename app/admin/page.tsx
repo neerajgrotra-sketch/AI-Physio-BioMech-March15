@@ -82,6 +82,7 @@ interface ExerciseResult {
   failed_balance_count: number; failed_isolation_count: number;
   avg_metric_degrees: number | null; target_metric_degrees: number | null;
   avg_hold_ms: number | null; landmark_confidence_pct: number | null;
+  comfortable_range_deg?: number | null; // the range check before the first rep (v0.12.0)
   movement_timeline: RepTimelineEntry[] | null;
 }
 
@@ -343,7 +344,7 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
   useEffect(() => {
     async function load() {
       const [{ data: res }, { data: blocks }, { data: peOld }] = await Promise.all([
-        supabase.from("session_results").select("*, exercise_results(id, sequence_order, reps_prescribed, reps_attempted, reps_successful, reps_failed, hold_compliance_rate, failed_hold_count, failed_height_count, failed_balance_count, failed_isolation_count, avg_metric_degrees, target_metric_degrees, avg_hold_ms, landmark_confidence_pct, movement_timeline)").eq("prescription_id", prescriptionId).order("created_at", { ascending: false }).limit(1).single(),
+        supabase.from("session_results").select("*, exercise_results(id, sequence_order, reps_prescribed, reps_attempted, reps_successful, reps_failed, hold_compliance_rate, failed_hold_count, failed_height_count, failed_balance_count, failed_isolation_count, avg_metric_degrees, target_metric_degrees, avg_hold_ms, landmark_confidence_pct, movement_timeline, comfortable_range_deg)").eq("prescription_id", prescriptionId).order("created_at", { ascending: false }).limit(1).single(),
         supabase.from("session_blocks").select("sequence_order, session_block_exercises(sequence_order, exercise_templates(display_name))").eq("session_id", prescriptionId).order("sequence_order"),
         supabase.from("prescription_exercises").select("sequence_order, exercise_templates(display_name)").eq("prescription_id", prescriptionId).order("sequence_order"),
       ]);
@@ -463,6 +464,7 @@ function SessionResultsPanel({ prescriptionId, sessionTitle, onClose }: { prescr
                               <div style={{ fontSize: 14, fontWeight: 700, color: C.blue }}>{ex.avg_metric_degrees !== null ? `${Math.round(ex.avg_metric_degrees)}°` : "—"}</div>
                               <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Avg ROM</div>
                               {ex.target_metric_degrees !== null && <div style={{ fontSize: 10, color: C.orange, marginTop: 2 }}>target {Math.round(ex.target_metric_degrees)}°</div>}
+                              {ex.comfortable_range_deg != null && <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }} title="The range check before the first rep: as high as was comfortable">comfortable range {Math.round(ex.comfortable_range_deg)}°</div>}
                             </div>
                             <div style={{ background: C.surface, borderRadius: 6, padding: "8px", textAlign: "center" }}>
                               <div style={{ fontSize: 14, fontWeight: 700, color: ex.avg_metric_degrees !== null && ex.target_metric_degrees !== null ? (ex.avg_metric_degrees >= ex.target_metric_degrees ? C.green : C.red) : C.textMuted }}>

@@ -74,7 +74,7 @@ export type MovementFeatures = {
   // Shoulder centre height (frame height, 0 top .. 1 bottom) and the torso
   // length (shoulder centre to hip centre, same units): standing up raises
   // the shoulders by most of a torso length, seen even when the knees are
-  // out of the picture (lib/pose/postureLatch.ts RiseDetector).
+  // out of the picture (logged on TRACE as shY; v0.11.0 guessed posture from it).
   shoulderCenterY: number | null;
   torsoLength: number | null;
 

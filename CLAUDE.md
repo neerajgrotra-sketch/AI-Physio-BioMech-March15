@@ -57,8 +57,8 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    swinging in front); the hold runs only while the arm
    is in front (it waits at `top`; a form slip mid-hold is ignored for `HOLD_SLIP_GRACE_MS` 1 s (Coach Lab
    `holdSlipSeconds`), and a longer one PAUSES the hold, which resumes with the time already held, `heldBeforeSlipMs`;
-   the owner's run A-57EDFCAD had the plane wavering at 55-75° and a hold restarting six times), so raising
-   sideways and then bringing the arm in front while up is a good rep (the owner's case); lowering without ever
+   the owner's run A-57EDFCAD had the plane wavering at 55-75° and a hold restarting six times), (raising sideways and
+   bringing the arm in front while up no longer counts since v0.11.0, the path check above); lowering without ever
    holding it in front fails as `failed_form`. A straight arm is required the same way (`FormIssue` "elbow"): the hold
    only runs with the elbow straight (3D elbow angle under `STRAIGHT_ELBOW_DEG` 135 = bent; 2D: the hand far above OR
    below where a straight arm puts it), so lifting the upper arm alone with the forearm hanging no longer counts; it
@@ -134,9 +134,9 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   back to rest with them after the rep, and 1.5 s later shows the next one (one clock, `demoClock`, for the movement
   and the narration). Facing the camera, forward raises show the guide figure, "the physio" (`lib/pose/exampleCard.ts`):
   a small 3D figure drawn as a mirror image, centred in its card, seated or standing like the patient (steadied by
-  `lib/pose/postureLatch.ts`: read in every phase but the top, it switches after the other posture is seen for 4 s; with the
-  knees out of the picture `RiseDetector` reads standing up or sitting down from the shoulders moving 0.45 torso lengths
-  from where they sat; kept across exercises, v0.11.0, the owner's patient stood up and the guide stayed seated);
+  `lib/pose/postureLatch.ts`: the legs, read in every phase but the top; it switches after the other posture is seen for 4 s and is kept across
+  exercises; with no leg reading it keeps its posture (v0.11.0 guessed from the shoulders rising, and leaning toward a
+  laptop read as standing; removed in v0.12.0);
   using the exercise's arm; seen side on at the start of a demonstration, then walking slowly round the patient
   between three-quarter (62°) and nearly facing them (18°) every `GUIDE_ORBIT_S` (14 s, the testers' request),
   facing the patient (25°) to show "in front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep
@@ -221,6 +221,20 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   with the anon client, and RLS only lets clinic staff insert them: they save when a physio is signed in on the same
   browser (all tests so far), not for a real patient. Move them behind a server route like `api/session/progress`.
 - `SessionRunner.tsx` (~2,400 lines) and `useInferenceLoop.ts` (~800) are too big; split them when you touch them.
+
+## The range check (v0.12.0, the owner's idea)
+
+- Before each arm's first forward raise (once per arm per session; not when continuing a paused session; Coach Lab
+  `reachCheckOn`), once the resting baseline is taken: "Lift it forward, as high as is comfortable, and hold it there."
+  `lib/session/reachCheck.ts` `ReachCheck` (intro -> up -> hold -> down -> done; reminds once at 12 s, carries on at 25 s)
+  while the loop holds the rep counter (`useInferenceLoop` `setRepHold`, `isCalibrated`); the guide mirrors the arm, the
+  rep coach, the demonstration and the target markers wait. "Comfortable", not "as high as you can" (rehab patients);
+  missing the target is never called a failure.
+- It gives: the comfortable range (peak measured angle, the target's scale) saved as
+  `exercise_results.comfortable_range_deg` (migration `20261128000000_comfortable_range.sql`, applied) and shown on the
+  admin result ("comfortable range"); hand positions at the target, which seed the hand circle (`handSamplesRef`) so it
+  is right from rep 1; and the gap between BlazePose's 3D angle and the measured one (`AngleBias`, also learned on every
+  lift), which raises the geometric circle when the target hasn't been reached yet. REACH log entries, `reach=` on TRACE.
 
 ## Coach Lab (v0.9.0, admin -> Coach Lab)
 
