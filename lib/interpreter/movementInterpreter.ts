@@ -1,3 +1,4 @@
+import { nextPath, pathVerdict } from "@/lib/interpreter/liftPath";
 import { nextRest, restSharePerFrame } from "@/lib/interpreter/restEstimate";
 import { updateRepState } from "@/lib/interpreter/repStateMachine";
 import type { MovementFeatures } from "@/lib/types/movement";
@@ -181,10 +182,24 @@ export const maxPlaneNow = () => maxPlaneDeg;
  * there is no issue (repStateMachine).
  */
 export type FormIssue = "plane" | "elbow" | null;
-function getFormIssue(features: MovementFeatures, prescription: ExercisePrescription): FormIssue {
+function liftPlane(features: MovementFeatures, prescription: ExercisePrescription): number | null {
+  const m = prescription.target.metric;
+  if (m !== "rightArmElevationDeg" && m !== "leftArmElevationDeg" && m !== "bilateralArmElevationDeg") return null;
+  const r = features.rightArmPlaneDeg, l = features.leftArmPlaneDeg;
+  if (prescription.side === "right") return r;
+  if (prescription.side === "left") return l;
+  return r === null || l === null ? (r ?? l) : Math.max(r, l);
+}
+// Whether the current lift went up out to the side (liftPath.ts), for the
+// coach and the caption. Set each frame by the interpreter.
+let pathSideways = false;
+export const pathSidewaysNow = () => pathSideways;
+function getFormIssue(features: MovementFeatures, prescription: ExercisePrescription, sidewaysPath = false): FormIssue {
   const m = prescription.target.metric;
   const flexion = m === "rightArmElevationDeg" || m === "leftArmElevationDeg" || m === "bilateralArmElevationDeg";
   if (!flexion) return null;
+  // Went up out to the side: a side raise, whatever the arm does at the top.
+  if (sidewaysPath) return "plane";
   const sides =
     prescription.side === "right" ? ["right"] : prescription.side === "left" ? ["left"] : ["right", "left"];
   const plane = (s: string) => (s === "right" ? features.rightArmPlaneDeg : features.leftArmPlaneDeg);
@@ -309,6 +324,12 @@ function interpretRaiseHoldLower(
     prescription
   );
 
+  // Forward or out to the side, judged on the way up (liftPath.ts). One-arm
+  // raises: the exercise arm's plane; both arms: the wider of the two.
+  const liftPath = nextPath(currentRepState.liftPath ?? [], currentRepState.phase, activeMetricValue, liftPlane(features, prescription));
+  const sideways = pathVerdict(liftPath, maxPlaneDeg) === "sideways";
+  pathSideways = sideways;
+
   const updated = updateRepState(
     currentRepState,
     activeMetricValue,
@@ -317,9 +338,9 @@ function interpretRaiseHoldLower(
     balanceOk,
     isolationOk,
     bilateralParticipationOk,
-    getFormIssue(features, prescription)
+    getFormIssue(features, prescription, sideways)
   );
-  const repState = { ...updated, oppositeRest };
+  const repState = { ...updated, oppositeRest, liftPath };
 
   let holdRemainingMs: number | null = null;
 

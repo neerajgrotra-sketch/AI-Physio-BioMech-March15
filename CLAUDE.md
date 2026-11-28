@@ -50,7 +50,11 @@ session page), `OPENAI_API_KEY` (server only). They live in Vercel; never commit
    next rep. A hold dropped early fails at once (`failed_hold`). Isolation: the other arm may not rise more than
    `maxOppositeArmElevationDeg` above where it rested while ready (`oppositeRest`), not an absolute 35° (a seated
    patient's resting arm reads 40-60°). Form (forward raises facing the camera, plane over `MAX_PLANE_DEG_FLEXION`
-   75° = out to the side; was 60, v0.9.2; Coach Lab `sidewaysAllowanceDeg` via `setMaxPlaneDeg`) is judged AT THE TARGET: on the way up it is only coached; the hold runs only while the arm
+   75° = out to the side; was 60, v0.9.2; Coach Lab `sidewaysAllowanceDeg` via `setMaxPlaneDeg`) is judged AT THE TARGET, and since v0.11.0 also ON THE WAY UP
+   (`lib/interpreter/liftPath.ts`: the plane's median while lifting through 45-100° measured must be within the allowance
+   minus 15°, else the rep is a side raise, `pathSidewaysNow`, held nowhere, failed_form; the owner found abduction passed the
+   top check, where both movements converge near overhead; this ends the earlier allowance for lifting sideways and then
+   swinging in front); the hold runs only while the arm
    is in front (it waits at `top`; a form slip mid-hold is ignored for `HOLD_SLIP_GRACE_MS` 1 s (Coach Lab
    `holdSlipSeconds`), and a longer one PAUSES the hold, which resumes with the time already held, `heldBeforeSlipMs`;
    the owner's run A-57EDFCAD had the plane wavering at 55-75° and a hold restarting six times), so raising
@@ -130,7 +134,9 @@ Points BlazePose guesses beyond the frame's edge are ignored.
   back to rest with them after the rep, and 1.5 s later shows the next one (one clock, `demoClock`, for the movement
   and the narration). Facing the camera, forward raises show the guide figure, "the physio" (`lib/pose/exampleCard.ts`):
   a small 3D figure drawn as a mirror image, centred in its card, seated or standing like the patient (steadied by
-  `lib/pose/postureLatch.ts`: read only between reps, it switches only after the other posture is seen for 6 s);
+  `lib/pose/postureLatch.ts`: read in every phase but the top, it switches after the other posture is seen for 4 s; with the
+  knees out of the picture `RiseDetector` reads standing up or sitting down from the shoulders moving 0.45 torso lengths
+  from where they sat; kept across exercises, v0.11.0, the owner's patient stood up and the guide stayed seated);
   using the exercise's arm; seen side on at the start of a demonstration, then walking slowly round the patient
   between three-quarter (62°) and nearly facing them (18°) every `GUIDE_ORBIT_S` (14 s, the testers' request),
   facing the patient (25°) to show "in front of you" when they go out to the side; it demonstrates once, then waits (`demoOnceThenWait`), and during a rep

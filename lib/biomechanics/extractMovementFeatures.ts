@@ -216,6 +216,8 @@ export function emptyMovementFeatures(): MovementFeatures {
     kneeAngleLeft: null,
     kneeAngleRight: null,
     hipVelocityY: null,
+    shoulderCenterY: null,
+    torsoLength: null,
     isStanding: false,
     isSeated: false
   };
@@ -369,6 +371,8 @@ export function extractMovementFeatures(frame: PoseFrame): MovementFeatures {
     kneeAngleLeft,
     kneeAngleRight,
     hipVelocityY: null,
+    shoulderCenterY: shMid0 ? round3(shMid0.y) : null,
+    torsoLength: torsoLen === null ? null : round3(torsoLen),
     isStanding: posture === "standing",
     isSeated: posture === "seated"
   };

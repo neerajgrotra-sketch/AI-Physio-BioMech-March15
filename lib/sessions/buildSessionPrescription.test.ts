@@ -8,6 +8,7 @@ import { FlexionViewEstimator } from "@/lib/biomechanics/flexionView";
 import { extractMovementFeatures } from "@/lib/biomechanics/extractMovementFeatures";
 import { frameFromPixels, flexionFront, flexionSide, seatedSide, standingFront, standingSide, type PixelBody } from "@/lib/testing/poses";
 import { hold, ramp, replay, timeline } from "@/lib/testing/replay";
+import { setMaxPlaneDeg, MAX_PLANE_DEG_FLEXION } from "@/lib/interpreter/movementInterpreter";
 import type { PoseFrame } from "@/lib/types/pose";
 
 // slug: [rom_start, rom_norm, rom_acceptable_min, default_hold_ms], as live.
@@ -363,7 +364,7 @@ describe("forward raise done out to the side instead (the owner's trick)", () =>
   });
 });
 
-describe("raised out to the side, then brought in front while up (the owner's case)", () => {
+describe("forward or out to the side: the path up decides (liftPath.ts), and the top must be in front", () => {
   const slug = "shoulder_flexion_right";
   const p = (() => {
     const [start, norm, min, holdMs] = TEMPLATES[slug];
@@ -383,7 +384,7 @@ describe("raised out to the side, then brought in front while up (the owner's ca
   const frames = (pts: Array<{ t: number; v: number; o: number }>) =>
     pts.map(({ t, v, o }) => frameFromPixels(flexionFront(v, { outDeg: o }), 1280, 720, { timestamp: t }));
 
-  it("counts once the arm is held in front (the hold starts when it gets there)", () => {
+  it("raised out to the side, then swept in front while up: a side raise, it doesn't count (was the owner's early case)", () => {
     const pts = path([
       [3500, hold(5), hold(90)],                 // rest
       [1000, ramp(5, 120), hold(90)],            // up, out to the side
@@ -393,7 +394,59 @@ describe("raised out to the side, then brought in front while up (the owner's ca
       [800, hold(5), hold(0)],
     ]);
     const r = replay(p, frames(pts));
+    expect(r.repCount).toBe(0);
+    expect(r.events.some((e) => e.kind === "hold")).toBe(false);
+    expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_form");
+  });
+
+  it("the owner's report: a side raise that reads under the top limit near overhead still fails (Gentle, 85°)", () => {
+    setMaxPlaneDeg(85);
+    try {
+      const pts = path([
+        [3500, hold(5), hold(88)],
+        [1000, ramp(5, 120), hold(88)],              // a side raise
+        [p.hold.durationMs + 600, hold(120), hold(80)], // at the top it reads 80°: under Gentle's 85
+        [1000, ramp(120, 5), hold(88)],
+        [800, hold(5), hold(88)],
+      ]);
+      const r = replay(p, frames(pts));
+      expect(r.repCount).toBe(0);
+      expect(r.events.find((e) => e.kind === "fail")?.reason).toBe("failed_form");
+    } finally {
+      setMaxPlaneDeg(MAX_PLANE_DEG_FLEXION);
+    }
+  });
+
+  it("a forward raise a little outward on the way up (40°), wider at the top (70°), counts", () => {
+    const pts = path([
+      [3500, hold(5), hold(40)],
+      [1000, ramp(5, 120), hold(40)],
+      [p.hold.durationMs + 600, hold(120), hold(70)],
+      [1000, ramp(120, 5), hold(40)],
+      [800, hold(5), hold(40)],
+    ]);
+    const r = replay(p, frames(pts));
     expect(r.events.filter((e) => e.kind === "fail")).toEqual([]);
+    expect(r.repCount).toBe(1);
+  });
+
+  it("a side raise doesn't spoil the next forward one", () => {
+    const side = path([
+      [3500, hold(5), hold(90)],
+      [1000, ramp(5, 120), hold(90)],
+      [p.hold.durationMs + 600, hold(120), hold(90)],
+      [1000, ramp(120, 5), hold(90)],
+      [1500, hold(5), hold(0)],
+    ]);
+    const t0 = side[side.length - 1].t + 33;
+    const fwd = path([
+      [1000, ramp(5, 120), hold(0)],
+      [p.hold.durationMs + 600, hold(120), hold(0)],
+      [1000, ramp(120, 5), hold(0)],
+      [800, hold(5), hold(0)],
+    ]).map((x) => ({ ...x, t: x.t + t0 }));
+    const r = replay(p, frames([...side, ...fwd]));
+    expect(r.events.filter((e) => e.kind === "fail").length).toBe(1);
     expect(r.repCount).toBe(1);
   });
 

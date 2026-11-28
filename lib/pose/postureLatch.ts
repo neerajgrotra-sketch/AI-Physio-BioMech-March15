@@ -45,3 +45,49 @@ export class PostureLatch {
     return this.value;
   }
 }
+
+// ── Standing up when the legs can't be seen ─────────────────────────────
+// The owner's run (v0.10.0, left arm): the patient stood up and the guide
+// kept sitting. The leg reading needs the knees in the picture, and close
+// to a laptop they often aren't. Standing up from a chair lifts the
+// shoulders by most of a torso length (sitting down drops them as much);
+// raising an arm or leaning barely moves them. So the shoulder height is
+// remembered for each posture while the legs say so, and a big move from
+// it, held, reads as the other posture.
+export const RISE_TORSOS = 0.45; // shoulders this many torso lengths above the seated place = standing
+
+export class RiseDetector {
+  private ref: Record<Posture, number | null> = { seated: null, standing: null };
+
+  reset(): void {
+    this.ref = { seated: null, standing: null };
+  }
+
+  /**
+   * The posture to feed the latch: the leg reading when there is one (and it
+   * teaches where the shoulders sit for it), else a guess from how far the
+   * shoulders have moved from where they were in the latched posture.
+   */
+  read(raw: Posture | "unknown", latched: Posture, shoulderY: number | null, torso: number | null): Posture | "unknown" {
+    if (shoulderY === null || torso === null || torso < 0.05) return raw;
+    if (raw !== "unknown") {
+      const r = this.ref[raw];
+      this.ref[raw] = r === null ? shoulderY : r + (shoulderY - r) * 0.05;
+      return raw;
+    }
+    const r = this.ref[latched];
+    if (r === null) {
+      // No leg reading for this posture yet (it was itself guessed): start
+      // from here, so sitting back down can be seen too.
+      this.ref[latched] = shoulderY;
+      return raw;
+    }
+    const rise = (r - shoulderY) / torso; // image y grows downward
+    if (latched === "seated" && rise > RISE_TORSOS) return "standing";
+    if (latched === "standing" && rise < -RISE_TORSOS) return "seated";
+    // Follow slow drift (stepping nearer or further) very slowly: standing up
+    // takes a second or two and must still show as a jump.
+    this.ref[latched] = r + (shoulderY - r) * 0.005;
+    return raw;
+  }
+}
