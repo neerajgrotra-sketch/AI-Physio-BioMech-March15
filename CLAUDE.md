@@ -286,6 +286,13 @@ Points BlazePose guesses beyond the frame's edge are ignored.
 - Walking away (`awayState`): nobody seen 10 s -> coaching paused and the coach panel says so; 60 s -> countdown
   "Saving and closing in 30..."; 90 s -> saved as paused, session ends. Seen again or "I'm back" carries on. A hidden
   tab pauses (Resume). Not during positioning or a rest screen.
+- Presence (v0.12.2, the owner's run A-F62E49B6: one stray detection in an empty room said "welcome back", five times, and
+  reps ran on stray frames): `lib/session/presence.ts` `seenInFrame` (both shoulders clearly seen) and `PresenceTracker`
+  (back after 1.5 s steady, gone after 1 s) feed `lastSeenMsRef`. While the patient isn't present, or placement is lost
+  mid-exercise, reps stop at any phase (`setFrozen`: a rep in progress is dropped, not failed; "Reps paused" in the log),
+  the rep coach is silent (it needs placement throughout now), and the positioning voice guides them back (it used to run
+  before the first rep only). "I can't see you" is said at most every 30 s; the wrong-arm call backs off for 20 s after
+  three calls with no lift of the right arm (`WRONG_ARM_MAX_CALLS`).
 - Admin: paused / in-progress assignments show "x of n exercises done, paused <time>, patient walked away", count
   as to do, and the button reads Continue Session.
 

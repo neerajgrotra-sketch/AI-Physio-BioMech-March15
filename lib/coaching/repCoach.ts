@@ -51,6 +51,8 @@ export const WRONG_ARM_PERSIST_MS = 400; // quicker than other form cues: it's a
 export const WRONG_ARM_MIN_GAP_MS = 2000;
 // Where the other arm rests: lib/interpreter/restEstimate.ts (shared with the
 // isolation check; its history explains the v0.6.0 and v0.6.1 failures).
+export const WRONG_ARM_MAX_CALLS = 3;
+export const WRONG_ARM_BACKOFF_MS = 20000;
 const COOLDOWN_MS: Record<string, number> = { higher: 3500, straight: 5000, plane: 5000, better: 4000, wrongArm: 4000 };
 
 /** Adjustable from the Coach Lab (lib/coach/coachSettings.ts); defaults = the constants above. */
@@ -79,6 +81,7 @@ export class RepCoach {
   private againForRep = -1;
   private planeCued = false; // "in front of you" was said during this lift
   private pathCued = false;  // "that went out to the side" was said for this lift
+  private wrongArmCalls = 0; // wrong-arm calls since the right arm last lifted
   private oppRest: number | null = null;  // where the other arm rests
   private wrongArmSince: number | null = null;
   /** True while the patient is lifting the wrong arm (for the on-screen highlight). */
@@ -100,6 +103,7 @@ export class RepCoach {
     this.planeSince = null;
     this.lastSaid = {};
     this.againForRep = -1;
+    this.wrongArmCalls = 0;
     this.planeCued = false;
     this.pathCued = false;
     this.oppRest = null;
@@ -137,7 +141,7 @@ export class RepCoach {
     if (i.phase !== this.phase) {
       this.phase = i.phase;
       this.phaseSince = now;
-      if (i.phase === "lifting") this.best = null;
+      if (i.phase === "lifting") { this.best = null; this.wrongArmCalls = 0; }
       if (i.phase === "ready") { this.planeCued = false; this.pathCued = false; }
     }
     const active = i.phase === "lifting" || i.phase === "top" || i.phase === "holding";
@@ -165,8 +169,12 @@ export class RepCoach {
     // further try fell inside a 5 s cooldown.)
     const last = this.lastSaid["wrongArm"];
     const newEpisode = this.wrongArmNow && !this.wrongArmEpisode && (last === undefined || now - last >= WRONG_ARM_MIN_GAP_MS);
-    if (this.wrongArmNow && (newEpisode || this.can("wrongArm", now))) {
+    // After WRONG_ARM_MAX_CALLS calls with no lift of the right arm, back off
+    // (the owner's run: it was said every 2-4 s for minutes).
+    const backedOff = this.wrongArmCalls >= WRONG_ARM_MAX_CALLS && last !== undefined && now - last < WRONG_ARM_BACKOFF_MS;
+    if (this.wrongArmNow && !backedOff && (newEpisode || this.can("wrongArm", now))) {
       this.wrongArmEpisode = true;
+      this.wrongArmCalls++;
       const other = i.side === "right" ? "left" : "right";
       return this.say("wrongArm", now, `That's your ${other} arm. Rest it down and lift your ${i.side} arm.`);
     }

@@ -321,6 +321,11 @@ export function useInferenceLoop() {
   // Held by the screen during the range check (lib/session/reachCheck.ts):
   // before the first rep, nothing counts while it is on.
   const repHoldRef = useRef(false);
+  // Set by the screen while the patient is away or being repositioned
+  // (lib/session/presence.ts): reps stop, at any point of the exercise. A rep
+  // in progress is dropped, not failed (the owner's run: stray detections in an
+  // empty room started holds and read out "rep failed").
+  const frozenRef = useRef<null | "away" | "reposition">(null);
   // State mirror of calibrationBaselineRef — exported for ROM score ring
   // (ref is used internally for zero-cost reads in the rAF loop)
   const [calibrationBaseline, setCalibrationBaseline] = useState<number>(0);
@@ -569,7 +574,19 @@ export function useInferenceLoop() {
               repStateRef.current.phase === "ready" &&
               repStateRef.current.repCount === 0 &&
               (!framingCallbacks.getPrerequisiteResult().allMet || repHoldRef.current);
-            if (gateClosed) {
+            if (frozenRef.current && repStateRef.current.phase !== "complete") {
+              const cur = repStateRef.current;
+              output.repState = {
+                ...cur,
+                phase: "ready",
+                enteredTopAtMs: null, enteredLoweringAtMs: null, holdSatisfied: false, hasDescendedFromPeak: false,
+                everReachedTarget: false, everViolatedIsolation: false, everHadBilateralParticipationGap: false,
+                dipStartedAtMs: null, attemptPeak: null, everBadForm: false, formBadSinceMs: null,
+                heldBeforeSlipMs: null, badFormKind: null, liftPath: [],
+                justCompletedRep: false, justFailedRep: false, justCompletedHold: false,
+                lastRepEvaluation: { outcome: "none", reason: null },
+              };
+            } else if (gateClosed) {
               output.repState = {
                 ...repStateRef.current,
                 justCompletedRep: false,
@@ -773,7 +790,10 @@ export function useInferenceLoop() {
             // Between reps (repCount > 0) framing issues are
             // advisory only — shown visually, never blocking.
             // ------------------------------------------------
-            if (currentPhase === "ready" && output.repState.repCount === 0) {
+            // Also mid-exercise while reps are paused for repositioning (the
+            // patient moved too close or out of the picture), so the
+            // positioning coach guides them back; not while they are away.
+            if (currentPhase === "ready" && (output.repState.repCount === 0 || frozenRef.current === "reposition")) {
               const prereq = framingCallbacks.getPrerequisiteResult();
               if (!prereq.allMet && prereq.failures.length > 0) {
                 const failure = prereq.failures[0];
@@ -932,6 +952,8 @@ export function useInferenceLoop() {
     isCalibrated: () => calibrationCompleteRef.current,
     /** Hold the rep counter before the first rep (the range check). */
     setRepHold: (on: boolean) => { repHoldRef.current = on; },
+    /** Stop reps (any phase) while the patient is away or being repositioned. */
+    setFrozen: (why: null | "away" | "reposition") => { frozenRef.current = why; },
     /** The learned upper-arm length in torso lengths (front-view flexion), or null. */
     getArmLength: (side: "right" | "left") => flexionViewRef.current.armLength(side),
     // State

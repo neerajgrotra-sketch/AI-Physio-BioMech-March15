@@ -18,6 +18,7 @@ import { drawArmLabel, drawReachGuide, reachLineY, handTargetPoint, drawHandTarg
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
+import { PresenceTracker, seenInFrame } from "@/lib/session/presence";
 import { ReachCheck, AngleBias } from "@/lib/session/reachCheck";
 import { PostureLatch } from "@/lib/pose/postureLatch";
 import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
@@ -655,6 +656,9 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
   // Walking away (lib/session/resume.ts awayState): when the patient was last
   // seen, and what that means now.
   const lastSeenMsRef = useRef(Date.now());
+  // Steady presence (lib/session/presence.ts): stray detections don't count.
+  const presenceRef = useRef(new PresenceTracker(Date.now()));
+  const frozenLoggedRef = useRef<string | null>(null);
   const [away, setAway] = useState<AwayState>({ kind: "present" });
 
   // ── SESSION PHASE STATE MACHINE ──────────────────────────────────────────
@@ -1539,6 +1543,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     return () => window.clearInterval(t);
   }, [sessionQueue.sessionStarted, sessionPhase, isPaused, sessionSummary, restScreen]);
   const awayKindRef = useRef<AwayState["kind"]>("present");
+  const awaySaidAtRef = useRef(0); // "I can't see you" at most every 30 s
   useEffect(() => {
     const before = awayKindRef.current;
     awayKindRef.current = away.kind;
@@ -1553,7 +1558,10 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     if (away.kind === "paused" && before === "present") {
       writeDebugLog("warning", "SESSION", "Patient not seen for 10 s: pausing");
       coachingBrain.setVoiceEnabled(false);
-      say("I can't see you. Your session is paused. Step back in front of the camera to carry on.");
+      if (Date.now() - awaySaidAtRef.current > 30000) {
+        awaySaidAtRef.current = Date.now();
+        say("I can't see you. Your session is paused. Step back in front of the camera to carry on.");
+      }
     } else if (away.kind === "countdown" && before !== "countdown") {
       writeDebugLog("warning", "SESSION", "Patient away 60 s: countdown to save and end");
       say("Your session will be saved and closed in thirty seconds.");
@@ -1569,6 +1577,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
   }, [away.kind]);
   function imBack() {
     lastSeenMsRef.current = Date.now();
+    presenceRef.current.reset(Date.now());
     setAway({ kind: "present" });
   }
 
@@ -1610,6 +1619,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
     doneIdxRef.current = startDone;
     setDoneIdx(startDone);
     lastSeenMsRef.current = Date.now();
+    presenceRef.current.reset(Date.now());
     if (runIndexesRef.current) writeDebugLog("info", "SESSION", `Continuing: exercises ${runIndexesRef.current.map((i) => i + 1).join(", ")} of ${fullQueue.length}`);
     postProgress("in_progress", startDone);
     setSelectorCollapsed(true);
@@ -1807,7 +1817,22 @@ Keep it to 2–3 natural spoken sentences. No lists.`
 
       // ── 1. Get live frame ─────────────────────────────────────────────────
       const frame = ghostFrameRef.current;
-      if (frame?.personDetected) lastSeenMsRef.current = Date.now();
+      // Steady presence, not any detection (the owner's run: one stray frame
+      // in an empty room said "welcome back").
+      {
+        const present = presenceRef.current.update(Date.now(), seenInFrame(frame as any));
+        lastSeenMsRef.current = presenceRef.current.lastPresentMs;
+        // Reps stop while the patient is away or being repositioned (placement
+        // lost: moved too close, out of the picture); the positioning coach
+        // guides them back, then reps carry on.
+        const placedNow = framingIntelligence.prerequisiteResultRef.current.allMet;
+        const why = sessionPhaseRef.current !== "running" ? null : !present ? "patient out of view" : !placedNow ? "repositioning" : null;
+        inferenceLoop.setFrozen(why === null ? null : why === "repositioning" ? "reposition" : "away");
+        if (why !== frozenLoggedRef.current) {
+          writeDebugLog("info", "SESSION", why ? `Reps paused: ${why}` : "Reps carry on");
+          frozenLoggedRef.current = why;
+        }
+      }
       if (!frame || !frame.personDetected) {
         ghostAnimRef.current = requestAnimationFrame(tick);
         return;
@@ -1932,9 +1957,12 @@ Keep it to 2–3 natural spoken sentences. No lists.`
       // Nobody to coach: the session is over, the exercise is done, or the
       // patient isn't in front of the camera (the owner's run: "that's your
       // left arm" over the session summary and while out of view).
-      const coachable = !sessionDoneRef.current && ghostPhaseInfRef.current !== "complete" && awayKindRef.current === "present";
+      // Placement is needed throughout, not just before the first rep: while
+      // the patient is being repositioned only the positioning coach talks.
+      const coachable = !sessionDoneRef.current && ghostPhaseInfRef.current !== "complete" &&
+        awayKindRef.current === "present" && presenceRef.current.present;
       const placedForCoaching = coachable && !pendingIntroRef.current &&
-        (framingIntelligence.prerequisiteResultRef.current.allMet || ghostRepCountRef.current > 0);
+        framingIntelligence.prerequisiteResultRef.current.allMet;
       if (!placedForCoaching) {
         narratorRef.current.update(null, false);
         ghostReadyStartRef.current = performance.now(); // the demonstration starts when placed
@@ -2445,6 +2473,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     if (!video) { writeDebugLog("error", "SESSION", "Resume failed — no video element"); return; }
     setIsPaused(false);
     lastSeenMsRef.current = Date.now();
+    presenceRef.current.reset(Date.now());
     coachingBrain.setVoiceEnabled(voiceOn);
     inferenceLoop.startLoop(video, sessionQueue.getActivePrescription, handleExerciseComplete, stableCoachingCallbacks, framingCallbacks, readinessEvaluator);
     startGhostLoop();
