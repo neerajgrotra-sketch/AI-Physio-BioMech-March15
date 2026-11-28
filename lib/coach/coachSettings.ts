@@ -17,6 +17,8 @@ export type CoachSettings = {
   guideOrbitNearDeg: number;
   guideOrbitFarDeg: number;
   postureSwitchSeconds: number;
+  // Before the exercise
+  reachCheckOn: boolean;
   // On the camera
   showHandTarget: boolean;
   showElbowMarker: boolean;
@@ -41,7 +43,7 @@ export type CoachSettings = {
 
 export type SettingDef = {
   key: keyof CoachSettings;
-  group: "Guide figure" | "On the camera" | "Voice" | "Holding at the target" | "Other arm" | "Coaching cues" | "Walking away";
+  group: "Guide figure" | "Before the exercise" | "On the camera" | "Voice" | "Holding at the target" | "Other arm" | "Coaching cues" | "Walking away";
   label: string;
   help: string;
   kind: "number" | "boolean";
@@ -57,6 +59,7 @@ export const COACH_DEFAULTS: CoachSettings = {
   guideOrbitNearDeg: 18,
   guideOrbitFarDeg: 62,
   postureSwitchSeconds: 4,
+  reachCheckOn: true,
   showHandTarget: true,
   showElbowMarker: true,
   voiceRate: 0.95,
@@ -83,7 +86,9 @@ export const COACH_SETTING_DEFS: SettingDef[] = [
   { key: "guideOrbitFarDeg", group: "Guide figure", kind: "number", min: 30, max: 90, step: 1, unit: "°", label: "Furthest to the side",
     help: "90 is fully side on (best for seeing how high the arm goes)." },
   { key: "postureSwitchSeconds", group: "Guide figure", kind: "number", min: 1, max: 20, step: 0.5, unit: "s", label: "Sit/stand change after",
-    help: "How long the patient must be seen in the other posture before the guide sits down or stands up (read from the legs, or from the shoulders rising or dropping when the knees are out of the picture)." },
+    help: "How long the patient's legs must be seen in the other posture before the guide sits down or stands up. When the legs can't be seen (a desk, a laptop close by) the guide keeps its posture." },
+  { key: "reachCheckOn", group: "Before the exercise", kind: "boolean", label: "Range check before the first rep",
+    help: "Before each arm's first forward raise, the patient lifts the arm as high as is comfortable and holds it, once. It records today's comfortable range for the physio and places the hand circle correctly from the first rep. Not a rep; skipped when continuing a paused session." },
   { key: "showHandTarget", group: "On the camera", kind: "boolean", label: "Show where the hand should reach",
     help: "A glowing circle where the hand gets to with a straight arm at the target; it turns green with a tick when reached." },
   { key: "showElbowMarker", group: "On the camera", kind: "boolean", label: "Show the elbow marker",

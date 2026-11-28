@@ -18,7 +18,8 @@ import { drawArmLabel, drawReachGuide, reachLineY, handTargetPoint, drawHandTarg
 import { drawExampleCard } from "@/lib/pose/exampleCard";
 import { RepCoach } from "@/lib/coaching/repCoach";
 import { DemoNarrator } from "@/lib/coaching/demoNarrator";
-import { PostureLatch, RiseDetector } from "@/lib/pose/postureLatch";
+import { ReachCheck, AngleBias } from "@/lib/session/reachCheck";
+import { PostureLatch } from "@/lib/pose/postureLatch";
 import { demoClock, BETWEEN_REPS_REST_S, DEMO_CYCLE_S } from "@/lib/pose/ghostAnimator";
 import { maxPlaneNow, pathSidewaysNow, setMaxPlaneDeg } from "@/lib/interpreter/movementInterpreter";
 import { setHoldSlipMs } from "@/lib/interpreter/repStateMachine";
@@ -573,13 +574,17 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
   // Where this patient's hand is when a rep reaches the target (wrist offset
   // from the shoulder, recorded at each crossing): the hand circle moves there.
   const handSamplesRef = useRef<Array<{ dx: number; dy: number }>>([]);
+  // The range check before each arm's first forward raise (lib/session/reachCheck.ts).
+  const reachRef = useRef<ReachCheck | null>(null);
+  const reachDoneRef = useRef<Set<string>>(new Set());     // arms already checked this session
+  const reachRangeRef = useRef<Record<number, number>>({}); // queue index -> comfortable range (measured degrees)
+  const angleBiasRef = useRef(new AngleBias());            // 3D minus measured near the top, for the hand circle
   const prevMetricForHandRef = useRef<number | null>(null);
   // The next exercise's spoken intro waits until the patient is placed (the
   // owner's run: "raise your left arm" played over the positioning voice).
   const pendingIntroRef = useRef(false);
   const guideYawRef = useRef(90);                 // the guide figure's current viewing angle
   const postureLatchRef = useRef<PostureLatch | null>(null); // steady seated / standing for the guide
-  const riseRef = useRef(new RiseDetector()); // standing up seen from the shoulders when the knees are hidden
   const ghostPhaseSeenRef = useRef<string>("");   // phase timing for the ghost
   const ghostLowerStartRef = useRef<number>(0);   // when lowering began  // when ready phase started, for animation after wait
   // Transition state — ghostT fades to 0 over 300ms when switching exercises (prevents snapping)
@@ -1173,6 +1178,8 @@ export default function SessionRunner({ prescriptionQueue, restBoundaries: fullB
     // person, same chair): restarting from the template's posture made it
     // sit again for a patient who had stood up.
     handSamplesRef.current = [];
+    reachRef.current = null;
+    inferenceLoop.setRepHold(false);
           ghostReadyStartRef.current = performance.now();
           setGhostPhase("demo"); setGhostDemoProgress(0); setGhostHoldMs(0);
           patientContext.beginExercise(nextItem.prescription, nextIndex, sessionQueue.getActiveQueue().length);
@@ -1401,6 +1408,7 @@ Format: 3-5 short clinical paragraphs. No bullet points. No patient-facing langu
             ? exerciseRepTimelineRef.current[i]
             : null,
           landmark_confidence_pct: exerciseLandmarkConfidenceRef.current[i] ?? null,
+          comfortable_range_deg: reachRangeRef.current[i] ?? null,
         };
       });
 
@@ -1710,8 +1718,10 @@ Keep it to 2–3 natural spoken sentences. No lists.`
     repCoachRef.current.reset();
     narratorRef.current.reset();
     postureLatchRef.current = null;
-    riseRef.current.reset();
     handSamplesRef.current = [];
+    reachRef.current = null;
+    inferenceLoop.setRepHold(false);
+    reachDoneRef.current = new Set(); // a fresh start checks the range again
     ghostReadyStartRef.current = performance.now();
     ghostTransitionRef.current = { active: false, startMs: 0, fromGhostT: 0 };
     ghostLogRef.current = [];
@@ -1884,7 +1894,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
           `bent=${inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] ?? "?"} | ` +
           `3d: elev=${fmt(w3?.elevDeg)} plane=${fmt(w3?.planeDeg)} elbow=${fmt(w3?.elbowDeg)} | ` +
           `opp=${fmt(inferenceLoop.getFeatures()?.[side === "left" ? "rightArmElevationDeg" : "leftArmElevationDeg"])} ` +
-          `wrongArm=${repCoachRef.current.wrongArmNow} path=${pathSidewaysNow() ? "side" : "ok"} ` +
+          `wrongArm=${repCoachRef.current.wrongArmNow} reach=${reachRef.current?.stage ?? "-"} path=${pathSidewaysNow() ? "side" : "ok"} ` +
           `guide=${postureLatchRef.current?.get() ?? "?"} legs=${inferenceLoop.getFeatures()?.posture ?? "?"} shY=${inferenceLoop.getFeatures()?.shoulderCenterY?.toFixed(3) ?? "?"}`);
       }
 
@@ -1899,7 +1909,54 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         narratorRef.current.update(null, false);
         ghostReadyStartRef.current = performance.now(); // the demonstration starts when placed
       }
+      // ── 3b. The range check (lib/session/reachCheck.ts) ────────────────
+      // Before each arm's first forward raise: lift it as high as is
+      // comfortable and hold, once. The rep counter is held meanwhile, and
+      // the guide's demonstration and the rep coach wait.
       if (sessionPhaseRef.current === "running" && placedForCoaching) {
+        const pR = ghostPrescriptionRef.current;
+        const sdR = pR?.side === "left" ? "left" : pR?.side === "right" ? "right" : null;
+        if (!reachRef.current && pR && sdR && (ghostSlugRef.current ?? "").startsWith("shoulder_flexion") &&
+            coachRef.current.reachCheckOn && !runIndexesRef.current && !reachDoneRef.current.has(sdR) &&
+            ghostRepCountRef.current === 0 && ghostPhaseInfRef.current === "ready" && inferenceLoop.isCalibrated()) {
+          reachRef.current = new ReachCheck({ side: sdR, start: pR.startThreshold ?? 50, target: pR.targetThreshold ?? 110, nowMs: snapNow });
+          reachDoneRef.current.add(sdR);
+          inferenceLoop.setRepHold(true);
+          writeDebugLog("info", "REACH", `Range check: ${sdR} arm`);
+        }
+        const rc = reachRef.current;
+        if (rc && sdR) {
+          const feats = inferenceLoop.getFeatures();
+          const straight = feats?.[sdR === "left" ? "leftElbowBent" : "rightElbowBent"] !== true;
+          const elev3d = inferenceLoop.getWorld3D()[sdR]?.elevDeg ?? null;
+          const speaking = typeof window !== "undefined" && !!window.speechSynthesis?.speaking;
+          const line = rc.update(snapNow, ghostActiveMetricRef.current, { off: handOffset(frame, sdR), straight, elev3d }, !speaking);
+          if (line && typeof window !== "undefined" && window.speechSynthesis) {
+            const u = new SpeechSynthesisUtterance(line);
+            u.rate = coachRef.current.voiceRate;
+            window.speechSynthesis.speak(u);
+            writeDebugLog("info", "REACH", `"${line}"`);
+          }
+          if (rc.stage === "done") {
+            const r = rc.result();
+            if (r.offsets.length) handSamplesRef.current = r.offsets;
+            angleBiasRef.current.seed(r.bias);
+            const qi = sessionQueue.getActiveQueueIndex?.() ?? 0;
+            if (r.peak !== null) reachRangeRef.current[qi] = Math.round(r.peak);
+            writeDebugLog("success", "REACH",
+              `Range ${sdR}: ${r.skipped ? "skipped (no lift)" : `peak=${r.peak?.toFixed(1)}° (3d ${r.peak3d?.toFixed(1) ?? "?"}°) target=${pR?.targetThreshold}° reached=${r.reached}`}` +
+              ` | hand samples=${r.offsets.length} bias=${r.bias?.toFixed(1) ?? "?"}`);
+            reachRef.current = null;
+            inferenceLoop.setRepHold(false);
+            ghostReadyStartRef.current = performance.now(); // the guide's demonstration starts now
+            narratorRef.current.reset();
+          } else {
+            narratorRef.current.update(null, false);
+            ghostReadyStartRef.current = performance.now();
+          }
+        }
+      }
+      if (sessionPhaseRef.current === "running" && placedForCoaching && !reachRef.current) {
         const p = ghostPrescriptionRef.current;
         const sd = p?.side === "left" ? "left" : "right";
         const feats = inferenceLoop.getFeatures();
@@ -2114,7 +2171,13 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // arm. Painting a ghost arm over the patient looked odd.
         const target = ghostPrescriptionRef.current?.targetThreshold ?? 110;
         const metricNow = ghostActiveMetricRef.current;
+        const reaching = reachRef.current;
         for (const side of config.sides) {
+          if (reaching) break; // the range check isn't about the target: no markers
+          if (infPhase === "lifting" || infPhase === "top" || infPhase === "holding") {
+            angleBiasRef.current.add(metricNow, inferenceLoop.getWorld3D()[side]?.elevDeg ?? null,
+              inferenceLoop.getFeatures()?.[side === "left" ? "leftElbowBent" : "rightElbowBent"] !== true);
+          }
           const reachedNow = metricNow !== null && metricNow >= target;
           const c = coachRef.current;
           if (c.showElbowMarker) {
@@ -2136,7 +2199,11 @@ Keep it to 2–3 natural spoken sentences. No lists.`
             }
             prevMetricForHandRef.current = metricNow;
             const learned = medianOffset(handSamplesRef.current);
-            const t = learned ? targetFromOffset(frame, side, learned) : handTargetPoint(frame, side, inferenceLoop.getArmLength(side), target);
+            // Geometry alone sat too low (the measured angle reads lower than
+            // the true one near the top), so it aims at the target plus the
+            // learned gap to the 3D angle (AngleBias).
+            const t = learned ? targetFromOffset(frame, side, learned)
+              : handTargetPoint(frame, side, inferenceLoop.getArmLength(side), Math.min(175, target + angleBiasRef.current.get()));
             // Green only when the rep will count (the measured angle made it).
             if (t) drawHandTarget(ctx, side, t, reachedNow, W, H, now);
           }
@@ -2175,19 +2242,17 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         // hidden (lib/pose/postureLatch.ts).
         const featsNow = inferenceLoop.getFeatures();
         postureLatchRef.current ??= new PostureLatch(ghostPrescriptionRef.current?.posture === "standing" ? "standing" : "seated", coachRef.current.postureSwitchSeconds * 1000);
-        // The leg reading except at the top (a held, leaning trunk shifts the
-        // hips); it was only read between reps, and the owner's patient stood
-        // up mid-exercise while the guide stayed seated. With the knees out of
-        // the picture, a big rise or drop of the shoulders reads as standing
-        // up or sitting down (RiseDetector), in any phase.
+        // The leg reading, except at the top (a held, leaning trunk shifts the
+        // hips). With the legs out of the picture the guide keeps its posture:
+        // v0.11.0 guessed from the shoulders, and leaning toward a laptop read
+        // as standing up (the owner's run).
         const legsNow = infPhase !== "top" && infPhase !== "holding"
           ? (featsNow?.isSeated ? "seated" : featsNow?.isStanding ? "standing" : "unknown")
           : "unknown";
-        const postureNow = riseRef.current.read(legsNow, postureLatchRef.current.get(),
-          featsNow?.shoulderCenterY ?? null, featsNow?.torsoLength ?? null);
-        const seatedNow = postureLatchRef.current.update(postureNow, snapNow) === "seated";
+        const seatedNow = postureLatchRef.current.update(legsNow, snapNow) === "seated";
         const caption =
-          wrongArm ? `Use your ${sideNow} arm`
+          reaching ? (reaching.stage === "hold" ? "Hold it there" : reaching.stage === "down" ? "Slowly down" : "As high as is comfortable")
+          : wrongArm ? `Use your ${sideNow} arm`
           : wrongPathNow ? "Lower, then lift in front"
           : wrongPlaneNow ? "Arm in front of you"
           : activeRep && bent && infPhase !== "lowering" ? "Keep your arm straight"
@@ -2203,7 +2268,7 @@ Keep it to 2–3 natural spoken sentences. No lists.`
         gctx?.clearRect(0, 0, GW, GH);
         if (gctx) drawExampleCard({
           ctx: gctx, W: GW, H: GH, full: true,
-          armDeg: activeRep && metricNow !== null ? Math.max(0, Math.min(180, metricNow)) : anim.ghostT * target,
+          armDeg: (activeRep || reaching) && metricNow !== null ? Math.max(0, Math.min(180, metricNow)) : anim.ghostT * target,
           targetDeg: target,
           seated: seatedNow,
           side: (ghostPrescriptionRef.current?.side ?? "right") as "right" | "left" | "both",

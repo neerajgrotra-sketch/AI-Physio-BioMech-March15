@@ -318,6 +318,9 @@ export function useInferenceLoop() {
   const calibrationBaselineRef = useRef<number>(0);
   const calibrationStartMsRef = useRef<number | null>(null);
   const calibrationWindowMs = 3000; // sample for 3 seconds — more resting frames
+  // Held by the screen during the range check (lib/session/reachCheck.ts):
+  // before the first rep, nothing counts while it is on.
+  const repHoldRef = useRef(false);
   // State mirror of calibrationBaselineRef — exported for ROM score ring
   // (ref is used internally for zero-cost reads in the rAF loop)
   const [calibrationBaseline, setCalibrationBaseline] = useState<number>(0);
@@ -565,7 +568,7 @@ export function useInferenceLoop() {
             const gateClosed =
               repStateRef.current.phase === "ready" &&
               repStateRef.current.repCount === 0 &&
-              !framingCallbacks.getPrerequisiteResult().allMet;
+              (!framingCallbacks.getPrerequisiteResult().allMet || repHoldRef.current);
             if (gateClosed) {
               output.repState = {
                 ...repStateRef.current,
@@ -925,6 +928,10 @@ export function useInferenceLoop() {
     getWorld3D: () => world3dRef.current,
     /** The latest features (use this outside renders, not `features`). */
     getFeatures: () => featuresRef.current,
+    /** The resting baseline has been taken for this exercise (thresholds are set). */
+    isCalibrated: () => calibrationCompleteRef.current,
+    /** Hold the rep counter before the first rep (the range check). */
+    setRepHold: (on: boolean) => { repHoldRef.current = on; },
     /** The learned upper-arm length in torso lengths (front-view flexion), or null. */
     getArmLength: (side: "right" | "left") => flexionViewRef.current.armLength(side),
     // State
